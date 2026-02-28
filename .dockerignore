@@ -1,0 +1,14 @@
+node_modules
+__pycache__
+*.pyc
+.git
+.venv
+venv
+.env
+*.egg-info
+dist
+build
+.DS_Store
+*.db
+frontend/dist
+backend/static

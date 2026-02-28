@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app/backend
+      - db-data:/app/backend/data
+    environment:
+      - EDV_DATABASE_URL=sqlite:///./data/etl_dep_viz.db
+
+volumes:
+  db-data:
