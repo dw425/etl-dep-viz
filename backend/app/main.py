@@ -49,10 +49,16 @@ async def health():
     return {"status": "ok"}
 
 
-# Mount router
+# Mount routers
 from app.routers.tier_map import router as tier_map_router
+from app.routers.vectors import router as vectors_router
+from app.routers.layers import router as layers_router
+from app.routers.active_tags import router as active_tags_router
 
 app.include_router(tier_map_router, prefix="/api")
+app.include_router(vectors_router, prefix="/api")
+app.include_router(layers_router, prefix="/api")
+app.include_router(active_tags_router, prefix="/api")
 
 # Serve frontend static files in production (built by Vite into backend/static/)
 static_dir = os.path.join(os.path.dirname(__file__), "..", "static")

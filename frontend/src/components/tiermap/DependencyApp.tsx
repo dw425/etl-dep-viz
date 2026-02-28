@@ -1,16 +1,16 @@
 /**
- * DependencyApp — Master layout with 7-view tab bar, file upload, and persistence.
- *
- * Views: Tier Diagram | Galaxy Map | Constellation | Explorer | Conflicts | Exec Order | Matrix
+ * DependencyApp — Master layout with 15-view tab bar, file upload, persistence,
+ * vector analysis, 6-layer navigation, drill-through, and export.
  */
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { lazy, Suspense, useState, useCallback, useEffect, useRef } from 'react';
 import type {
   TierMapResult,
   ConstellationResult,
   ConstellationChunk,
   AlgorithmKey,
 } from '../../types/tiermap';
+import type { VectorResults, DrillFilter } from '../../types/vectors';
 import {
   analyzeConstellationStream,
   recluster,
@@ -29,17 +29,40 @@ import ChunkSelector from './ChunkSelector';
 import ChunkSummary from './ChunkSummary';
 import GalaxyMapCanvas from './GalaxyMapCanvas';
 import { buildTierMapHTML } from './exportTierMapHTML';
+import VectorControlPanel from './VectorControlPanel';
+import DrillThroughPanel from './DrillThroughPanel';
+import ExportManager from './ExportManager';
+import { NavigationProvider } from '../../navigation/NavigationProvider';
 
-type ViewId = 'tier' | 'galaxy' | 'constellation' | 'explorer' | 'conflicts' | 'order' | 'matrix';
+// Lazy-load vector views
+const ComplexityOverlay = lazy(() => import('./ComplexityOverlay'));
+const WavePlanView = lazy(() => import('./WavePlanView'));
+const UMAPView = lazy(() => import('./UMAPView'));
+const WaveSimulator = lazy(() => import('./WaveSimulator'));
+const ConcentrationView = lazy(() => import('./ConcentrationView'));
+const ConsensusRadar = lazy(() => import('./ConsensusRadar'));
+const LayerContainer = lazy(() => import('../../navigation/LayerContainer'));
+const L1AInfra = lazy(() => import('../../layers/L1A_InfrastructureTopology'));
 
-const VIEWS: { id: ViewId; label: string; icon: string }[] = [
-  { id: 'tier', label: 'Tier Diagram', icon: '\u25A4' },
-  { id: 'galaxy', label: 'Galaxy Map', icon: '\u25C9' },
-  { id: 'constellation', label: 'Constellation', icon: '\u2726' },
-  { id: 'explorer', label: 'Explorer', icon: '\u25CE' },
-  { id: 'conflicts', label: 'Conflicts', icon: '\u26A0' },
-  { id: 'order', label: 'Exec Order', icon: '\u2193' },
-  { id: 'matrix', label: 'Matrix', icon: '\u229E' },
+type ViewId = 'tier' | 'galaxy' | 'constellation' | 'explorer' | 'conflicts' | 'order' | 'matrix'
+  | 'complexity' | 'waves' | 'umap' | 'simulator' | 'concentration' | 'consensus' | 'layers' | 'infra';
+
+const VIEWS: { id: ViewId; label: string; icon: string; group?: 'core' | 'vector' | 'nav' }[] = [
+  { id: 'tier', label: 'Tier Diagram', icon: '\u25A4', group: 'core' },
+  { id: 'galaxy', label: 'Galaxy Map', icon: '\u25C9', group: 'core' },
+  { id: 'constellation', label: 'Constellation', icon: '\u2726', group: 'core' },
+  { id: 'explorer', label: 'Explorer', icon: '\u25CE', group: 'core' },
+  { id: 'conflicts', label: 'Conflicts', icon: '\u26A0', group: 'core' },
+  { id: 'order', label: 'Exec Order', icon: '\u2193', group: 'core' },
+  { id: 'matrix', label: 'Matrix', icon: '\u229E', group: 'core' },
+  { id: 'complexity', label: 'Complexity', icon: '\u25A3', group: 'vector' },
+  { id: 'waves', label: 'Waves', icon: '\u224B', group: 'vector' },
+  { id: 'umap', label: 'UMAP', icon: '\u25CE', group: 'vector' },
+  { id: 'simulator', label: 'Simulator', icon: '\u223F', group: 'vector' },
+  { id: 'concentration', label: 'Gravity', icon: '\u2295', group: 'vector' },
+  { id: 'consensus', label: 'Consensus', icon: '\u25C8', group: 'vector' },
+  { id: 'layers', label: 'Layers', icon: '\u25CF', group: 'nav' },
+  { id: 'infra', label: 'Infra', icon: '\u229E', group: 'nav' },
 ];
 
 export function DependencyApp() {
@@ -51,6 +74,11 @@ export function DependencyApp() {
   const [selectedChunkId, setSelectedChunkId] = useState<string | null>(null);
   const [uploadId, setUploadId] = useState<number | null>(null);
   const [recentUploads, setRecentUploads] = useState<UploadSummary[]>([]);
+
+  // Vector analysis state
+  const [vectorResults, setVectorResults] = useState<VectorResults | null>(null);
+  const [drillFilter, setDrillFilter] = useState<DrillFilter>({});
+  const [rightPanel, setRightPanel] = useState<'vectors' | 'drill' | 'export' | null>(null);
 
   // Upload state
   const [uploading, setUploading] = useState(false);
@@ -290,25 +318,76 @@ export function DependencyApp() {
           >
             ETL Dep Viz
           </span>
-          <div style={{ display: 'flex', gap: 2 }}>
-            {VIEWS.map(v => (
-              <button
-                key={v.id}
-                onClick={() => setView(v.id)}
-                style={{
-                  padding: '5px 10px', borderRadius: 6, border: 'none', cursor: 'pointer',
-                  fontSize: 11, fontWeight: 600,
-                  background: view === v.id ? 'rgba(59,130,246,0.2)' : 'transparent',
-                  color: view === v.id ? '#60a5fa' : '#64748b',
-                  transition: 'all 0.15s',
-                }}
-              >
-                {v.icon} {v.label}
-              </button>
-            ))}
+          <div style={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+            {VIEWS.map(v => {
+              const isVector = v.group === 'vector';
+              const vectorDisabled = isVector && !vectorResults;
+              const specificDisabled = isVector && (
+                (v.id === 'complexity' && !vectorResults?.v11_complexity) ||
+                (v.id === 'waves' && !vectorResults?.v4_wave_plan) ||
+                (v.id === 'umap' && !vectorResults?.v3_dimensionality_reduction) ||
+                (v.id === 'simulator' && !vectorResults?.v9_wave_function) ||
+                (v.id === 'concentration' && !vectorResults?.v10_concentration) ||
+                (v.id === 'consensus' && !vectorResults?.v8_ensemble_consensus)
+              );
+              const disabled = vectorDisabled || specificDisabled;
+              return (
+                <button
+                  key={v.id}
+                  onClick={() => !disabled && setView(v.id)}
+                  style={{
+                    padding: '5px 10px', borderRadius: 6, border: 'none',
+                    cursor: disabled ? 'not-allowed' : 'pointer',
+                    fontSize: 11, fontWeight: 600,
+                    background: view === v.id ? 'rgba(59,130,246,0.2)' : 'transparent',
+                    color: view === v.id ? '#60a5fa' : disabled ? '#334155' : '#64748b',
+                    opacity: disabled ? 0.4 : 1,
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  {v.icon} {v.label}
+                </button>
+              );
+            })}
           </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button
+            onClick={() => setRightPanel(rightPanel === 'vectors' ? null : 'vectors')}
+            style={{
+              padding: '4px 10px', borderRadius: 5,
+              border: `1px solid ${rightPanel === 'vectors' ? '#3b82f6' : '#1e293b'}`,
+              background: rightPanel === 'vectors' ? 'rgba(59,130,246,0.1)' : 'transparent',
+              color: rightPanel === 'vectors' ? '#60a5fa' : '#64748b', fontSize: 10, cursor: 'pointer',
+            }}
+          >
+            {vectorResults ? '✓ Vectors' : '⚡ Vectors'}
+          </button>
+          <button
+            onClick={() => setRightPanel(rightPanel === 'drill' ? null : 'drill')}
+            disabled={!vectorResults}
+            style={{
+              padding: '4px 10px', borderRadius: 5,
+              border: `1px solid ${rightPanel === 'drill' ? '#3b82f6' : '#1e293b'}`,
+              background: rightPanel === 'drill' ? 'rgba(59,130,246,0.1)' : 'transparent',
+              color: rightPanel === 'drill' ? '#60a5fa' : '#64748b', fontSize: 10, cursor: 'pointer',
+              opacity: vectorResults ? 1 : 0.4,
+            }}
+          >
+            ⫶ Drill
+          </button>
+          <button
+            onClick={() => setRightPanel(rightPanel === 'export' ? null : 'export')}
+            style={{
+              padding: '4px 10px', borderRadius: 5,
+              border: `1px solid ${rightPanel === 'export' ? '#3b82f6' : '#1e293b'}`,
+              background: rightPanel === 'export' ? 'rgba(59,130,246,0.1)' : 'transparent',
+              color: rightPanel === 'export' ? '#60a5fa' : '#64748b', fontSize: 10, cursor: 'pointer',
+            }}
+          >
+            ⤓ Export
+          </button>
+          <div style={{ width: 1, height: 16, background: '#1e293b' }} />
           <button
             onClick={handleExport}
             style={{
@@ -316,7 +395,7 @@ export function DependencyApp() {
               background: 'transparent', color: '#64748b', fontSize: 10, cursor: 'pointer',
             }}
           >
-            Export HTML
+            HTML
           </button>
           <button
             onClick={() => fileInputRef.current?.click()}
@@ -381,29 +460,92 @@ export function DependencyApp() {
         )}
 
         {/* View content */}
-        <div style={{ flex: 1, overflow: 'hidden', padding: (view === 'tier' || view === 'matrix' || view === 'galaxy' || view === 'constellation') ? 0 : 20 }}>
-          {view === 'tier' && scopedTierData && <TierDiagram data={scopedTierData} />}
-          {view === 'galaxy' && scopedTierData && (
-            <GalaxyMapCanvas
-              data={scopedTierData}
-              onClose={() => setView('tier')}
-            />
-          )}
-          {view === 'constellation' && tierData && constellation && (
-            <ConstellationCanvas
-              points={constellation.points}
-              chunks={constellation.chunks}
-              crossChunkEdges={constellation.cross_chunk_edges}
-              onChunkSelect={(chunkId: string) => setSelectedChunkId(prev => prev === chunkId ? null : chunkId)}
-              algorithm={algorithm}
-              onAlgorithmChange={handleRecluster}
-            />
-          )}
-          {view === 'explorer' && scopedTierData && <ExplorerView data={scopedTierData} />}
-          {view === 'conflicts' && scopedTierData && <ConflictsView data={scopedTierData} />}
-          {view === 'order' && scopedTierData && <ExecOrderView data={scopedTierData} />}
-          {view === 'matrix' && scopedTierData && <MatrixView data={scopedTierData} />}
+        <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, color: '#64748b' }}>Loading view...</div>}>
+            <div style={{ flex: 1, overflow: 'hidden', padding: (['tier', 'matrix', 'galaxy', 'constellation'].includes(view)) ? 0 : 20 }}>
+              {/* Core views */}
+              {view === 'tier' && scopedTierData && <TierDiagram data={scopedTierData} />}
+              {view === 'galaxy' && scopedTierData && (
+                <GalaxyMapCanvas data={scopedTierData} onClose={() => setView('tier')} />
+              )}
+              {view === 'constellation' && tierData && constellation && (
+                <ConstellationCanvas
+                  points={constellation.points}
+                  chunks={constellation.chunks}
+                  crossChunkEdges={constellation.cross_chunk_edges}
+                  onChunkSelect={(chunkId: string) => setSelectedChunkId(prev => prev === chunkId ? null : chunkId)}
+                  algorithm={algorithm}
+                  onAlgorithmChange={handleRecluster}
+                />
+              )}
+              {view === 'explorer' && scopedTierData && <ExplorerView data={scopedTierData} />}
+              {view === 'conflicts' && scopedTierData && <ConflictsView data={scopedTierData} />}
+              {view === 'order' && scopedTierData && <ExecOrderView data={scopedTierData} />}
+              {view === 'matrix' && scopedTierData && <MatrixView data={scopedTierData} />}
+
+              {/* Vector views */}
+              {view === 'complexity' && vectorResults?.v11_complexity && (
+                <div style={{ overflow: 'auto', height: '100%' }}>
+                  <ComplexityOverlay complexity={vectorResults.v11_complexity} />
+                </div>
+              )}
+              {view === 'waves' && vectorResults?.v4_wave_plan && (
+                <div style={{ overflow: 'auto', height: '100%' }}>
+                  <WavePlanView wavePlan={vectorResults.v4_wave_plan} />
+                </div>
+              )}
+              {view === 'umap' && vectorResults && (
+                <div style={{ overflow: 'auto', height: '100%' }}>
+                  <UMAPView vectorResults={vectorResults} />
+                </div>
+              )}
+              {view === 'simulator' && vectorResults?.v9_wave_function && tierData && (
+                <div style={{ overflow: 'auto', height: '100%' }}>
+                  <WaveSimulator waveFunction={vectorResults.v9_wave_function} tierData={tierData} />
+                </div>
+              )}
+              {view === 'concentration' && vectorResults?.v10_concentration && (
+                <div style={{ overflow: 'auto', height: '100%' }}>
+                  <ConcentrationView concentration={vectorResults.v10_concentration} />
+                </div>
+              )}
+              {view === 'consensus' && vectorResults?.v8_ensemble_consensus && (
+                <div style={{ overflow: 'auto', height: '100%' }}>
+                  <ConsensusRadar ensemble={vectorResults.v8_ensemble_consensus} />
+                </div>
+              )}
+
+              {/* Layer navigation */}
+              {view === 'layers' && tierData && (
+                <NavigationProvider initialTierData={tierData} initialVectorResults={vectorResults} onVectorResults={setVectorResults}>
+                  <div style={{ overflow: 'auto', height: '100%' }}>
+                    <LayerContainer />
+                  </div>
+                </NavigationProvider>
+              )}
+              {view === 'infra' && tierData && (
+                <div style={{ overflow: 'auto', height: '100%' }}>
+                  <L1AInfra tierData={tierData} vectorResults={vectorResults} />
+                </div>
+              )}
+            </div>
+          </Suspense>
         </div>
+
+        {/* Right sidebar panel */}
+        {rightPanel && tierData && (
+          <div style={{ width: 280, borderLeft: '1px solid #1e293b', overflow: 'auto', padding: 12, flexShrink: 0, background: 'rgba(15,23,42,0.95)' }}>
+            {rightPanel === 'vectors' && (
+              <VectorControlPanel tierData={tierData} vectorResults={vectorResults} onVectorResults={setVectorResults} />
+            )}
+            {rightPanel === 'drill' && vectorResults && (
+              <DrillThroughPanel vectorResults={vectorResults} filter={drillFilter} onFilterChange={setDrillFilter} />
+            )}
+            {rightPanel === 'export' && (
+              <ExportManager tierData={tierData} vectorResults={vectorResults} />
+            )}
+          </div>
+        )}
       </div>
 
       {error && (

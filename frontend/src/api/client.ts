@@ -1,9 +1,10 @@
 /**
  * API client for ETL Dependency Visualizer.
- * 5 tier-map functions + 3 persistence functions.
+ * Tier-map functions + persistence + vector analysis + layers + tags.
  */
 
 import type { TierMapResult, ConstellationResult, AlgorithmKey } from '../types/tiermap';
+import type { VectorResults, WavePlan, ComplexityResult, WhatIfResult, L1Data, ActiveTag } from '../types/vectors';
 
 const BASE = '/api';
 
@@ -151,4 +152,128 @@ export async function getUpload(uploadId: number): Promise<{
 export async function deleteUpload(uploadId: number): Promise<void> {
   const res = await fetch(`${BASE}/tier-map/uploads/${uploadId}`, { method: 'DELETE' });
   if (!res.ok) throw new Error(res.statusText);
+}
+
+// ── Vector Analysis ──────────────────────────────────────────────────────
+
+export async function analyzeVectors(tierData: TierMapResult, phase: 1 | 2 | 3 = 1): Promise<VectorResults> {
+  const res = await fetch(`${BASE}/vectors/analyze?phase=${phase}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(tierData),
+  });
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  return res.json();
+}
+
+export async function getWavePlan(tierData: TierMapResult): Promise<WavePlan> {
+  const res = await fetch(`${BASE}/vectors/wave-plan`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(tierData),
+  });
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  return res.json();
+}
+
+export async function getComplexity(tierData: TierMapResult): Promise<ComplexityResult> {
+  const res = await fetch(`${BASE}/vectors/complexity`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(tierData),
+  });
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  return res.json();
+}
+
+export async function whatIfSimulation(tierData: TierMapResult, sessionId: string): Promise<WhatIfResult> {
+  const res = await fetch(`${BASE}/vectors/what-if/${sessionId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(tierData),
+  });
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  return res.json();
+}
+
+// ── Layer Data ───────────────────────────────────────────────────────────
+
+export async function getL1Data(tierData: TierMapResult): Promise<L1Data> {
+  const res = await fetch(`${BASE}/layers/L1`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(tierData),
+  });
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  return res.json();
+}
+
+export async function getL2Data(tierData: TierMapResult, groupId: string): Promise<Record<string, unknown>> {
+  const res = await fetch(`${BASE}/layers/L2/${groupId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(tierData),
+  });
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  return res.json();
+}
+
+export async function getL3Data(tierData: TierMapResult, groupId: string, scopeType: string, scopeId: string): Promise<Record<string, unknown>> {
+  const res = await fetch(`${BASE}/layers/L3/${groupId}/${scopeType}/${scopeId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(tierData),
+  });
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  return res.json();
+}
+
+export async function getL4Data(tierData: TierMapResult, sessionId: string): Promise<Record<string, unknown>> {
+  const res = await fetch(`${BASE}/layers/L4/${sessionId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(tierData),
+  });
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  return res.json();
+}
+
+// ── Active Tags ──────────────────────────────────────────────────────────
+
+export async function createActiveTag(data: {
+  object_id: string;
+  object_type: string;
+  tag_type: string;
+  label: string;
+  color?: string;
+  note?: string;
+}): Promise<ActiveTag> {
+  const res = await fetch(`${BASE}/active-tags`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  return res.json();
+}
+
+export async function getActiveTags(objectId: string): Promise<ActiveTag[]> {
+  const res = await fetch(`${BASE}/active-tags/${objectId}`);
+  if (!res.ok) throw new Error(res.statusText);
+  return res.json();
+}
+
+export async function deleteActiveTag(tagId: string): Promise<void> {
+  const res = await fetch(`${BASE}/active-tags/${tagId}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error(res.statusText);
+}
+
+export async function listAllActiveTags(params?: { object_type?: string; tag_type?: string }): Promise<ActiveTag[]> {
+  const qs = new URLSearchParams();
+  if (params?.object_type) qs.set('object_type', params.object_type);
+  if (params?.tag_type) qs.set('tag_type', params.tag_type);
+  const q = qs.toString();
+  const res = await fetch(`${BASE}/active-tags${q ? '?' + q : ''}`);
+  if (!res.ok) throw new Error(res.statusText);
+  return res.json();
 }
