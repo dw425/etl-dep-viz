@@ -450,6 +450,28 @@ export default function ConstellationCanvas({
           </div>
         )}
 
+        {/* Zoom controls */}
+        <div style={{
+          position: 'absolute', bottom: 52, right: 12,
+          display: 'flex', flexDirection: 'column', gap: 4, zIndex: 10,
+        }}>
+          {[
+            { label: '+', scale: 1.5 },
+            { label: '-', scale: 0.67 },
+          ].map(b => (
+            <button key={b.label} onClick={() => {
+              const canvas = canvasRef.current;
+              if (canvas) d3.select(canvas).transition().duration(200).call(
+                d3.zoom<HTMLCanvasElement, unknown>().scaleExtent([0.3, 20]).scaleBy as any, b.scale
+              );
+            }} style={{
+              width: 28, height: 28, borderRadius: 5, border: '1px solid rgba(255,255,255,0.1)',
+              background: 'rgba(15,23,42,0.85)', color: '#94a3b8', fontSize: 14,
+              cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>{b.label}</button>
+          ))}
+        </div>
+
         {/* Stats overlay */}
         <div style={{
           position: 'absolute', bottom: 12, left: 12,

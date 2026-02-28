@@ -141,13 +141,22 @@ export default function ChunkingStrategy({ tierData, constellation, vectorResult
           {loading ? 'Applying...' : `Apply ${STRATEGIES.find(s => s.id === selected)?.name || selected}`}
         </button>
         <button
-          onClick={() => onProceed('constellation')}
+          onClick={() => onProceed('tier')}
           style={{
             padding: '10px 24px', borderRadius: 8, border: '1px solid #1e293b', cursor: 'pointer',
             background: 'transparent', color: '#64748b', fontSize: 13, fontWeight: 600,
           }}
         >
-          Go to Constellation
+          Tier Diagram
+        </button>
+        <button
+          onClick={() => onProceed('constellation')}
+          style={{
+            padding: '10px 24px', borderRadius: 8, border: '1px solid #22C55E', cursor: 'pointer',
+            background: 'rgba(34,197,94,0.1)', color: '#22C55E', fontSize: 13, fontWeight: 600,
+          }}
+        >
+          Constellation View
         </button>
       </div>
     </div>

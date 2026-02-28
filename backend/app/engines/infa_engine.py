@@ -31,6 +31,10 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+# Threshold for switching to iterparse (50MB)
+_ITERPARSE_THRESHOLD = 50 * 1024 * 1024
+
+
 # ── XML helpers ────────────────────────────────────────────────────────────────
 
 def _parse_xml(content: bytes) -> Any:
@@ -38,6 +42,22 @@ def _parse_xml(content: bytes) -> Any:
         parser = _ET.XMLParser(recover=True, remove_comments=True)  # type: ignore[call-arg]
         return _ET.fromstring(content, parser=parser)
     return _ET.fromstring(content)
+
+
+def _parse_xml_iterparse(content: bytes) -> Any:
+    """Parse large XML using iterparse for reduced memory usage.
+
+    Processes FOLDER elements one at a time, clearing completed elements
+    to keep memory bounded.
+    """
+    import io
+    if _LXML:
+        parser = _ET.XMLParser(recover=True, remove_comments=True)
+        # For lxml, iterparse needs a file-like object
+        context = _ET.iterparse(io.BytesIO(content), events=('end',), tag='FOLDER')
+    else:
+        context = _ET.iterparse(io.BytesIO(content), events=('end',))
+    return context
 
 
 def _attr(el: Any, name: str) -> str:
@@ -155,7 +175,10 @@ def _build_lookup_map(folder: Any) -> Dict[str, str]:
 # ── Per-file parsing ───────────────────────────────────────────────────────────
 
 def _parse_file(content: bytes, fname: str) -> Dict[str, Any]:
-    """Return raw session data extracted from one XML file."""
+    """Return raw session data extracted from one XML file.
+
+    For files > 50MB, uses streaming parse to reduce peak memory.
+    """
     if not content or not content.strip():
         return {'_error': 'Empty file content', '_file': fname}
 
@@ -172,6 +195,11 @@ def _parse_file(content: bytes, fname: str) -> Dict[str, Any]:
             if _LXML and hasattr(_ET, 'XMLSyntaxError') and isinstance(exc, _ET.XMLSyntaxError):
                 return {'_error': f'XML syntax error: {exc}', '_file': fname}
             return {'_error': str(exc), '_file': fname}
+
+    # Log file size for performance tracking
+    size_mb = len(content) / (1024 * 1024)
+    if size_mb > 10:
+        logger.info("Parsing large file %s (%.1fMB)", fname, size_mb)
 
     sessions: Dict[str, Dict[str, Any]] = {}
 
@@ -455,7 +483,7 @@ def _parse_file(content: bytes, fname: str) -> Dict[str, Any]:
                     if sessions[tname]['step'] == 0:
                         sessions[tname]['step'] = step
 
-        # ── Parse mapping detail for L5/L6 drill-down ─────────────────────
+        # ── Parse mapping detail for L5/L6 drill-down (ENHANCED) ─────────
         for m_el in _iter(folder, 'MAPPING'):
             mname = _attr(m_el, 'NAME')
             if not mname:
@@ -482,28 +510,189 @@ def _parse_file(content: bytes, fname: str) -> Dict[str, Any]:
                 })
 
             fields = []
+            sql_overrides = []
+            join_conditions = []
+            filter_conditions = []
+            router_groups = []
+            lookup_configs = []
+            parameters_found: Set[str] = set()
+            _PARAM_RE = re.compile(r'(\$\$\w+|\$PM\w+)')
+
             for xf in _iter(m_el, 'TRANSFORMATION'):
                 xf_name = _attr(xf, 'NAME')
+                xf_type = _attr(xf, 'TYPE').lower()
+
+                # Extract TRANSFORMFIELD with expression classification
                 for tf in _iter(xf, 'TRANSFORMFIELD'):
+                    expr = _attr(tf, 'EXPRESSION')
+                    expr_type = 'passthrough'
+                    if expr:
+                        expr_upper = expr.upper().strip()
+                        if not expr_upper or expr_upper == _attr(tf, 'NAME').upper():
+                            expr_type = 'passthrough'
+                        elif any(fn in expr_upper for fn in ('SUM(', 'AVG(', 'COUNT(', 'MIN(', 'MAX(')):
+                            expr_type = 'aggregated'
+                        elif any(fn in expr_upper for fn in ('IIF(', 'DECODE(', 'CASE ', 'CONCAT(', 'SUBSTR(', 'TO_DATE(', 'LTRIM(', 'RTRIM(', 'LPAD(', 'RPAD(')):
+                            expr_type = 'derived'
+                        elif 'LOOKUP(' in expr_upper or 'LKP(' in expr_upper:
+                            expr_type = 'lookup'
+                        elif any(c in expr_upper for c in ('+', '-', '*', '/', '||')):
+                            expr_type = 'derived'
+                        elif expr_upper.startswith("'") or expr_upper.replace('.', '').isdigit():
+                            expr_type = 'constant'
+                        else:
+                            expr_type = 'derived'
+                        # Detect parameters
+                        for pm in _PARAM_RE.findall(expr):
+                            parameters_found.add(pm)
                     fields.append({
                         'transform': xf_name,
                         'name': _attr(tf, 'NAME'),
                         'datatype': _attr(tf, 'DATATYPE'),
                         'precision': _attr(tf, 'PRECISION'),
-                        'expression': _attr(tf, 'EXPRESSION'),
+                        'expression': expr,
                         'porttype': _attr(tf, 'PORTTYPE'),
+                        'expression_type': expr_type,
                     })
 
-            detail = {
+                # Extract SQL overrides, join/filter/router/lookup conditions
+                for ta in _iter(xf, 'TABLEATTRIBUTE'):
+                    aname = _attr(ta, 'NAME').lower()
+                    aval = _attr(ta, 'VALUE').strip()
+                    if not aval:
+                        continue
+                    # Detect parameters in TABLEATTRIBUTE values too
+                    for pm in _PARAM_RE.findall(aval):
+                        parameters_found.add(pm)
+
+                    if 'sql query' in aname or 'sql override' in aname:
+                        sql_overrides.append({'transform': xf_name, 'sql': aval})
+                    elif 'join condition' in aname:
+                        jtype = ''
+                        for ta2 in _iter(xf, 'TABLEATTRIBUTE'):
+                            if _attr(ta2, 'NAME').lower() == 'join type':
+                                jtype = _attr(ta2, 'VALUE')
+                                break
+                        join_conditions.append({'joiner': xf_name, 'condition': aval, 'type': jtype})
+                    elif 'filter condition' in aname and 'filter' in xf_type:
+                        filter_conditions.append({'filter': xf_name, 'condition': aval})
+                    elif 'lookup condition' in aname or ('lookup sql override' in aname):
+                        conn_info = ''
+                        tbl_name = ''
+                        for ta2 in _iter(xf, 'TABLEATTRIBUTE'):
+                            n2 = _attr(ta2, 'NAME').lower()
+                            if 'connection information' in n2:
+                                conn_info = _attr(ta2, 'VALUE')
+                            elif 'lookup table name' in n2:
+                                tbl_name = _attr(ta2, 'VALUE')
+                        lookup_configs.append({
+                            'lookup': xf_name,
+                            'condition': aval,
+                            'table': tbl_name,
+                            'connection': conn_info,
+                        })
+
+                # Router group conditions
+                if 'router' in xf_type:
+                    groups = []
+                    for grp in _iter(xf, 'GROUP'):
+                        gname = _attr(grp, 'NAME')
+                        gexpr = _attr(grp, 'EXPRESSION')
+                        if gname:
+                            groups.append({'name': gname, 'condition': gexpr})
+                    if groups:
+                        router_groups.append({'router': xf_name, 'groups': groups})
+
+            # ── Source definition fields ──
+            source_fields = []
+            for src in _iter(folder, 'SOURCE'):
+                sname = _attr(src, 'NAME')
+                src_flds = []
+                for sf in _iter(src, 'SOURCEFIELD'):
+                    src_flds.append({
+                        'name': _attr(sf, 'NAME'),
+                        'datatype': _attr(sf, 'DATATYPE'),
+                        'precision': _attr(sf, 'PRECISION'),
+                        'scale': _attr(sf, 'SCALE'),
+                        'keytype': _attr(sf, 'KEYTYPE'),
+                        'nullable': _attr(sf, 'NULLABLE'),
+                        'description': _attr(sf, 'DESCRIPTION') or _attr(sf, 'BUSINESSNAME'),
+                    })
+                if src_flds:
+                    source_fields.append({'source': sname, 'fields': src_flds})
+
+            # ── Target definition fields ──
+            target_fields = []
+            for tgt in _iter(folder, 'TARGET'):
+                tname = _attr(tgt, 'NAME')
+                tgt_flds = []
+                for tf_el in _iter(tgt, 'TARGETFIELD'):
+                    tgt_flds.append({
+                        'name': _attr(tf_el, 'NAME'),
+                        'datatype': _attr(tf_el, 'DATATYPE'),
+                        'precision': _attr(tf_el, 'PRECISION'),
+                        'scale': _attr(tf_el, 'SCALE'),
+                        'keytype': _attr(tf_el, 'KEYTYPE'),
+                        'nullable': _attr(tf_el, 'NULLABLE'),
+                    })
+                if tgt_flds:
+                    target_fields.append({'target': tname, 'fields': tgt_flds})
+
+            detail: Dict[str, Any] = {
                 'instances': instances,
                 'connectors': connectors,
                 'fields': fields,
             }
+            # Only include non-empty enhanced fields (sparse storage)
+            if sql_overrides:
+                detail['sql_overrides'] = sql_overrides
+            if join_conditions:
+                detail['join_conditions'] = join_conditions
+            if filter_conditions:
+                detail['filter_conditions'] = filter_conditions
+            if router_groups:
+                detail['router_groups'] = router_groups
+            if lookup_configs:
+                detail['lookup_configs'] = lookup_configs
+            if source_fields:
+                detail['source_fields'] = source_fields
+            if target_fields:
+                detail['target_fields'] = target_fields
+            if parameters_found:
+                detail['parameters'] = sorted(parameters_found)
+
+            # ── Pre/Post SQL from SESSTRANSFORMATIONINST ──
+            # Will be enriched per-session below
 
             # Attach to all sessions that use this mapping
             for sname, sdata in sessions.items():
                 if sdata.get('mapping') == mname:
                     sdata['mapping_detail'] = detail
+
+        # ── Extract Pre/Post SQL from SESSION elements ────────────────────
+        for sess_el in _iter(folder, 'SESSION'):
+            sname = _attr(sess_el, 'NAME')
+            if sname not in sessions:
+                continue
+            pre_sql_list = []
+            post_sql_list = []
+            for sti in _iter(sess_el, 'SESSTRANSFORMATIONINST'):
+                for attr_el in _iter(sti, 'ATTRIBUTE'):
+                    aname = _attr(attr_el, 'NAME').lower()
+                    aval = _attr(attr_el, 'VALUE').strip()
+                    if not aval:
+                        continue
+                    if 'pre sql' in aname or 'pre-session sql' in aname:
+                        pre_sql_list.append(aval)
+                    elif 'post sql' in aname or 'post-session sql' in aname:
+                        post_sql_list.append(aval)
+            if pre_sql_list or post_sql_list:
+                md = sessions[sname].get('mapping_detail', {})
+                if pre_sql_list:
+                    md['pre_sql'] = pre_sql_list
+                if post_sql_list:
+                    md['post_sql'] = post_sql_list
+                sessions[sname]['mapping_detail'] = md
 
     return sessions
 

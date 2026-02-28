@@ -8,12 +8,27 @@ import type { VectorResults, WavePlan, ComplexityResult, WhatIfResult, L1Data, A
 
 const BASE = '/api';
 
+// ── User ID management ───────────────────────────────────────────────────
+
+export function getUserId(): string {
+  let id = localStorage.getItem('edv-user-id');
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem('edv-user-id', id);
+  }
+  return id;
+}
+
+export function userHeaders(): Record<string, string> {
+  return { 'X-User-Id': getUserId() };
+}
+
 // ── Upload + analyze ──────────────────────────────────────────────────────
 
 export async function analyzeTierMap(files: File[]): Promise<TierMapResult & { upload_id?: number }> {
   const form = new FormData();
   files.forEach(f => form.append('files', f));
-  const res = await fetch(`${BASE}/tier-map/analyze`, { method: 'POST', body: form });
+  const res = await fetch(`${BASE}/tier-map/analyze`, { method: 'POST', body: form, headers: userHeaders() });
   if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.json();
 }
@@ -27,6 +42,7 @@ export async function analyzeConstellation(
   const res = await fetch(`${BASE}/tier-map/constellation?algorithm=${algorithm}`, {
     method: 'POST',
     body: form,
+    headers: userHeaders(),
   });
   if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.json();
@@ -35,12 +51,13 @@ export async function analyzeConstellation(
 // ── SSE streaming upload ──────────────────────────────────────────────────
 
 export interface StreamEvent {
-  phase: 'extracting' | 'parsing' | 'clustering' | 'complete' | 'error';
+  phase: 'extracting' | 'parsing' | 'clustering' | 'complete' | 'error' | 'timeout';
   current?: number;
   total?: number;
   filename?: string;
   percent?: number;
   message?: string;
+  elapsed_ms?: number;
   result?: { upload_id?: number; tier_data: TierMapResult; constellation: ConstellationResult };
 }
 
@@ -57,6 +74,7 @@ export function analyzeConstellationStream(
     method: 'POST',
     body: form,
     signal: ctrl.signal,
+    headers: userHeaders(),
   }).then(async res => {
     if (!res.ok) {
       onEvent({ phase: 'error', message: (await res.json()).detail || res.statusText });
@@ -101,7 +119,7 @@ export async function recluster(
 ): Promise<{ tier_data: TierMapResult; constellation: ConstellationResult }> {
   const res = await fetch(`${BASE}/tier-map/recluster?algorithm=${algorithm}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...userHeaders() },
     body: JSON.stringify(tierData),
   });
   if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
@@ -125,11 +143,12 @@ export interface UploadSummary {
   platform: string;
   session_count: number;
   algorithm: string | null;
+  parse_duration_ms: number | null;
   created_at: string | null;
 }
 
 export async function listUploads(limit = 20): Promise<UploadSummary[]> {
-  const res = await fetch(`${BASE}/tier-map/uploads?limit=${limit}`);
+  const res = await fetch(`${BASE}/tier-map/uploads?limit=${limit}`, { headers: userHeaders() });
   if (!res.ok) throw new Error(res.statusText);
   return res.json();
 }
@@ -165,7 +184,7 @@ export async function analyzeVectors(
   if (uploadId) params.set('upload_id', String(uploadId));
   const res = await fetch(`${BASE}/vectors/analyze?${params}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...userHeaders() },
     body: JSON.stringify(tierData),
   });
   if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
@@ -337,5 +356,81 @@ export async function listAllActiveTags(params?: { object_type?: string; tag_typ
   const q = qs.toString();
   const res = await fetch(`${BASE}/active-tags${q ? '?' + q : ''}`);
   if (!res.ok) throw new Error(res.statusText);
+  return res.json();
+}
+
+// ── User Profile & Activity ─────────────────────────────────────────────
+
+export async function upsertUser(displayName?: string): Promise<Record<string, unknown>> {
+  const res = await fetch(`${BASE}/users`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_id: getUserId(), display_name: displayName || '' }),
+  });
+  if (!res.ok) throw new Error(res.statusText);
+  return res.json();
+}
+
+export async function getUser(): Promise<Record<string, unknown>> {
+  const res = await fetch(`${BASE}/users/${getUserId()}`);
+  if (res.status === 404) return { user_id: getUserId(), display_name: '', upload_count: 0, total_sessions: 0 };
+  if (!res.ok) throw new Error(res.statusText);
+  return res.json();
+}
+
+export async function getUserUploads(limit = 50): Promise<UploadSummary[]> {
+  const res = await fetch(`${BASE}/users/${getUserId()}/uploads?limit=${limit}`);
+  if (!res.ok) throw new Error(res.statusText);
+  return res.json();
+}
+
+export async function getUserActivity(limit = 50): Promise<Record<string, unknown>[]> {
+  const res = await fetch(`${BASE}/users/${getUserId()}/activity?limit=${limit}`);
+  if (!res.ok) throw new Error(res.statusText);
+  return res.json();
+}
+
+export async function logActivity(
+  action: string,
+  targetFilename?: string,
+  details?: Record<string, unknown>,
+): Promise<void> {
+  await fetch(`${BASE}/users/${getUserId()}/activity`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, target_filename: targetFilename, details }),
+  }).catch(() => {}); // fire-and-forget
+}
+
+// ── Health / Logs ────────────────────────────────────────────────────────
+
+export interface LogEntry {
+  timestamp: string;
+  level: string;
+  logger: string;
+  message: string;
+  extra: Record<string, unknown>;
+}
+
+export async function getHealthLogs(limit = 50, level?: string): Promise<LogEntry[]> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (level) params.set('level', level);
+  const res = await fetch(`${BASE}/health/logs?${params}`);
+  if (!res.ok) throw new Error(res.statusText);
+  return res.json();
+}
+
+// ── Flow Walker ──────────────────────────────────────────────────────────
+
+export async function getFlowData(
+  tierData: TierMapResult,
+  sessionId: string,
+): Promise<Record<string, unknown>> {
+  const res = await fetch(`${BASE}/layers/flow/${sessionId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...userHeaders() },
+    body: JSON.stringify(tierData),
+  });
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.json();
 }

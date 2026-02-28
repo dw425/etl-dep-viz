@@ -29,6 +29,8 @@ class Upload(Base):
     constellation_json = Column(Text, nullable=True)      # JSON blob (may be null if not yet clustered)
     vector_results_json = Column(Text, nullable=True)     # JSON blob for cached vector analysis
     algorithm = Column(String(64), nullable=True)
+    parse_duration_ms = Column(Integer, nullable=True)
+    user_id = Column(String(64), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     def set_tier_data(self, data: dict) -> None:
@@ -54,6 +56,36 @@ engine = create_engine(settings.database_url, connect_args={"check_same_thread":
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 
+class UserProfile(Base):
+    """Local user profile (no auth — localStorage UUID)."""
+
+    __tablename__ = "user_profiles"
+
+    id = Column(String(64), primary_key=True)
+    display_name = Column(String(128), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_active = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class ActivityLog(Base):
+    """Timestamped activity log entries."""
+
+    __tablename__ = "activity_log"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(64), nullable=True)
+    action = Column(String(64), nullable=False)  # upload|download|recluster|analyze|delete|export
+    target_filename = Column(String(512), nullable=True)
+    details_json = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    def set_details(self, data: dict) -> None:
+        self.details_json = json.dumps(data, default=str)
+
+    def get_details(self) -> dict | None:
+        return json.loads(self.details_json) if self.details_json else None
+
+
 def _migrate_db() -> None:
     """Add missing columns to existing databases (lightweight ALTER TABLE migration)."""
     insp = inspect(engine)
@@ -68,6 +100,20 @@ def _migrate_db() -> None:
                 )
             )
             logger.info("Migrated: added vector_results_json column to uploads")
+        if "parse_duration_ms" not in existing:
+            conn.execute(
+                __import__("sqlalchemy").text(
+                    "ALTER TABLE uploads ADD COLUMN parse_duration_ms INTEGER"
+                )
+            )
+            logger.info("Migrated: added parse_duration_ms column to uploads")
+        if "user_id" not in existing:
+            conn.execute(
+                __import__("sqlalchemy").text(
+                    "ALTER TABLE uploads ADD COLUMN user_id VARCHAR(64)"
+                )
+            )
+            logger.info("Migrated: added user_id column to uploads")
 
 
 def init_db() -> None:

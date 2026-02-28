@@ -836,6 +836,24 @@ export default function GalaxyMapCanvas({
         </div>
       )}
 
+      {/* ── Zoom Controls ──────────────────────────────────────────────────── */}
+      <div style={{
+        position: 'absolute', bottom: sessions.length > 20 ? 196 : 64, right: 16,
+        display: 'flex', flexDirection: 'column', gap: 4, zIndex: 10,
+      }}>
+        {[
+          { label: '+', action: () => { if (svgRef.current && zoomRef.current) d3.select(svgRef.current).transition().duration(200).call(zoomRef.current.scaleBy, 1.5); } },
+          { label: '-', action: () => { if (svgRef.current && zoomRef.current) d3.select(svgRef.current).transition().duration(200).call(zoomRef.current.scaleBy, 0.67); } },
+          { label: '\u2302', action: () => { if (svgRef.current && zoomRef.current) d3.select(svgRef.current).transition().duration(300).call(zoomRef.current.transform, d3.zoomIdentity); } },
+        ].map(b => (
+          <button key={b.label} onClick={b.action} style={{
+            width: 32, height: 32, borderRadius: 6, border: '1px solid rgba(255,255,255,0.1)',
+            background: 'rgba(4,8,18,0.8)', color: '#94a3b8', fontSize: 16,
+            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>{b.label}</button>
+        ))}
+      </div>
+
       {/* ── Minimap ────────────────────────────────────────────────────────── */}
       {sessions.length > 20 && (
         <div style={{

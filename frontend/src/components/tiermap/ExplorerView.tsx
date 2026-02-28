@@ -5,7 +5,7 @@
  * downstream consumers. Clicking a table highlights all connected sessions.
  */
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import type { TierMapResult } from '../../types/tiermap';
 import {
   C,
@@ -72,15 +72,58 @@ const Badge: React.FC<BadgeProps> = ({ name, type, isHighlighted, hasConflict, o
 
 /* ── Main component ──────────────────────────────────────────────────────── */
 
+type SortKey = 'step' | 'tier' | 'name' | 'reads' | 'writes' | 'lookups' | 'transforms';
+
 const ExplorerView: React.FC<Props> = ({ data }) => {
   const [selectedSession, setSelectedSession] = useState<string | null>(null);
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
+  const [sortBy, setSortBy] = useState<SortKey>('step');
+  const [sortDesc, setSortDesc] = useState(false);
+  const [filterText, setFilterText] = useState('');
 
   const sessionData = useMemo(() => buildSessionData(data), [data]);
   const executionOrder = useMemo(() => buildExecutionOrder(data), [data]);
   const writeConflicts = useMemo(() => deriveWriteConflicts(sessionData), [sessionData]);
   const readAfterWrite = useMemo(() => deriveReadAfterWrite(sessionData), [sessionData]);
   const allTables = useMemo(() => deriveTableAggregates(sessionData), [sessionData]);
+
+  // Sorted + filtered session list
+  const sortedSessions = useMemo(() => {
+    let list = [...executionOrder];
+    // Filter
+    if (filterText) {
+      const term = filterText.toLowerCase();
+      list = list.filter(name => {
+        const d = sessionData[name];
+        return name.toLowerCase().includes(term) || d?.short?.toLowerCase().includes(term);
+      });
+    }
+    // Sort
+    list.sort((a, b) => {
+      const da = sessionData[a];
+      const db = sessionData[b];
+      if (!da || !db) return 0;
+      let cmp = 0;
+      switch (sortBy) {
+        case 'step': cmp = (da.step || 0) - (db.step || 0); break;
+        case 'tier': cmp = (da.tier || 0) - (db.tier || 0); break;
+        case 'name': cmp = (da.short || '').localeCompare(db.short || ''); break;
+        case 'reads': cmp = da.sources.length - db.sources.length; break;
+        case 'writes': cmp = da.targets.length - db.targets.length; break;
+        case 'lookups': cmp = da.lookups.length - db.lookups.length; break;
+        case 'transforms': cmp = (da.transforms || 0) - (db.transforms || 0); break;
+      }
+      return sortDesc ? -cmp : cmp;
+    });
+    return list;
+  }, [executionOrder, sessionData, sortBy, sortDesc, filterText]);
+
+  const handleSort = useCallback((key: SortKey) => {
+    if (sortBy === key) setSortDesc(d => !d);
+    else { setSortBy(key); setSortDesc(false); }
+  }, [sortBy]);
+
+  const sortIcon = (key: SortKey) => sortBy === key ? (sortDesc ? '\u25BC' : '\u25B2') : '';
 
   const sel: SessionDetail | null = selectedSession ? sessionData[selectedSession] ?? null : null;
 
@@ -124,37 +167,88 @@ const ExplorerView: React.FC<Props> = ({ data }) => {
     [],
   );
 
+  // Virtual scrolling for large session lists
+  const listRef = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [containerHeight, setContainerHeight] = useState(600);
+  const ITEM_HEIGHT = 90; // approximate height of each session card
+
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(entries => {
+      for (const entry of entries) setContainerHeight(entry.contentRect.height);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const visibleRange = useMemo(() => {
+    const start = Math.max(0, Math.floor(scrollTop / ITEM_HEIGHT) - 2);
+    const end = Math.min(sortedSessions.length, start + Math.ceil(containerHeight / ITEM_HEIGHT) + 4);
+    return { start, end };
+  }, [scrollTop, containerHeight, sortedSessions.length]);
+
   /* ── Render ────────────────────────────────────────────────────────────── */
 
   return (
     <div style={{ display: 'flex', gap: 16, height: '100%', overflow: 'hidden' }}>
       {/* Left: session list */}
       <div
+        ref={listRef}
+        onScroll={e => setScrollTop((e.target as HTMLDivElement).scrollTop)}
         style={{
           width: 320,
           flexShrink: 0,
           display: 'flex',
           flexDirection: 'column',
-          gap: 8,
+          gap: 0,
           overflowY: 'auto',
           paddingRight: 8,
         }}
       >
-        <div
-          style={{
-            fontSize: 10,
-            fontWeight: 700,
-            color: C.textMuted,
-            textTransform: 'uppercase' as const,
-            letterSpacing: '0.1em',
-            padding: '0 4px',
-            marginBottom: 4,
-          }}
-        >
-          Sessions ({executionOrder.length})
+        <div style={{ padding: '0 4px', marginBottom: 8 }}>
+          <div style={{
+            fontSize: 10, fontWeight: 700, color: C.textMuted,
+            textTransform: 'uppercase' as const, letterSpacing: '0.1em', marginBottom: 6,
+          }}>
+            Sessions ({sortedSessions.length}{filterText ? ` / ${executionOrder.length}` : ''})
+          </div>
+          <input
+            value={filterText}
+            onChange={e => setFilterText(e.target.value)}
+            placeholder="Filter sessions..."
+            style={{
+              width: '100%', padding: '5px 8px', borderRadius: 5,
+              border: `1px solid ${C.border}`, background: 'rgba(0,0,0,0.2)',
+              color: C.text, fontSize: 10, outline: 'none', marginBottom: 6,
+            }}
+          />
+          <div style={{ display: 'flex', gap: 2, flexWrap: 'wrap' as const }}>
+            {([
+              ['step', 'Step'], ['tier', 'Tier'], ['name', 'Name'],
+              ['writes', 'W'], ['reads', 'R'], ['lookups', 'L'], ['transforms', 'Tx'],
+            ] as [SortKey, string][]).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => handleSort(key)}
+                style={{
+                  fontSize: 9, padding: '2px 5px', borderRadius: 3,
+                  border: 'none', cursor: 'pointer',
+                  background: sortBy === key ? 'rgba(59,130,246,0.2)' : 'transparent',
+                  color: sortBy === key ? C.accentBlue : C.textDim,
+                  fontWeight: sortBy === key ? 700 : 400,
+                }}
+              >
+                {label} {sortIcon(key)}
+              </button>
+            ))}
+          </div>
         </div>
 
-        {executionOrder.map(name => {
+        {/* Virtual scroll spacer */}
+        <div style={{ height: sortedSessions.length * ITEM_HEIGHT, position: 'relative' }}>
+        {sortedSessions.slice(visibleRange.start, visibleRange.end).map((name, idx) => {
           const d = sessionData[name];
           if (!d) return null;
           const isSel = selectedSession === name;
@@ -166,6 +260,10 @@ const ExplorerView: React.FC<Props> = ({ data }) => {
               key={name}
               onClick={() => handleSessionClick(name)}
               style={{
+                position: 'absolute' as const,
+                top: (visibleRange.start + idx) * ITEM_HEIGHT,
+                left: 0, right: 8,
+                height: ITEM_HEIGHT - 8,
                 background: isSel
                   ? 'rgba(59,130,246,0.15)'
                   : isHi
@@ -178,8 +276,6 @@ const ExplorerView: React.FC<Props> = ({ data }) => {
                 padding: '12px 16px',
                 cursor: 'pointer',
                 opacity: dim ? 0.3 : 1,
-                transition: 'all 0.2s',
-                position: 'relative' as const,
                 overflow: 'hidden' as const,
               }}
             >
@@ -312,6 +408,7 @@ const ExplorerView: React.FC<Props> = ({ data }) => {
             </div>
           );
         })}
+        </div>
       </div>
 
       {/* Right: detail panel */}

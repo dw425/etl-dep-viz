@@ -302,3 +302,140 @@ async def object_detail(
         "object_id": object_id,
         "message": f"Detailed {object_type} view requires extended parsing data",
     }
+
+
+@router.post("/flow/{session_id}")
+async def flow_walker(
+    session_id: str = Path(...),
+    tier_data: dict[str, Any] = Body(...),
+    vector_results: dict[str, Any] = Body({}),
+):
+    """End-to-end flow walker — upstream/downstream chains, mapping pipeline, tables touched."""
+    sessions = tier_data.get("sessions", [])
+    session_map = {s["id"]: s for s in sessions}
+    connections = tier_data.get("connections", [])
+    tables = tier_data.get("tables", [])
+    table_map = {t["id"]: t for t in tables}
+
+    session = session_map.get(session_id)
+    if not session:
+        raise HTTPException(404, f"Session {session_id} not found")
+
+    # Build adjacency for upstream/downstream traversal
+    # upstream: who writes to a table that this session reads
+    # downstream: who reads from a table that this session writes
+    writes_to: dict[str, list[str]] = {}      # table_id → [session_ids that write]
+    reads_from: dict[str, list[str]] = {}     # table_id → [session_ids that read]
+    for c in connections:
+        frm, to, ctype = c.get("from", ""), c.get("to", ""), c.get("type", "")
+        if frm.startswith("S") and to.startswith("T"):
+            writes_to.setdefault(to, []).append(frm)
+        elif frm.startswith("T") and to.startswith("S"):
+            reads_from.setdefault(frm, []).append(to)
+
+    # Find upstream chain (recursive)
+    def _upstream(sid: str, visited: set[str] | None = None) -> list[dict]:
+        if visited is None:
+            visited = set()
+        if sid in visited:
+            return []
+        visited.add(sid)
+        result = []
+        s = session_map.get(sid)
+        if not s:
+            return []
+        # Find tables this session reads from
+        for c in connections:
+            if c.get("to") == sid and c.get("from", "").startswith("T"):
+                table_id = c["from"]
+                # Find sessions that write to that table
+                for writer_sid in writes_to.get(table_id, []):
+                    if writer_sid != sid and writer_sid not in visited:
+                        ws = session_map.get(writer_sid)
+                        if ws:
+                            result.append({
+                                "session_id": writer_sid,
+                                "name": ws.get("full", ws.get("name", "")),
+                                "tier": ws.get("tier"),
+                                "via_table": table_map.get(table_id, {}).get("name", table_id),
+                            })
+                            result.extend(_upstream(writer_sid, visited))
+        return result
+
+    # Find downstream chain (recursive)
+    def _downstream(sid: str, visited: set[str] | None = None) -> list[dict]:
+        if visited is None:
+            visited = set()
+        if sid in visited:
+            return []
+        visited.add(sid)
+        result = []
+        s = session_map.get(sid)
+        if not s:
+            return []
+        for c in connections:
+            if c.get("from") == sid and c.get("to", "").startswith("T"):
+                table_id = c["to"]
+                for reader_sid in reads_from.get(table_id, []):
+                    if reader_sid != sid and reader_sid not in visited:
+                        rs = session_map.get(reader_sid)
+                        if rs:
+                            result.append({
+                                "session_id": reader_sid,
+                                "name": rs.get("full", rs.get("name", "")),
+                                "tier": rs.get("tier"),
+                                "via_table": table_map.get(table_id, {}).get("name", table_id),
+                            })
+                            result.extend(_downstream(reader_sid, visited))
+        return result
+
+    upstream = _upstream(session_id)
+    downstream = _downstream(session_id)
+
+    # Tables touched by this session
+    tables_touched = []
+    for c in connections:
+        if c.get("from") == session_id and c.get("to", "").startswith("T"):
+            t = table_map.get(c["to"])
+            if t:
+                tables_touched.append({**t, "relation": "writes"})
+        elif c.get("to") == session_id and c.get("from", "").startswith("T"):
+            t = table_map.get(c["from"])
+            if t:
+                tables_touched.append({**t, "relation": "reads"})
+
+    # Complexity from V11
+    v11 = vector_results.get("v11_complexity", {})
+    complexity = None
+    for score in v11.get("scores", []):
+        if score["session_id"] == session_id:
+            complexity = score
+            break
+
+    # Wave from V4
+    v4 = vector_results.get("v4_wave_plan", {})
+    wave_info = None
+    for w in v4.get("waves", []):
+        if session_id in w.get("session_ids", []):
+            wave_info = {"wave": w.get("wave"), "session_ids": w.get("session_ids", [])}
+            break
+
+    # SCC membership
+    scc = None
+    for g in v4.get("scc_groups", []):
+        if session_id in g.get("session_ids", []):
+            scc = g
+            break
+
+    return {
+        "session": session,
+        "upstream": upstream,
+        "downstream": downstream,
+        "mapping_detail": session.get("mapping_detail"),
+        "tables_touched": tables_touched,
+        "complexity": complexity,
+        "wave_info": wave_info,
+        "scc": scc,
+        "upstream_count": len(upstream),
+        "downstream_count": len(downstream),
+    }

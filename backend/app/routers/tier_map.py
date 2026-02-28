@@ -9,20 +9,22 @@ import io
 import json
 import logging
 import tempfile
+import time
 import zipfile
 from typing import List, Literal
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, UploadFile, File
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.models.database import Upload, get_db
 
 logger = logging.getLogger(__name__)
 
 # Limits for zip bomb protection
-_MAX_UNCOMPRESSED_TOTAL = 500 * 1024 * 1024  # 500MB total uncompressed
-_SPOOL_THRESHOLD = 50 * 1024 * 1024           # 50MB before spilling to disk
+_MAX_UNCOMPRESSED_TOTAL = 10 * 1024 * 1024 * 1024  # 10GB total uncompressed
+_SPOOL_THRESHOLD = 50 * 1024 * 1024                 # 50MB before spilling to disk
 
 router = APIRouter()
 
@@ -245,6 +247,7 @@ async def _extract_xml_from_uploads(files: List[UploadFile]) -> tuple[list[bytes
 @router.post('/tier-map/analyze')
 async def analyze_tier_map(
     files: List[UploadFile] = File(...),
+    x_user_id: str | None = Header(None),
     db: Session = Depends(get_db),
 ):
     """Upload XML files (Informatica or NiFi, or ZIPs) and receive tier diagram data.
@@ -254,6 +257,7 @@ async def analyze_tier_map(
     if not files:
         raise HTTPException(status_code=422, detail='No files uploaded.')
 
+    t0 = time.monotonic()
     raw, names = await _extract_xml_from_uploads(files)
 
     if not raw:
@@ -264,12 +268,16 @@ async def analyze_tier_map(
     if not result.get('sessions') and result.get('warnings'):
         raise HTTPException(status_code=422, detail='; '.join(result['warnings']))
 
+    duration_ms = int((time.monotonic() - t0) * 1000)
+
     # Persist to DB
     platform = _detect_platform(raw)
     upload = Upload(
         filename=', '.join(names[:5]) + (f' (+{len(names)-5})' if len(names) > 5 else ''),
         platform=platform,
         session_count=len(result.get('sessions', [])),
+        parse_duration_ms=duration_ms,
+        user_id=x_user_id,
     )
     upload.set_tier_data(result)
     db.add(upload)
@@ -284,12 +292,14 @@ async def analyze_tier_map(
 async def analyze_constellation(
     files: List[UploadFile] = File(...),
     algorithm: str = Query('louvain', description='Clustering algorithm'),
+    x_user_id: str | None = Header(None),
     db: Session = Depends(get_db),
 ):
     """Upload XML files (Informatica or NiFi, or ZIPs) and receive tier data + constellation clustering."""
     if not files:
         raise HTTPException(status_code=422, detail='No files uploaded.')
 
+    t0 = time.monotonic()
     raw, names = await _extract_xml_from_uploads(files)
 
     if not raw:
@@ -303,6 +313,8 @@ async def analyze_constellation(
     from app.engines.constellation_engine import build_constellation
     constellation = await asyncio.to_thread(build_constellation, tier_data, algorithm=algorithm)
 
+    duration_ms = int((time.monotonic() - t0) * 1000)
+
     # Persist to DB
     platform = _detect_platform(raw)
     upload = Upload(
@@ -310,6 +322,8 @@ async def analyze_constellation(
         platform=platform,
         session_count=len(tier_data.get('sessions', [])),
         algorithm=algorithm,
+        parse_duration_ms=duration_ms,
+        user_id=x_user_id,
     )
     upload.set_tier_data(tier_data)
     upload.set_constellation(constellation)
@@ -324,6 +338,7 @@ async def analyze_constellation(
 async def analyze_constellation_stream(
     files: List[UploadFile] = File(...),
     algorithm: str = Query('louvain', description='Clustering algorithm'),
+    x_user_id: str | None = Header(None),
     db: Session = Depends(get_db),
 ):
     """Upload XML files (Informatica or NiFi, or ZIPs) and stream progress events via SSE.
@@ -346,18 +361,26 @@ async def analyze_constellation_stream(
         raise HTTPException(status_code=422, detail='No XML files found in upload.')
 
     queue: asyncio.Queue = asyncio.Queue()
+    user_id = x_user_id
 
     async def _process() -> None:
         """Run parsing → clustering, pushing progress events to the queue."""
+        t0 = time.monotonic()
         try:
             total = len(raw)
-            await queue.put({'phase': 'extracting', 'current': total, 'total': total, 'percent': 5.0})
+            logger.info("step=extract files=%d", total)
+            await queue.put({'phase': 'extracting', 'current': total, 'total': total, 'percent': 5.0,
+                             'elapsed_ms': int((time.monotonic() - t0) * 1000)})
 
             # ── Phase: parsing ──
             loop = asyncio.get_running_loop()
+            sessions_so_far = [0]
 
             def progress_fn(current: int, total_files: int, filename: str) -> None:
                 pct = round((current / total_files) * 90.0, 1)  # parsing = 5%–95%
+                elapsed_ms = int((time.monotonic() - t0) * 1000)
+                logger.info("step=parse current=%d/%d file=%s sessions_so_far=%d elapsed_ms=%d",
+                            current, total_files, filename, sessions_so_far[0], elapsed_ms)
                 asyncio.run_coroutine_threadsafe(
                     queue.put({
                         'phase': 'parsing',
@@ -365,29 +388,56 @@ async def analyze_constellation_stream(
                         'total': total_files,
                         'filename': filename,
                         'percent': 5.0 + pct,
+                        'elapsed_ms': elapsed_ms,
                     }),
                     loop,
                 )
 
-            tier_data = await _analyze_mixed(raw, names, progress_fn)
+            # Detect platform for logging
+            platform = _detect_platform(raw)
+            logger.info("step=classify platform=%s files=%d", platform, total)
+
+            # Apply timeout
+            try:
+                tier_data = await asyncio.wait_for(
+                    _analyze_mixed(raw, names, progress_fn),
+                    timeout=settings.parse_timeout_seconds,
+                )
+            except asyncio.TimeoutError:
+                elapsed_ms = int((time.monotonic() - t0) * 1000)
+                logger.error("step=error phase=parsing type=TimeoutError message=Parse timeout after %dms", elapsed_ms)
+                await queue.put({
+                    'phase': 'timeout',
+                    'message': f'Parse timed out after {settings.parse_timeout_seconds}s. Try uploading fewer files.',
+                    'elapsed_ms': elapsed_ms,
+                })
+                return
 
             if not tier_data.get('sessions') and tier_data.get('warnings'):
                 await queue.put({'phase': 'error', 'message': '; '.join(tier_data['warnings'])})
                 return
 
+            sessions_so_far[0] = len(tier_data.get('sessions', []))
+
             # ── Phase: clustering ──
-            await queue.put({'phase': 'clustering', 'current': 0, 'total': 0, 'percent': 95.0})
+            elapsed_ms = int((time.monotonic() - t0) * 1000)
+            logger.info("step=cluster algorithm=%s sessions=%d elapsed_ms=%d",
+                        algorithm, sessions_so_far[0], elapsed_ms)
+            await queue.put({'phase': 'clustering', 'current': 0, 'total': 0, 'percent': 95.0,
+                             'elapsed_ms': elapsed_ms})
 
             from app.engines.constellation_engine import build_constellation
             constellation = await asyncio.to_thread(build_constellation, tier_data, algorithm=algorithm)
 
             # ── Phase: persist ──
-            platform = _detect_platform(raw)
+            duration_ms = int((time.monotonic() - t0) * 1000)
             upload = Upload(
                 filename=', '.join(names[:5]) + (f' (+{len(names)-5})' if len(names) > 5 else ''),
                 platform=platform,
                 session_count=len(tier_data.get('sessions', [])),
                 algorithm=algorithm,
+                parse_duration_ms=duration_ms,
+                user_id=user_id,
             )
             upload.set_tier_data(tier_data)
             upload.set_constellation(constellation)
@@ -395,14 +445,20 @@ async def analyze_constellation_stream(
             db.commit()
             db.refresh(upload)
 
+            logger.info("step=persist upload_id=%d duration_ms=%d", upload.id, duration_ms)
+
             # ── Phase: complete ──
             await queue.put({
                 'phase': 'complete',
                 'percent': 100.0,
+                'elapsed_ms': duration_ms,
                 'result': {'upload_id': upload.id, 'tier_data': tier_data, 'constellation': constellation},
             })
         except Exception as exc:
-            await queue.put({'phase': 'error', 'message': str(exc)})
+            elapsed_ms = int((time.monotonic() - t0) * 1000)
+            logger.error("step=error phase=process type=%s message=%s elapsed_ms=%d",
+                         type(exc).__name__, str(exc), elapsed_ms)
+            await queue.put({'phase': 'error', 'message': str(exc), 'elapsed_ms': elapsed_ms})
 
     async def _event_generator():
         """Yield SSE events from the queue until 'complete' or 'error'."""
@@ -450,10 +506,15 @@ async def list_algorithms():
 @router.get('/tier-map/uploads')
 def list_uploads(
     limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    x_user_id: str | None = Header(None),
     db: Session = Depends(get_db),
 ):
-    """List recent uploads (most recent first)."""
-    rows = db.query(Upload).order_by(Upload.created_at.desc()).limit(limit).all()
+    """List recent uploads (most recent first). Optionally filter by user_id."""
+    q = db.query(Upload)
+    if x_user_id:
+        q = q.filter(Upload.user_id == x_user_id)
+    rows = q.order_by(Upload.created_at.desc()).offset(offset).limit(limit).all()
     return [
         {
             'id': r.id,
@@ -461,6 +522,7 @@ def list_uploads(
             'platform': r.platform,
             'session_count': r.session_count,
             'algorithm': r.algorithm,
+            'parse_duration_ms': r.parse_duration_ms,
             'created_at': r.created_at.isoformat() if r.created_at else None,
         }
         for r in rows
