@@ -2,6 +2,7 @@ node_modules
 __pycache__
 *.pyc
 .git
+.claude
 .venv
 venv
 .env
@@ -12,3 +13,7 @@ build
 *.db
 frontend/dist
 backend/static
+backend/tests
+backend/pytest.ini
+*.md
+!README.md

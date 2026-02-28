@@ -10,6 +10,7 @@ We build a lkp_map from TRANSFORMATION elements first, then look up by instance 
 
 from __future__ import annotations
 
+import logging
 import re
 from collections import defaultdict, deque
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
@@ -26,6 +27,8 @@ try:
     _NX = True
 except ImportError:
     _NX = False
+
+logger = logging.getLogger(__name__)
 
 
 # ── XML helpers ────────────────────────────────────────────────────────────────
@@ -109,38 +112,42 @@ def _build_lookup_map(folder: Any) -> Dict[str, str]:
     lkp: Dict[str, str] = {}
 
     for xf in _iter(folder, 'TRANSFORMATION'):
-        xtype = _attr(xf, 'TYPE').lower()
-        if 'lookup' not in xtype:
-            continue
-        xname = _attr(xf, 'NAME').strip().upper()
-        if not xname:
-            continue
-
-        table = ''
-        sql_fallback = ''
-
-        for ta in _iter(xf, 'TABLEATTRIBUTE'):
-            aname = _attr(ta, 'NAME').lower()
-            aval  = _attr(ta, 'VALUE').strip()
-            if not aval:
+        try:
+            xtype = _attr(xf, 'TYPE').lower()
+            if 'lookup' not in xtype:
+                continue
+            xname = _attr(xf, 'NAME').strip().upper()
+            if not xname:
                 continue
 
-            if 'lookup table name' in aname or 'lookup source row' in aname:
-                # Skip parameter references like $LkpTableName
-                if not aval.startswith('$') and len(aval) > 2:
-                    table = _norm_lkp(aval)
-                    break  # explicit table name wins; stop scanning
-            elif ('sql override' in aname or 'lookup sql override' in aname) and not sql_fallback:
-                m = _FROM_RE.search(aval)
-                if m:
-                    candidate = m.group(1).strip().upper()
-                    # Reject obvious SQL keywords that follow FROM but are not table names
-                    if candidate not in ('DUAL', 'SELECT', 'WHERE', 'AND', 'OR'):
-                        sql_fallback = _norm_lkp(candidate)
+            table = ''
+            sql_fallback = ''
 
-        resolved = table or sql_fallback
-        if resolved and len(resolved) > 2:
-            lkp[xname] = resolved
+            for ta in _iter(xf, 'TABLEATTRIBUTE'):
+                aname = _attr(ta, 'NAME').lower()
+                aval  = _attr(ta, 'VALUE').strip()
+                if not aval:
+                    continue
+
+                if 'lookup table name' in aname or 'lookup source row' in aname:
+                    # Skip parameter references like $LkpTableName
+                    if not aval.startswith('$') and len(aval) > 2:
+                        table = _norm_lkp(aval)
+                        break  # explicit table name wins; stop scanning
+                elif ('sql override' in aname or 'lookup sql override' in aname) and not sql_fallback:
+                    m = _FROM_RE.search(aval)
+                    if m:
+                        candidate = m.group(1).strip().upper()
+                        # Reject obvious SQL keywords that follow FROM but are not table names
+                        if candidate not in ('DUAL', 'SELECT', 'WHERE', 'AND', 'OR'):
+                            sql_fallback = _norm_lkp(candidate)
+
+            resolved = table or sql_fallback
+            if resolved and len(resolved) > 2:
+                lkp[xname] = resolved
+        except Exception as exc:
+            logger.warning("Skipping malformed TRANSFORMATION in lookup map: %s", exc)
+            continue
 
     return lkp
 
@@ -149,14 +156,33 @@ def _build_lookup_map(folder: Any) -> Dict[str, str]:
 
 def _parse_file(content: bytes, fname: str) -> Dict[str, Any]:
     """Return raw session data extracted from one XML file."""
+    if not content or not content.strip():
+        return {'_error': 'Empty file content', '_file': fname}
+
+    # Try UTF-8 first, fall back to Latin-1
     try:
         root = _parse_xml(content)
-    except Exception as exc:
-        return {'_error': str(exc), '_file': fname}
+    except Exception:
+        try:
+            text = content.decode('latin-1')
+            content = text.encode('utf-8')
+            root = _parse_xml(content)
+            logger.info("Re-encoded %s from Latin-1 to UTF-8", fname)
+        except Exception as exc:
+            if _LXML and hasattr(_ET, 'XMLSyntaxError') and isinstance(exc, _ET.XMLSyntaxError):
+                return {'_error': f'XML syntax error: {exc}', '_file': fname}
+            return {'_error': str(exc), '_file': fname}
 
     sessions: Dict[str, Dict[str, Any]] = {}
 
-    for folder in list(_iter(root, 'FOLDER')) or [root]:
+    folders = list(_iter(root, 'FOLDER'))
+    if not folders:
+        # No FOLDER elements — check if root itself has sessions
+        if not list(_iter(root, 'SESSION')):
+            return {'_error': f'No FOLDER or SESSION elements found in {fname}', '_file': fname}
+        folders = [root]
+
+    for folder in folders:
         folder_name = _attr(folder, 'NAME')
 
         # ── Collect source/target name→table mappings for this folder ──────
@@ -428,6 +454,56 @@ def _parse_file(content: bytes, fname: str) -> Dict[str, Any]:
                     sessions[tname]['workflow'] = wf_name
                     if sessions[tname]['step'] == 0:
                         sessions[tname]['step'] = step
+
+        # ── Parse mapping detail for L5/L6 drill-down ─────────────────────
+        for m_el in _iter(folder, 'MAPPING'):
+            mname = _attr(m_el, 'NAME')
+            if not mname:
+                continue
+
+            instances = []
+            for inst in _iter(m_el, 'INSTANCE'):
+                instances.append({
+                    'name': _attr(inst, 'NAME'),
+                    'type': _attr(inst, 'TYPE'),
+                    'transformation_name': _attr(inst, 'TRANSFORMATION_NAME'),
+                    'transformation_type': _attr(inst, 'TRANSFORMATION_TYPE'),
+                })
+
+            connectors = []
+            for conn in _iter(m_el, 'CONNECTOR'):
+                connectors.append({
+                    'from_instance': _attr(conn, 'FROMINSTANCE'),
+                    'from_field': _attr(conn, 'FROMFIELD'),
+                    'to_instance': _attr(conn, 'TOINSTANCE'),
+                    'to_field': _attr(conn, 'TOFIELD'),
+                    'from_type': _attr(conn, 'FROMINSTANCETYPE'),
+                    'to_type': _attr(conn, 'TOINSTANCETYPE'),
+                })
+
+            fields = []
+            for xf in _iter(m_el, 'TRANSFORMATION'):
+                xf_name = _attr(xf, 'NAME')
+                for tf in _iter(xf, 'TRANSFORMFIELD'):
+                    fields.append({
+                        'transform': xf_name,
+                        'name': _attr(tf, 'NAME'),
+                        'datatype': _attr(tf, 'DATATYPE'),
+                        'precision': _attr(tf, 'PRECISION'),
+                        'expression': _attr(tf, 'EXPRESSION'),
+                        'porttype': _attr(tf, 'PORTTYPE'),
+                    })
+
+            detail = {
+                'instances': instances,
+                'connectors': connectors,
+                'fields': fields,
+            }
+
+            # Attach to all sessions that use this mapping
+            for sname, sdata in sessions.items():
+                if sdata.get('mapping') == mname:
+                    sdata['mapping_detail'] = detail
 
     return sessions
 

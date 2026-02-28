@@ -156,14 +156,76 @@ export async function deleteUpload(uploadId: number): Promise<void> {
 
 // ── Vector Analysis ──────────────────────────────────────────────────────
 
-export async function analyzeVectors(tierData: TierMapResult, phase: 1 | 2 | 3 = 1): Promise<VectorResults> {
-  const res = await fetch(`${BASE}/vectors/analyze?phase=${phase}`, {
+export async function analyzeVectors(
+  tierData: TierMapResult,
+  phase: 1 | 2 | 3 = 1,
+  uploadId?: number,
+): Promise<VectorResults> {
+  const params = new URLSearchParams({ phase: String(phase) });
+  if (uploadId) params.set('upload_id', String(uploadId));
+  const res = await fetch(`${BASE}/vectors/analyze?${params}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(tierData),
   });
   if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.json();
+}
+
+export async function getCachedVectors(uploadId: number): Promise<VectorResults | null> {
+  const res = await fetch(`${BASE}/vectors/results/${uploadId}`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(res.statusText);
+  return res.json();
+}
+
+export interface VectorStreamEvent {
+  phase: string;
+  percent?: number;
+  message?: string;
+  result?: VectorResults;
+}
+
+export function analyzeVectorsStream(
+  tierData: TierMapResult,
+  uploadId: number | undefined,
+  onEvent: (event: VectorStreamEvent) => void,
+): AbortController {
+  const ctrl = new AbortController();
+  const params = new URLSearchParams();
+  if (uploadId) params.set('upload_id', String(uploadId));
+
+  fetch(`${BASE}/vectors/analyze-stream?${params}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(tierData),
+    signal: ctrl.signal,
+  }).then(async res => {
+    if (!res.ok) {
+      onEvent({ phase: 'error', message: (await res.json()).detail || res.statusText });
+      return;
+    }
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        const trimmed = line.replace(/^data:\s*/, '').trim();
+        if (!trimmed) continue;
+        try {
+          onEvent(JSON.parse(trimmed));
+        } catch { /* skip malformed */ }
+      }
+    }
+  }).catch(err => {
+    if (err.name !== 'AbortError') onEvent({ phase: 'error', message: err.message });
+  });
+  return ctrl;
 }
 
 export async function getWavePlan(tierData: TierMapResult): Promise<WavePlan> {

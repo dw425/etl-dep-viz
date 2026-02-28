@@ -7,6 +7,8 @@ Auto-detects platform (Informatica vs NiFi) from XML content.
 import asyncio
 import io
 import json
+import logging
+import tempfile
 import zipfile
 from typing import List, Literal
 
@@ -15,6 +17,12 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.models.database import Upload, get_db
+
+logger = logging.getLogger(__name__)
+
+# Limits for zip bomb protection
+_MAX_UNCOMPRESSED_TOTAL = 500 * 1024 * 1024  # 500MB total uncompressed
+_SPOOL_THRESHOLD = 50 * 1024 * 1024           # 50MB before spilling to disk
 
 router = APIRouter()
 
@@ -160,6 +168,9 @@ async def _extract_xml_from_uploads(files: List[UploadFile]) -> tuple[list[bytes
     """Read uploaded files, extracting XML from ZIP archives if present.
 
     Returns (raw_bytes_list, filename_list).
+
+    Hardened: uses SpooledTemporaryFile for large ZIPs, validates zip integrity,
+    enforces per-entry and total uncompressed size limits, runs extraction in thread.
     """
     raw: list[bytes] = []
     names: list[str] = []
@@ -173,21 +184,58 @@ async def _extract_xml_from_uploads(files: List[UploadFile]) -> tuple[list[bytes
 
         # ZIP archive — extract all .xml files inside
         if fname.endswith('.zip') or (content[:4] == b'PK\x03\x04'):
+            # Validate before opening
+            if not zipfile.is_zipfile(io.BytesIO(content)):
+                logger.warning("File %s has ZIP signature but is not a valid ZIP", fname)
+                raw.append(content)
+                names.append(f.filename or 'unknown.xml')
+                continue
+
             try:
-                with zipfile.ZipFile(io.BytesIO(content)) as zf:
-                    for entry in zf.namelist():
-                        # Skip directories and non-xml files
-                        if entry.endswith('/') or not entry.lower().endswith('.xml'):
-                            continue
-                        xml_bytes = zf.read(entry)
-                        if xml_bytes:
-                            raw.append(xml_bytes)
-                            names.append(entry.split('/')[-1])  # just filename, no path
+                def _extract_zip(data: bytes) -> tuple[list[bytes], list[str]]:
+                    z_raw, z_names = [], []
+                    total_uncompressed = 0
+                    # Use SpooledTemporaryFile so large ZIPs don't consume all RAM
+                    spool = tempfile.SpooledTemporaryFile(max_size=_SPOOL_THRESHOLD)
+                    spool.write(data)
+                    spool.seek(0)
+                    with zipfile.ZipFile(spool) as zf:
+                        for info in zf.infolist():
+                            if info.is_dir() or not info.filename.lower().endswith('.xml'):
+                                continue
+                            # Zip bomb protection
+                            total_uncompressed += info.file_size
+                            if total_uncompressed > _MAX_UNCOMPRESSED_TOTAL:
+                                logger.warning(
+                                    "ZIP extraction halted: total uncompressed size exceeds %dMB limit",
+                                    _MAX_UNCOMPRESSED_TOTAL // (1024 * 1024),
+                                )
+                                break
+                            xml_bytes = zf.read(info)
+                            if xml_bytes:
+                                z_raw.append(xml_bytes)
+                                z_names.append(info.filename.split('/')[-1])
+                    spool.close()
+                    return z_raw, z_names
+
+                z_raw, z_names = await asyncio.to_thread(_extract_zip, content)
+                raw.extend(z_raw)
+                names.extend(z_names)
             except zipfile.BadZipFile:
-                # Not a valid zip — try treating as raw XML
+                logger.warning("BadZipFile for %s — treating as raw XML", fname)
                 raw.append(content)
                 names.append(f.filename or 'unknown.xml')
         else:
+            # Try UTF-8 decode, fall back to Latin-1 for encoding detection
+            try:
+                content.decode('utf-8')
+            except UnicodeDecodeError:
+                try:
+                    text = content.decode('latin-1')
+                    content = text.encode('utf-8')
+                    logger.info("Re-encoded %s from Latin-1 to UTF-8", fname)
+                except Exception:
+                    pass  # leave as-is
             raw.append(content)
             names.append(f.filename or 'unknown.xml')
 

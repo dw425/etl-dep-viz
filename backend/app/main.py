@@ -1,20 +1,34 @@
 """ETL Dependency Visualizer — slim FastAPI application."""
 
+import logging
 import os
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.models.database import init_db
 
+# Structured logging
+logging.basicConfig(
+    level=getattr(logging, settings.log_level.upper(), logging.INFO),
+    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("edv")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    logger.info("Starting ETL Dependency Visualizer v1.0.0")
     init_db()
+    logger.info("Database initialized")
     yield
+    logger.info("Shutting down")
 
 
 app = FastAPI(
@@ -33,6 +47,23 @@ app.add_middleware(
 )
 
 
+# Request timing middleware
+@app.middleware("http")
+async def request_timing(request: Request, call_next):
+    start = time.perf_counter()
+    response = await call_next(request)
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    logger.info(
+        "%s %s → %d (%.0fms)",
+        request.method,
+        request.url.path,
+        response.status_code,
+        elapsed_ms,
+    )
+    response.headers["X-Process-Time-Ms"] = f"{elapsed_ms:.0f}"
+    return response
+
+
 # Body size limit middleware
 @app.middleware("http")
 async def limit_body_size(request: Request, call_next):
@@ -41,6 +72,16 @@ async def limit_body_size(request: Request, call_next):
     if cl and int(cl) > max_bytes:
         return Response(status_code=413, content="Request body too large")
     return await call_next(request)
+
+
+# Global exception handler — return JSON instead of stack traces
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error", "type": type(exc).__name__},
+    )
 
 
 # Health probe

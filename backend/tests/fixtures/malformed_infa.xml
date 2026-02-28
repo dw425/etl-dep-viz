@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Valid XML but missing required attributes for Informatica parsing -->
+<POWERMART>
+  <REPOSITORY NAME="BAD_REPO">
+    <FOLDER NAME="BROKEN_FOLDER">
+      <!-- SESSION with no MAPPINGNAME -->
+      <SESSION NAME="s_NO_MAPPING"/>
+
+      <!-- MAPPING with no NAME -->
+      <MAPPING>
+        <INSTANCE TYPE="SOURCE"/>
+      </MAPPING>
+
+      <!-- TRANSFORMATION with missing TYPE -->
+      <TRANSFORMATION NAME="ORPHAN_XFORM">
+        <TABLEATTRIBUTE NAME="Lookup table name" VALUE=""/>
+      </TRANSFORMATION>
+
+      <!-- Valid session but mapping has no instances -->
+      <MAPPING NAME="m_EMPTY_MAPPING"/>
+      <SESSION NAME="s_EMPTY" MAPPINGNAME="m_EMPTY_MAPPING"/>
+
+      <!-- WORKFLOW with no links -->
+      <WORKFLOW NAME="wf_ORPHAN">
+        <TASKINSTANCE TASKNAME="s_EMPTY" TASKTYPE="Session" REFERENCETASKNAME="s_EMPTY"/>
+      </WORKFLOW>
+    </FOLDER>
+  </REPOSITORY>
+</POWERMART>

@@ -33,6 +33,7 @@ import VectorControlPanel from './VectorControlPanel';
 import DrillThroughPanel from './DrillThroughPanel';
 import ExportManager from './ExportManager';
 import { NavigationProvider } from '../../navigation/NavigationProvider';
+import ErrorBoundary from '../shared/ErrorBoundary';
 
 // Lazy-load vector views
 const ComplexityOverlay = lazy(() => import('./ComplexityOverlay'));
@@ -43,11 +44,15 @@ const ConcentrationView = lazy(() => import('./ConcentrationView'));
 const ConsensusRadar = lazy(() => import('./ConsensusRadar'));
 const LayerContainer = lazy(() => import('../../navigation/LayerContainer'));
 const L1AInfra = lazy(() => import('../../layers/L1A_InfrastructureTopology'));
+const TableExplorer = lazy(() => import('./TableExplorer'));
+const DuplicatePipelines = lazy(() => import('./DuplicatePipelines'));
+const ChunkingStrategy = lazy(() => import('./ChunkingStrategy'));
 
 type ViewId = 'tier' | 'galaxy' | 'constellation' | 'explorer' | 'conflicts' | 'order' | 'matrix'
+  | 'tables' | 'duplicates' | 'chunking'
   | 'complexity' | 'waves' | 'umap' | 'simulator' | 'concentration' | 'consensus' | 'layers' | 'infra';
 
-const VIEWS: { id: ViewId; label: string; icon: string; group?: 'core' | 'vector' | 'nav' }[] = [
+const VIEWS: { id: ViewId; label: string; icon: string; group?: 'core' | 'vector' | 'nav' | 'harmonize' }[] = [
   { id: 'tier', label: 'Tier Diagram', icon: '\u25A4', group: 'core' },
   { id: 'galaxy', label: 'Galaxy Map', icon: '\u25C9', group: 'core' },
   { id: 'constellation', label: 'Constellation', icon: '\u2726', group: 'core' },
@@ -55,6 +60,9 @@ const VIEWS: { id: ViewId; label: string; icon: string; group?: 'core' | 'vector
   { id: 'conflicts', label: 'Conflicts', icon: '\u26A0', group: 'core' },
   { id: 'order', label: 'Exec Order', icon: '\u2193', group: 'core' },
   { id: 'matrix', label: 'Matrix', icon: '\u229E', group: 'core' },
+  { id: 'tables', label: 'Tables', icon: '\u2637', group: 'harmonize' },
+  { id: 'duplicates', label: 'Duplicates', icon: '\u2261', group: 'harmonize' },
+  { id: 'chunking', label: 'Chunking', icon: '\u2699', group: 'harmonize' },
   { id: 'complexity', label: 'Complexity', icon: '\u25A3', group: 'vector' },
   { id: 'waves', label: 'Waves', icon: '\u224B', group: 'vector' },
   { id: 'umap', label: 'UMAP', icon: '\u25CE', group: 'vector' },
@@ -462,7 +470,7 @@ export function DependencyApp() {
         {/* View content */}
         <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, color: '#64748b' }}>Loading view...</div>}>
-            <div style={{ flex: 1, overflow: 'hidden', padding: (['tier', 'matrix', 'galaxy', 'constellation'].includes(view)) ? 0 : 20 }}>
+            <div style={{ flex: 1, overflow: 'hidden', padding: (['tier', 'matrix', 'galaxy', 'constellation', 'tables', 'duplicates'].includes(view)) ? 0 : 20 }}>
               {/* Core views */}
               {view === 'tier' && scopedTierData && <TierDiagram data={scopedTierData} />}
               {view === 'galaxy' && scopedTierData && (
@@ -483,50 +491,93 @@ export function DependencyApp() {
               {view === 'order' && scopedTierData && <ExecOrderView data={scopedTierData} />}
               {view === 'matrix' && scopedTierData && <MatrixView data={scopedTierData} />}
 
+              {/* Data harmonization views */}
+              {view === 'tables' && scopedTierData && (
+                <ErrorBoundary>
+                  <div style={{ overflow: 'hidden', height: '100%' }}>
+                    <TableExplorer data={scopedTierData} />
+                  </div>
+                </ErrorBoundary>
+              )}
+              {view === 'duplicates' && scopedTierData && (
+                <ErrorBoundary>
+                  <div style={{ overflow: 'hidden', height: '100%' }}>
+                    <DuplicatePipelines data={scopedTierData} />
+                  </div>
+                </ErrorBoundary>
+              )}
+              {view === 'chunking' && tierData && (
+                <ErrorBoundary>
+                  <ChunkingStrategy
+                    tierData={tierData}
+                    constellation={constellation}
+                    vectorResults={vectorResults}
+                    onRecluster={handleRecluster}
+                    onProceed={(v) => setView(v as ViewId)}
+                  />
+                </ErrorBoundary>
+              )}
+
               {/* Vector views */}
               {view === 'complexity' && vectorResults?.v11_complexity && (
-                <div style={{ overflow: 'auto', height: '100%' }}>
-                  <ComplexityOverlay complexity={vectorResults.v11_complexity} />
-                </div>
+                <ErrorBoundary>
+                  <div style={{ overflow: 'auto', height: '100%' }}>
+                    <ComplexityOverlay complexity={vectorResults.v11_complexity} />
+                  </div>
+                </ErrorBoundary>
               )}
               {view === 'waves' && vectorResults?.v4_wave_plan && (
-                <div style={{ overflow: 'auto', height: '100%' }}>
-                  <WavePlanView wavePlan={vectorResults.v4_wave_plan} />
-                </div>
+                <ErrorBoundary>
+                  <div style={{ overflow: 'auto', height: '100%' }}>
+                    <WavePlanView wavePlan={vectorResults.v4_wave_plan} />
+                  </div>
+                </ErrorBoundary>
               )}
               {view === 'umap' && vectorResults && (
-                <div style={{ overflow: 'auto', height: '100%' }}>
-                  <UMAPView vectorResults={vectorResults} />
-                </div>
+                <ErrorBoundary>
+                  <div style={{ overflow: 'auto', height: '100%' }}>
+                    <UMAPView vectorResults={vectorResults} />
+                  </div>
+                </ErrorBoundary>
               )}
               {view === 'simulator' && vectorResults?.v9_wave_function && tierData && (
-                <div style={{ overflow: 'auto', height: '100%' }}>
-                  <WaveSimulator waveFunction={vectorResults.v9_wave_function} tierData={tierData} />
-                </div>
+                <ErrorBoundary>
+                  <div style={{ overflow: 'auto', height: '100%' }}>
+                    <WaveSimulator waveFunction={vectorResults.v9_wave_function} tierData={tierData} />
+                  </div>
+                </ErrorBoundary>
               )}
               {view === 'concentration' && vectorResults?.v10_concentration && (
-                <div style={{ overflow: 'auto', height: '100%' }}>
-                  <ConcentrationView concentration={vectorResults.v10_concentration} />
-                </div>
+                <ErrorBoundary>
+                  <div style={{ overflow: 'auto', height: '100%' }}>
+                    <ConcentrationView concentration={vectorResults.v10_concentration} />
+                  </div>
+                </ErrorBoundary>
               )}
               {view === 'consensus' && vectorResults?.v8_ensemble_consensus && (
-                <div style={{ overflow: 'auto', height: '100%' }}>
-                  <ConsensusRadar ensemble={vectorResults.v8_ensemble_consensus} />
-                </div>
+                <ErrorBoundary>
+                  <div style={{ overflow: 'auto', height: '100%' }}>
+                    <ConsensusRadar ensemble={vectorResults.v8_ensemble_consensus} />
+                  </div>
+                </ErrorBoundary>
               )}
 
               {/* Layer navigation */}
               {view === 'layers' && tierData && (
-                <NavigationProvider initialTierData={tierData} initialVectorResults={vectorResults} onVectorResults={setVectorResults}>
-                  <div style={{ overflow: 'auto', height: '100%' }}>
-                    <LayerContainer />
-                  </div>
-                </NavigationProvider>
+                <ErrorBoundary>
+                  <NavigationProvider initialTierData={tierData} initialVectorResults={vectorResults} onVectorResults={setVectorResults}>
+                    <div style={{ overflow: 'auto', height: '100%' }}>
+                      <LayerContainer />
+                    </div>
+                  </NavigationProvider>
+                </ErrorBoundary>
               )}
               {view === 'infra' && tierData && (
-                <div style={{ overflow: 'auto', height: '100%' }}>
-                  <L1AInfra tierData={tierData} vectorResults={vectorResults} />
-                </div>
+                <ErrorBoundary>
+                  <div style={{ overflow: 'auto', height: '100%' }}>
+                    <L1AInfra tierData={tierData} vectorResults={vectorResults} />
+                  </div>
+                </ErrorBoundary>
               )}
             </div>
           </Suspense>

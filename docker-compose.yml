@@ -12,6 +12,13 @@ services:
       - db-data:/app/backend/data
     environment:
       - EDV_DATABASE_URL=sqlite:///./data/etl_dep_viz.db
+      - EDV_MAX_UPLOAD_MB=300
+      - EDV_LOG_LEVEL=INFO
+      - EDV_VECTOR_TIMEOUT_SECONDS=120
+    deploy:
+      resources:
+        limits:
+          memory: 2G
 
 volumes:
   db-data:

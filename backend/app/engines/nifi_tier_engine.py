@@ -11,6 +11,7 @@ Concept mapping:
 
 from __future__ import annotations
 
+import logging
 import re
 from collections import defaultdict, deque
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
@@ -20,6 +21,8 @@ try:
     _NX = True
 except ImportError:
     _NX = False
+
+logger = logging.getLogger(__name__)
 
 
 # ── Processor classification ─────────────────────────────────────────────────
@@ -148,23 +151,34 @@ def _parse_nifi_xml(content: bytes) -> Dict[str, Any]:
 
     Returns {'processors': [...], 'connections': [...], 'process_groups': [...]}
     """
+    if not content or not content.strip():
+        return {'_error': 'Empty file content', 'processors': [], 'connections': [], 'process_groups': []}
+
     try:
         from app.engines.parsers.nifi_xml import parse_nifi_xml
         result = parse_nifi_xml(content, 'tier_map_input.xml')
         procs = []
         for p in result.processors:
+            pname = p.name
+            if not pname or not isinstance(pname, str) or not pname.strip():
+                logger.warning("Skipping processor with empty name in NiFi XML")
+                continue
             procs.append({
-                'name': p.name,
+                'name': pname,
                 'type': p.type,
                 'group': p.group,
-                'properties': p.properties,
+                'properties': p.properties or {},
                 'classification': _classify(p.type),
             })
         conns = []
         for c in result.connections:
+            src, dst = c.source_name, c.destination_name
+            if not src or not dst:
+                logger.warning("Skipping connection with unresolved endpoint: %s -> %s", src, dst)
+                continue
             conns.append({
-                'source': c.source_name,
-                'destination': c.destination_name,
+                'source': src,
+                'destination': dst,
                 'relationship': c.relationship,
             })
         groups = []
@@ -174,7 +188,11 @@ def _parse_nifi_xml(content: bytes) -> Dict[str, Any]:
                 'processors': g.processors,
             })
         return {'processors': procs, 'connections': conns, 'process_groups': groups}
+    except ValueError as exc:
+        logger.warning("ValueError parsing NiFi XML: %s", exc)
+        return {'_error': str(exc), 'processors': [], 'connections': [], 'process_groups': []}
     except Exception as exc:
+        logger.error("Error parsing NiFi XML: %s", exc)
         return {'_error': str(exc), 'processors': [], 'connections': [], 'process_groups': []}
 
 

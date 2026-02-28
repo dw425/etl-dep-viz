@@ -7,7 +7,7 @@ from datetime import datetime
 
 from sqlalchemy import Column, DateTime, String, Text
 
-from app.db.engine import Base
+from app.models.database import Base
 
 
 class ActiveTag(Base):

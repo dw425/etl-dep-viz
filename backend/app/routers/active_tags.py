@@ -9,7 +9,7 @@ from typing import Any
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.db.engine import get_db
+from app.models.database import get_db
 from app.models.tags import ActiveTag
 
 router = APIRouter(prefix="/active-tags", tags=["active-tags"])

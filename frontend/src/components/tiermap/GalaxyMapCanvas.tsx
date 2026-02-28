@@ -25,6 +25,7 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import * as d3 from 'd3';
 import type { TierMapResult, TierSession, TierTable } from '../../types/tiermap';
+import GalaxyFilterSidebar, { type GalaxyFilters, getDefaultFilters, applyGalaxyFilters } from './GalaxyFilterSidebar';
 
 // ── Colors ────────────────────────────────────────────────────────────────────
 
@@ -67,8 +68,6 @@ interface OEdge { x1: number; y1: number; x2: number; y2: number; connType: stri
 export default function GalaxyMapCanvas({
   data, onClose,
 }: { data: TierMapResult; onClose: () => void }) {
-  const { sessions, tables, connections } = data;
-
   const [dims,    setDims]    = useState({ w: window.innerWidth, h: window.innerHeight });
   const [focusId, setFocusId] = useState<string | null>(null);
   const [expTbls, setExpTbls] = useState<Set<string>>(new Set());
@@ -77,6 +76,12 @@ export default function GalaxyMapCanvas({
   const [search,  setSearch]  = useState('');
   const [showSearch, setShowSearch] = useState(false);
   const [detailNode, setDetailNode] = useState<TierSession | null>(null);
+  const [galaxyFilters, setGalaxyFilters] = useState<GalaxyFilters>(() => getDefaultFilters(data));
+  const [filterVisible, setFilterVisible] = useState(false);
+
+  // Apply filters to data
+  const filteredData = useMemo(() => applyGalaxyFilters(data, galaxyFilters), [data, galaxyFilters]);
+  const { sessions, tables, connections } = filteredData;
 
   const svgRef = useRef<SVGSVGElement>(null);
   const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown>>();
@@ -408,8 +413,18 @@ export default function GalaxyMapCanvas({
           </span>
         )}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button
+            onClick={() => setFilterVisible(prev => !prev)}
+            style={{
+              ...btnSt,
+              borderColor: filterVisible ? 'rgba(59,130,246,0.5)' : undefined,
+              color: filterVisible ? '#60a5fa' : '#64748B',
+            }}
+          >
+            ⫶ Filters {sessions.length < data.sessions.length ? `(${sessions.length}/${data.sessions.length})` : ''}
+          </button>
           <button onClick={() => { setShowSearch(prev => !prev); setTimeout(() => searchRef.current?.focus(), 50); }} style={btnSt}>
-            🔍 Search
+            Search
           </button>
           {focusId && (
             <button onClick={onClose} style={btnSt}>✕ Close</button>
@@ -536,7 +551,7 @@ export default function GalaxyMapCanvas({
               </g>
 
               {/* Session→session base edges */}
-              {baseEdges.map((cn, i) => {
+              {galaxyFilters.showEdges && baseEdges.map((cn, i) => {
                 const fp = sessPos.get(cn.from);
                 const tp = sessPos.get(cn.to);
                 if (!fp || !tp) return null;
@@ -858,6 +873,15 @@ export default function GalaxyMapCanvas({
           </div>
         ))}
       </div>
+
+      {/* ── Filter Sidebar ──────────────────────────────────────────────── */}
+      <GalaxyFilterSidebar
+        data={data}
+        filters={galaxyFilters}
+        onFiltersChange={setGalaxyFilters}
+        visible={filterVisible}
+        onToggle={() => setFilterVisible(prev => !prev)}
+      />
     </div>
   );
 }
