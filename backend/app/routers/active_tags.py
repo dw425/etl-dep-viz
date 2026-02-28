@@ -69,6 +69,32 @@ def get_tags_for_object(
     }
 
 
+@router.patch("/{tag_id}")
+def update_tag(
+    tag_id: str,
+    data: dict[str, Any] = Body(...),
+    db: Session = Depends(get_db),
+):
+    """Update tag fields (color, label, note)."""
+    tag = db.query(ActiveTag).filter(ActiveTag.tag_id == tag_id).first()
+    if not tag:
+        raise HTTPException(404, "Tag not found")
+    for field in ('color', 'label', 'note', 'tag_type'):
+        if field in data:
+            setattr(tag, field, data[field])
+    db.commit()
+    db.refresh(tag)
+    return {
+        "tag_id": tag.tag_id,
+        "object_id": tag.object_id,
+        "object_type": tag.object_type,
+        "tag_type": tag.tag_type,
+        "label": tag.label,
+        "color": tag.color,
+        "note": tag.note,
+    }
+
+
 @router.delete("/{tag_id}")
 def delete_tag(
     tag_id: str,

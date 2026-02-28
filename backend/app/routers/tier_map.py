@@ -5,6 +5,7 @@ Auto-detects platform (Informatica vs NiFi) from XML content.
 """
 
 import asyncio
+import hashlib
 import io
 import json
 import logging
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 # Limits for zip bomb protection
 _MAX_UNCOMPRESSED_TOTAL = 10 * 1024 * 1024 * 1024  # 10GB total uncompressed
 _SPOOL_THRESHOLD = 50 * 1024 * 1024                 # 50MB before spilling to disk
+_ZIP_STREAM_CHUNK = 4 * 1024 * 1024                  # 4MB streaming chunk
 
 router = APIRouter()
 
@@ -171,11 +173,12 @@ async def _extract_xml_from_uploads(files: List[UploadFile]) -> tuple[list[bytes
 
     Returns (raw_bytes_list, filename_list).
 
-    Hardened: uses SpooledTemporaryFile for large ZIPs, validates zip integrity,
-    enforces per-entry and total uncompressed size limits, runs extraction in thread.
+    Hardened: streams ZIP entries one at a time (not all into RAM),
+    validates zip integrity, enforces size limits, detects duplicates via SHA-256.
     """
     raw: list[bytes] = []
     names: list[str] = []
+    seen_hashes: set[str] = set()  # SHA-256 dedup within extraction
 
     for f in files:
         content = await f.read()
@@ -184,7 +187,7 @@ async def _extract_xml_from_uploads(files: List[UploadFile]) -> tuple[list[bytes
 
         fname = (f.filename or 'unknown').lower()
 
-        # ZIP archive — extract all .xml files inside
+        # ZIP archive — stream-extract .xml files one at a time
         if fname.endswith('.zip') or (content[:4] == b'PK\x03\x04'):
             # Validate before opening
             if not zipfile.is_zipfile(io.BytesIO(content)):
@@ -194,9 +197,11 @@ async def _extract_xml_from_uploads(files: List[UploadFile]) -> tuple[list[bytes
                 continue
 
             try:
-                def _extract_zip(data: bytes) -> tuple[list[bytes], list[str]]:
+                def _extract_zip_streaming(data: bytes) -> tuple[list[bytes], list[str], int]:
+                    """Extract XML files from ZIP one at a time, returning dedup count."""
                     z_raw, z_names = [], []
                     total_uncompressed = 0
+                    dupes = 0
                     # Use SpooledTemporaryFile so large ZIPs don't consume all RAM
                     spool = tempfile.SpooledTemporaryFile(max_size=_SPOOL_THRESHOLD)
                     spool.write(data)
@@ -213,31 +218,64 @@ async def _extract_xml_from_uploads(files: List[UploadFile]) -> tuple[list[bytes
                                     _MAX_UNCOMPRESSED_TOTAL // (1024 * 1024),
                                 )
                                 break
+                            # Stream one entry at a time
                             xml_bytes = zf.read(info)
-                            if xml_bytes:
-                                z_raw.append(xml_bytes)
-                                z_names.append(info.filename.split('/')[-1])
+                            if not xml_bytes:
+                                continue
+                            # SHA-256 duplicate detection within ZIP
+                            content_hash = hashlib.sha256(xml_bytes).hexdigest()
+                            if content_hash in seen_hashes:
+                                dupes += 1
+                                logger.debug("Skipping duplicate ZIP entry %s", info.filename)
+                                continue
+                            seen_hashes.add(content_hash)
+                            z_raw.append(xml_bytes)
+                            z_names.append(info.filename.split('/')[-1])
                     spool.close()
-                    return z_raw, z_names
+                    return z_raw, z_names, dupes
 
-                z_raw, z_names = await asyncio.to_thread(_extract_zip, content)
+                z_raw, z_names, dupes = await asyncio.to_thread(_extract_zip_streaming, content)
                 raw.extend(z_raw)
                 names.extend(z_names)
+                if dupes:
+                    logger.info("ZIP %s: skipped %d duplicate entries", fname, dupes)
             except zipfile.BadZipFile:
                 logger.warning("BadZipFile for %s — treating as raw XML", fname)
                 raw.append(content)
                 names.append(f.filename or 'unknown.xml')
         else:
-            # Try UTF-8 decode, fall back to Latin-1 for encoding detection
+            # Encoding detection (Item 7): try chardet, fall back to Latin-1
             try:
                 content.decode('utf-8')
             except UnicodeDecodeError:
+                detected_enc = None
                 try:
-                    text = content.decode('latin-1')
-                    content = text.encode('utf-8')
-                    logger.info("Re-encoded %s from Latin-1 to UTF-8", fname)
+                    import chardet
+                    result = chardet.detect(content[:8192])
+                    detected_enc = result.get('encoding')
+                    confidence = result.get('confidence', 0)
+                    if detected_enc and confidence > 0.5:
+                        text = content.decode(detected_enc)
+                        content = text.encode('utf-8')
+                        logger.info("Re-encoded %s from %s (%.0f%% confidence) to UTF-8",
+                                    fname, detected_enc, confidence * 100)
+                    else:
+                        raise ValueError("Low confidence")
                 except Exception:
-                    pass  # leave as-is
+                    try:
+                        text = content.decode('latin-1')
+                        content = text.encode('utf-8')
+                        logger.info("Re-encoded %s from Latin-1 to UTF-8 (chardet unavailable or low confidence)", fname)
+                    except Exception:
+                        pass  # leave as-is
+
+            # SHA-256 duplicate detection for loose files
+            content_hash = hashlib.sha256(content).hexdigest()
+            if content_hash in seen_hashes:
+                logger.info("Skipping duplicate file %s", fname)
+                continue
+            seen_hashes.add(content_hash)
+
             raw.append(content)
             names.append(f.filename or 'unknown.xml')
 
@@ -375,10 +413,19 @@ async def analyze_constellation_stream(
             # ── Phase: parsing ──
             loop = asyncio.get_running_loop()
             sessions_so_far = [0]
+            files_parsed = [0]
+            file_statuses: list[dict] = []
 
             def progress_fn(current: int, total_files: int, filename: str) -> None:
+                files_parsed[0] = current
                 pct = round((current / total_files) * 90.0, 1)  # parsing = 5%–95%
                 elapsed_ms = int((time.monotonic() - t0) * 1000)
+                # ETA estimation based on average file parse time
+                if current > 0 and current < total_files:
+                    avg_ms = elapsed_ms / current
+                    eta_ms = int(avg_ms * (total_files - current))
+                else:
+                    eta_ms = 0
                 logger.info("step=parse current=%d/%d file=%s sessions_so_far=%d elapsed_ms=%d",
                             current, total_files, filename, sessions_so_far[0], elapsed_ms)
                 asyncio.run_coroutine_threadsafe(
@@ -389,6 +436,8 @@ async def analyze_constellation_stream(
                         'filename': filename,
                         'percent': 5.0 + pct,
                         'elapsed_ms': elapsed_ms,
+                        'eta_ms': eta_ms,
+                        'sessions_found': sessions_so_far[0],
                     }),
                     loop,
                 )
@@ -424,7 +473,8 @@ async def analyze_constellation_stream(
             logger.info("step=cluster algorithm=%s sessions=%d elapsed_ms=%d",
                         algorithm, sessions_so_far[0], elapsed_ms)
             await queue.put({'phase': 'clustering', 'current': 0, 'total': 0, 'percent': 95.0,
-                             'elapsed_ms': elapsed_ms})
+                             'elapsed_ms': elapsed_ms,
+                             'sessions_found': sessions_so_far[0]})
 
             from app.engines.constellation_engine import build_constellation
             constellation = await asyncio.to_thread(build_constellation, tier_data, algorithm=algorithm)
@@ -448,12 +498,18 @@ async def analyze_constellation_stream(
             logger.info("step=persist upload_id=%d duration_ms=%d", upload.id, duration_ms)
 
             # ── Phase: complete ──
-            await queue.put({
+            # Include parse audit in the result
+            parse_audit = tier_data.pop('_parse_audit', None)
+            complete_event = {
                 'phase': 'complete',
                 'percent': 100.0,
                 'elapsed_ms': duration_ms,
+                'sessions_found': sessions_so_far[0],
                 'result': {'upload_id': upload.id, 'tier_data': tier_data, 'constellation': constellation},
-            })
+            }
+            if parse_audit:
+                complete_event['parse_audit'] = parse_audit
+            await queue.put(complete_event)
         except Exception as exc:
             elapsed_ms = int((time.monotonic() - t0) * 1000)
             logger.error("step=error phase=process type=%s message=%s elapsed_ms=%d",
@@ -559,3 +615,68 @@ def delete_upload(upload_id: int, db: Session = Depends(get_db)):
     db.delete(row)
     db.commit()
     return {'deleted': True}
+
+
+# ── Paginated session API (Item 17) ──────────────────────────────────────────
+
+@router.get('/tier-map/uploads/{upload_id}/sessions')
+def list_sessions(
+    upload_id: int,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    tier: int | None = Query(None, description='Filter by tier'),
+    search: str | None = Query(None, description='Search by session name'),
+    db: Session = Depends(get_db),
+):
+    """Paginated session list for an upload — supports tier filter and name search."""
+    from app.models.database import SessionRecord
+
+    row = db.query(Upload).filter(Upload.id == upload_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail='Upload not found.')
+
+    # Check if we have normalized session records
+    q = db.query(SessionRecord).filter(SessionRecord.upload_id == upload_id)
+    count = q.count()
+
+    if count == 0:
+        # Fall back to JSON blob for backwards compatibility
+        tier_data = row.get_tier_data()
+        sessions = tier_data.get('sessions', [])
+        # Apply filters
+        if tier is not None:
+            sessions = [s for s in sessions if int(s.get('tier', 0)) == tier]
+        if search:
+            search_lower = search.lower()
+            sessions = [s for s in sessions if search_lower in s.get('name', '').lower()
+                        or search_lower in s.get('full', '').lower()]
+        total = len(sessions)
+        page = sessions[offset:offset + limit]
+        return {'sessions': page, 'total': total, 'offset': offset, 'limit': limit}
+
+    # Use normalized records
+    if tier is not None:
+        q = q.filter(SessionRecord.tier == float(tier))
+    if search:
+        q = q.filter(SessionRecord.full_name.ilike(f'%{search}%'))
+
+    total = q.count()
+    rows = q.order_by(SessionRecord.tier, SessionRecord.step).offset(offset).limit(limit).all()
+
+    sessions = []
+    for r in rows:
+        sessions.append({
+            'id': r.session_id,
+            'name': r.name,
+            'full': r.full_name,
+            'tier': r.tier,
+            'step': r.step,
+            'workflow': r.workflow,
+            'transforms': r.transforms,
+            'critical': bool(r.critical),
+            'sources': json.loads(r.sources_json) if r.sources_json else [],
+            'targets': json.loads(r.targets_json) if r.targets_json else [],
+            'lookups': json.loads(r.lookups_json) if r.lookups_json else [],
+        })
+
+    return {'sessions': sessions, 'total': total, 'offset': offset, 'limit': limit}

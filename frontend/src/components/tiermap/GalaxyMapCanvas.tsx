@@ -78,6 +78,7 @@ export default function GalaxyMapCanvas({
   const [detailNode, setDetailNode] = useState<TierSession | null>(null);
   const [galaxyFilters, setGalaxyFilters] = useState<GalaxyFilters>(() => getDefaultFilters(data));
   const [filterVisible, setFilterVisible] = useState(false);
+  const [zoomScale, setZoomScale] = useState(1);
 
   // Apply filters to data
   const filteredData = useMemo(() => applyGalaxyFilters(data, galaxyFilters), [data, galaxyFilters]);
@@ -123,6 +124,7 @@ export default function GalaxyMapCanvas({
       .scaleExtent([0.2, 8])
       .on('zoom', (event) => {
         g.attr('transform', event.transform.toString());
+        setZoomScale(event.transform.k);
       });
 
     zoomRef.current = zoom;
@@ -701,13 +703,15 @@ export default function GalaxyMapCanvas({
             </>
           )}
 
-          {/* ── Session nodes — overview: all; focused: only the focused one ── */}
+          {/* ── Session nodes — semantic zoom: dot/circle/full based on zoom ── */}
           {sessions.map(s => {
             const p = sessPos.get(s.id);
             if (!p) return null;
             if (focusId && s.id !== focusId) return null;
             const isFocus = focusId === s.id;
             const isHighlighted = highlightSet.has(s.id);
+            // Semantic zoom levels: dot (<0.4), circle (0.4-0.8), full (>0.8)
+            const lod = isFocus ? 'full' : zoomScale < 0.4 ? 'dot' : zoomScale < 0.8 ? 'circle' : 'full';
             return (
               <g key={s.id}
                 transform={`translate(${p.x},${p.y})`}
@@ -719,39 +723,61 @@ export default function GalaxyMapCanvas({
                 onMouseLeave={hideTip}
                 filter={isFocus ? 'url(#gmd)' : isHighlighted ? 'url(#gsm)' : undefined}
               >
-                {/* Search highlight ring */}
-                {isHighlighted && !isFocus && (
-                  <circle r={p.r + 20} fill="none" stroke="#FBBF24" strokeWidth={2} opacity={0.6}>
-                    <animate attributeName="opacity" values="0.6;0.2;0.6" dur="1.5s" repeatCount="indefinite" />
-                  </circle>
-                )}
-                {/* Focus glow */}
-                {isFocus && (
+                {/* Dot LOD — simple filled circle */}
+                {lod === 'dot' && (
                   <>
-                    <circle r={p.r + 30} fill={p.color} opacity={0.07} />
-                    <circle r={p.r + 14} fill="none" stroke={p.color}
-                      strokeWidth={1.5} opacity={0.35} strokeDasharray="5,5"
-                    />
+                    <circle r={6} fill={p.color} opacity={0.7} />
+                    {s.critical && <circle r={8} fill="none" stroke="#EF4444" strokeWidth={1.5} opacity={0.7} />}
                   </>
                 )}
-                {/* Ambient halo */}
-                <circle r={p.r + 5} fill={p.color} opacity={0.08} />
-                {/* Main body */}
-                <circle r={p.r} fill={`${p.color}1E`} stroke={p.color}
-                  strokeWidth={isFocus ? 2.5 : 1.8}
-                />
-                {/* Critical ring */}
-                {s.critical && (
-                  <circle r={p.r + 4} fill="none" stroke="#EF4444" strokeWidth={2.5} opacity={0.85} />
+                {/* Circle LOD — circle with tier number */}
+                {lod === 'circle' && (
+                  <>
+                    <circle r={p.r * 0.7} fill={`${p.color}1E`} stroke={p.color} strokeWidth={1.5} />
+                    {s.critical && <circle r={p.r * 0.7 + 3} fill="none" stroke="#EF4444" strokeWidth={2} opacity={0.8} />}
+                    <text y={4} textAnchor="middle" fill={p.color} fontSize={10} fontWeight={700}>
+                      T{s.tier}
+                    </text>
+                  </>
                 )}
-                {/* Name */}
-                <text y={-7} textAnchor="middle" fill="#F1F5F9" fontSize={12} fontWeight={800}>
-                  {s.name.length > 12 ? s.name.slice(0, 12) + '…' : s.name}
-                </text>
-                {/* Tier */}
-                <text y={7} textAnchor="middle" fill={p.color} fontSize={10} fontWeight={600}>
-                  T{s.tier}
-                </text>
+                {/* Full LOD — complete rendering */}
+                {lod === 'full' && (
+                  <>
+                    {/* Search highlight ring */}
+                    {isHighlighted && !isFocus && (
+                      <circle r={p.r + 20} fill="none" stroke="#FBBF24" strokeWidth={2} opacity={0.6}>
+                        <animate attributeName="opacity" values="0.6;0.2;0.6" dur="1.5s" repeatCount="indefinite" />
+                      </circle>
+                    )}
+                    {/* Focus glow */}
+                    {isFocus && (
+                      <>
+                        <circle r={p.r + 30} fill={p.color} opacity={0.07} />
+                        <circle r={p.r + 14} fill="none" stroke={p.color}
+                          strokeWidth={1.5} opacity={0.35} strokeDasharray="5,5"
+                        />
+                      </>
+                    )}
+                    {/* Ambient halo */}
+                    <circle r={p.r + 5} fill={p.color} opacity={0.08} />
+                    {/* Main body */}
+                    <circle r={p.r} fill={`${p.color}1E`} stroke={p.color}
+                      strokeWidth={isFocus ? 2.5 : 1.8}
+                    />
+                    {/* Critical ring */}
+                    {s.critical && (
+                      <circle r={p.r + 4} fill="none" stroke="#EF4444" strokeWidth={2.5} opacity={0.85} />
+                    )}
+                    {/* Name */}
+                    <text y={-7} textAnchor="middle" fill="#F1F5F9" fontSize={12} fontWeight={800}>
+                      {s.name.length > 12 ? s.name.slice(0, 12) + '…' : s.name}
+                    </text>
+                    {/* Tier */}
+                    <text y={7} textAnchor="middle" fill={p.color} fontSize={10} fontWeight={600}>
+                      T{s.tier}
+                    </text>
+                  </>
+                )}
                 {/* Critical label */}
                 {s.critical && (
                   <text y={p.r + 18} textAnchor="middle" fill="#EF4444" fontSize={9} fontWeight={800}>

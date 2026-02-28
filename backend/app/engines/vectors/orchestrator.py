@@ -8,6 +8,8 @@ Phases:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import time
 from typing import Any
@@ -19,12 +21,44 @@ from .v11_complexity_analyzer import ComplexityAnalyzer
 
 logger = logging.getLogger(__name__)
 
+# Vector dependency graph: vector -> set of prerequisite vectors
+_VECTOR_DEPS: dict[str, set[str]] = {
+    'v1_community': set(),
+    'v4_wave_plan': {'v11_complexity'},
+    'v11_complexity': set(),
+    'v2_hierarchical': set(),
+    'v3_umap': set(),
+    'v9_wave_function': {'v11_complexity'},
+    'v10_concentration': set(),
+    'v5_affinity': set(),
+    'v6_spectral': set(),
+    'v7_hdbscan': {'v3_umap'},
+    'v8_ensemble': {'v1_community', 'v5_affinity', 'v6_spectral', 'v7_hdbscan'},
+}
+
+# Map vector key -> result key in output dict
+_VECTOR_RESULT_KEYS: dict[str, str] = {
+    'v1_community': 'v1_communities',
+    'v4_wave_plan': 'v4_wave_plan',
+    'v11_complexity': 'v11_complexity',
+    'v2_hierarchical': 'v2_hierarchical_lineage',
+    'v3_umap': 'v3_dimensionality_reduction',
+    'v9_wave_function': 'v9_wave_function',
+    'v10_concentration': 'v10_concentration',
+    'v5_affinity': 'v5_affinity_propagation',
+    'v6_spectral': 'v6_spectral_clustering',
+    'v7_hdbscan': 'v7_hdbscan_density',
+    'v8_ensemble': 'v8_ensemble_consensus',
+}
+
 
 class VectorOrchestrator:
     """Orchestrate analysis vector execution with timing instrumentation."""
 
     def __init__(self):
         self._timings: dict[str, float] = {}
+        self._computed: set[str] = set()  # Track which vectors have been computed
+        self._cached_results: dict[str, Any] = {}  # Cache per-vector results
 
     def run_phase1(self, tier_data: dict[str, Any]) -> dict[str, Any]:
         """Run Phase 1: feature extraction + V1 + V4 + V11.
@@ -237,3 +271,211 @@ class VectorOrchestrator:
         r3 = self.run_phase3(tier_data, r2)
         r3["total_time"] = round(time.monotonic() - t_total, 3)
         return r3
+
+    # ── Incremental re-computation (Item 33) ─────────────────────────────
+
+    def run_incremental(
+        self,
+        tier_data: dict[str, Any],
+        vectors: list[str],
+        previous_results: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Run only the specified vectors (plus dependencies), reusing cached results.
+
+        If previous_results is provided, vectors whose result keys already exist
+        are skipped unless explicitly listed in `vectors`.
+        """
+        results = dict(previous_results or {})
+
+        # Resolve dependencies: expand to include prerequisite vectors
+        to_run = set(vectors)
+        expanded = True
+        while expanded:
+            expanded = False
+            for v in list(to_run):
+                for dep in _VECTOR_DEPS.get(v, set()):
+                    result_key = _VECTOR_RESULT_KEYS.get(dep, '')
+                    if dep not in to_run and result_key not in results:
+                        to_run.add(dep)
+                        expanded = True
+
+        # Determine execution order (phase-based)
+        phase_order = {
+            'v1_community': 1, 'v4_wave_plan': 1, 'v11_complexity': 1,
+            'v2_hierarchical': 2, 'v3_umap': 2, 'v9_wave_function': 2, 'v10_concentration': 2,
+            'v5_affinity': 3, 'v6_spectral': 3, 'v7_hdbscan': 3, 'v8_ensemble': 3,
+        }
+        ordered = sorted(to_run, key=lambda v: phase_order.get(v, 99))
+
+        # Build feature data once
+        features = extract_session_features(tier_data)
+        if not features:
+            return {"error": "No sessions found", "timings": self._timings}
+
+        builder = FeatureMatrixBuilder(features)
+        connections = tier_data.get("connections", [])
+        adjacency = builder.build_adjacency_matrix(connections)
+        similarity = builder.build_similarity_matrix("jaccard")
+        dense = builder.build_dense_matrix()
+
+        results["session_count"] = len(features)
+        results["session_ids"] = [f.session_id for f in features]
+
+        for vec_key in ordered:
+            result_key = _VECTOR_RESULT_KEYS.get(vec_key, '')
+            # Skip if already have results and not explicitly requested
+            if result_key in results and vec_key not in vectors:
+                continue
+
+            t0 = time.monotonic()
+            try:
+                self._run_single_vector(
+                    vec_key, results, features, builder,
+                    adjacency, similarity, dense, tier_data,
+                )
+            except Exception as exc:
+                logger.warning("Vector %s failed: %s", vec_key, exc)
+            self._timings[vec_key] = time.monotonic() - t0
+
+        results["timings"] = {k: round(v, 3) for k, v in self._timings.items()}
+        results["_incremental"] = True
+        results["_vectors_run"] = sorted(to_run)
+        return results
+
+    def _run_single_vector(
+        self,
+        vec_key: str,
+        results: dict,
+        features: list,
+        builder: FeatureMatrixBuilder,
+        adjacency: Any,
+        similarity: Any,
+        dense: Any,
+        tier_data: dict,
+    ) -> None:
+        """Execute a single vector and store result in results dict."""
+        if vec_key == 'v11_complexity':
+            v11 = ComplexityAnalyzer()
+            r = v11.run(features)
+            results["v11_complexity"] = r.to_dict()
+
+        elif vec_key == 'v1_community':
+            v1 = CommunityDetectionVector()
+            r = v1.run(similarity, builder.session_ids, adjacency)
+            results["v1_communities"] = r.to_dict()
+
+        elif vec_key == 'v4_wave_plan':
+            complexity_scores = {}
+            if "v11_complexity" in results:
+                for s in results["v11_complexity"].get("scores", []):
+                    complexity_scores[s["session_id"]] = s["overall_score"]
+            v4 = TopologicalSCCVector()
+            r = v4.run(adjacency, builder.session_ids, complexity_scores)
+            results["v4_wave_plan"] = r.to_dict()
+
+        elif vec_key == 'v2_hierarchical':
+            from .v2_hierarchical_lineage import HierarchicalLineageVector
+            v2 = HierarchicalLineageVector()
+            r = v2.run(features, similarity)
+            results["v2_hierarchical_lineage"] = r.to_dict()
+
+        elif vec_key == 'v3_umap':
+            from .v3_dimensionality_reduction import DimensionalityReductionVector
+            v3 = DimensionalityReductionVector()
+            r = v3.run(dense, builder.session_ids)
+            results["v3_dimensionality_reduction"] = r.to_dict()
+
+        elif vec_key == 'v9_wave_function':
+            from .v9_wave_function import WaveFunctionVector
+            complexity_scores = {}
+            if "v11_complexity" in results:
+                for s in results["v11_complexity"].get("scores", []):
+                    complexity_scores[s["session_id"]] = s["overall_score"]
+            v9 = WaveFunctionVector()
+            r = v9.run(adjacency, builder.session_ids, complexity_scores)
+            results["v9_wave_function"] = r.to_dict()
+
+        elif vec_key == 'v10_concentration':
+            from .v10_concentration import ConcentrationVector
+            v10 = ConcentrationVector()
+            r = v10.run(features, similarity)
+            results["v10_concentration"] = r.to_dict()
+
+        elif vec_key == 'v5_affinity':
+            from .v5_affinity_propagation import AffinityPropagationVector
+            v5 = AffinityPropagationVector()
+            r = v5.run(similarity, builder.session_ids)
+            results["v5_affinity_propagation"] = r.to_dict()
+
+        elif vec_key == 'v6_spectral':
+            from .v6_spectral_clustering import SpectralClusteringVector
+            v6 = SpectralClusteringVector()
+            r = v6.run(similarity, builder.session_ids)
+            results["v6_spectral_clustering"] = r.to_dict()
+
+        elif vec_key == 'v7_hdbscan':
+            from .v7_hdbscan_density import HDBSCANDensityVector
+            v3_coords = None
+            if "v3_dimensionality_reduction" in results:
+                projections = results["v3_dimensionality_reduction"].get("projections", {})
+                if "balanced" in projections:
+                    v3_coords = projections["balanced"]
+            v7 = HDBSCANDensityVector()
+            r = v7.run(dense, builder.session_ids, umap_coords=v3_coords)
+            results["v7_hdbscan_density"] = r.to_dict()
+
+        elif vec_key == 'v8_ensemble':
+            from .v8_ensemble_consensus import EnsembleConsensusVector
+            v8 = EnsembleConsensusVector()
+            r = v8.run(results, builder.session_ids)
+            results["v8_ensemble_consensus"] = r.to_dict()
+
+    # ── Parameter sensitivity sweep (Item 32) ────────────────────────────
+
+    def sweep_resolution(
+        self,
+        tier_data: dict[str, Any],
+        resolutions: list[float] | None = None,
+    ) -> dict[str, Any]:
+        """Sweep V1 community detection resolution parameter.
+
+        Returns community assignments and modularity at each resolution,
+        for charting sensitivity curves.
+        """
+        if resolutions is None:
+            resolutions = [0.1, 0.3, 0.5, 0.8, 1.0, 1.5, 2.0, 3.0, 5.0]
+
+        features = extract_session_features(tier_data)
+        if not features:
+            return {"error": "No sessions found"}
+
+        builder = FeatureMatrixBuilder(features)
+        connections = tier_data.get("connections", [])
+        adjacency = builder.build_adjacency_matrix(connections)
+        similarity = builder.build_similarity_matrix("jaccard")
+
+        sweep_results = []
+        for res in resolutions:
+            t0 = time.monotonic()
+            v1 = CommunityDetectionVector()
+            # Override all three scales to the same resolution for comparison
+            v1.RESOLUTIONS = {"macro": res, "meso": res, "micro": res}
+            result = v1.run(similarity, builder.session_ids, adjacency)
+            elapsed = time.monotonic() - t0
+            # Use macro partition as the single-resolution result
+            sweep_results.append({
+                'resolution': res,
+                'community_count': len(result.macro_communities),
+                'modularity': result.modularity.get('macro', 0.0),
+                'largest_community': max((len(m) for m in result.macro_communities.values()), default=0),
+                'smallest_community': min((len(m) for m in result.macro_communities.values()), default=0),
+                'elapsed_ms': round(elapsed * 1000),
+            })
+            logger.info("Sweep res=%.1f: communities=%d modularity=%.3f (%.2fs)",
+                         res, len(result.macro_communities),
+                         result.modularity.get('macro', 0.0), elapsed)
+
+        return {
+            'resolutions': sweep_results,
+            'session_count': len(features),
+        }

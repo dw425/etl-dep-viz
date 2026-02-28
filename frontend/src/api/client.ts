@@ -434,3 +434,332 @@ export async function getFlowData(
   if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.json();
 }
+
+// ── Lineage API ──────────────────────────────────────────────────────────
+
+export async function getLineageGraph(
+  tierData: TierMapResult,
+): Promise<Record<string, unknown>> {
+  const res = await fetch(`${BASE}/lineage/graph`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...userHeaders() },
+    body: JSON.stringify(tierData),
+  });
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  return res.json();
+}
+
+export async function traceLineageForward(
+  tierData: TierMapResult,
+  nodeId: string,
+  maxHops: number = 20,
+): Promise<Record<string, unknown>> {
+  const res = await fetch(`${BASE}/lineage/trace/forward/${nodeId}?max_hops=${maxHops}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...userHeaders() },
+    body: JSON.stringify(tierData),
+  });
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  return res.json();
+}
+
+export async function traceLineageBackward(
+  tierData: TierMapResult,
+  nodeId: string,
+  maxHops: number = 20,
+): Promise<Record<string, unknown>> {
+  const res = await fetch(`${BASE}/lineage/trace/backward/${nodeId}?max_hops=${maxHops}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...userHeaders() },
+    body: JSON.stringify(tierData),
+  });
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  return res.json();
+}
+
+export async function getTableLineage(
+  tierData: TierMapResult,
+  tableName: string,
+): Promise<Record<string, unknown>> {
+  const res = await fetch(`${BASE}/lineage/table/${encodeURIComponent(tableName)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...userHeaders() },
+    body: JSON.stringify(tierData),
+  });
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  return res.json();
+}
+
+// ── Column Lineage ──────────────────────────────────────────────────────
+
+export async function getColumnLineage(
+  tierData: TierMapResult,
+  sessionId: string,
+): Promise<Record<string, unknown>> {
+  const res = await fetch(`${BASE}/lineage/columns/${sessionId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...userHeaders() },
+    body: JSON.stringify(tierData),
+  });
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  return res.json();
+}
+
+// ── Impact Analysis ─────────────────────────────────────────────────────
+
+export async function getImpactAnalysis(
+  tierData: TierMapResult,
+  sessionId: string,
+  maxHops: number = 10,
+): Promise<Record<string, unknown>> {
+  const res = await fetch(`${BASE}/lineage/impact/${sessionId}?max_hops=${maxHops}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...userHeaders() },
+    body: JSON.stringify(tierData),
+  });
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  return res.json();
+}
+
+// ── Vector Sweep ────────────────────────────────────────────────────────
+
+export async function sweepResolution(
+  tierData: TierMapResult,
+): Promise<Record<string, unknown>> {
+  const res = await fetch(`${BASE}/vectors/sweep-resolution`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...userHeaders() },
+    body: JSON.stringify(tierData),
+  });
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  return res.json();
+}
+
+// ── Incremental Vector Analysis ─────────────────────────────────────────
+
+export async function analyzeVectorsIncremental(
+  tierData: TierMapResult,
+  vectors: string[],
+  uploadId?: number,
+): Promise<VectorResults> {
+  const params = new URLSearchParams();
+  vectors.forEach(v => params.append('vectors', v));
+  if (uploadId) params.set('upload_id', String(uploadId));
+  const res = await fetch(`${BASE}/vectors/analyze-incremental?${params}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...userHeaders() },
+    body: JSON.stringify(tierData),
+  });
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  return res.json();
+}
+
+// ── Tag Color Presets ───────────────────────────────────────────────────
+
+export async function updateTagColor(
+  tagId: string,
+  color: string,
+): Promise<void> {
+  const res = await fetch(`${BASE}/active-tags/${tagId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ color }),
+  });
+  if (!res.ok) throw new Error(res.statusText);
+}
+
+// ── Batch Tag Operations ────────────────────────────────────────────────
+
+export async function batchCreateTags(
+  objectIds: string[],
+  tag: { object_type: string; tag_type: string; label: string; color?: string; note?: string },
+): Promise<void> {
+  await Promise.all(objectIds.map(id =>
+    createActiveTag({ ...tag, object_id: id })
+  ));
+}
+
+// ── Export Downloads ────────────────────────────────────────────────────
+
+export async function exportExcel(
+  tierData: TierMapResult,
+  uploadId?: number,
+): Promise<Blob> {
+  const params = new URLSearchParams();
+  if (uploadId) params.set('upload_id', String(uploadId));
+  const res = await fetch(`${BASE}/exports/excel?${params}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...userHeaders() },
+    body: JSON.stringify(tierData),
+  });
+  if (!res.ok) throw new Error(res.statusText);
+  return res.blob();
+}
+
+export async function exportLineageDot(tierData: TierMapResult): Promise<string> {
+  const res = await fetch(`${BASE}/exports/lineage/dot`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...userHeaders() },
+    body: JSON.stringify(tierData),
+  });
+  if (!res.ok) throw new Error(res.statusText);
+  return res.text();
+}
+
+export async function exportLineageMermaid(tierData: TierMapResult): Promise<string> {
+  const res = await fetch(`${BASE}/exports/lineage/mermaid`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...userHeaders() },
+    body: JSON.stringify(tierData),
+  });
+  if (!res.ok) throw new Error(res.statusText);
+  return res.text();
+}
+
+export async function exportJiraCsv(tierData: TierMapResult, uploadId?: number): Promise<string> {
+  const params = new URLSearchParams();
+  if (uploadId) params.set('upload_id', String(uploadId));
+  const res = await fetch(`${BASE}/exports/jira/csv?${params}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...userHeaders() },
+    body: JSON.stringify(tierData),
+  });
+  if (!res.ok) throw new Error(res.statusText);
+  return res.text();
+}
+
+export async function exportDatabricks(tierData: TierMapResult): Promise<string> {
+  const res = await fetch(`${BASE}/exports/databricks`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...userHeaders() },
+    body: JSON.stringify(tierData),
+  });
+  if (!res.ok) throw new Error(res.statusText);
+  return res.text();
+}
+
+export async function exportSnapshot(tierData: TierMapResult, uploadId?: number): Promise<Blob> {
+  const params = new URLSearchParams();
+  if (uploadId) params.set('upload_id', String(uploadId));
+  const res = await fetch(`${BASE}/exports/snapshot?${params}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...userHeaders() },
+    body: JSON.stringify(tierData),
+  });
+  if (!res.ok) throw new Error(res.statusText);
+  return res.blob();
+}
+
+export async function mergeUploads(uploadIds: number[]): Promise<Record<string, unknown>> {
+  const res = await fetch(`${BASE}/exports/merge`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...userHeaders() },
+    body: JSON.stringify(uploadIds),
+  });
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  return res.json();
+}
+
+// ── Frontend Error Reporting (Item 30) ───────────────────────────────────
+
+export async function reportError(error: {
+  type?: string;
+  message: string;
+  stack?: string;
+  url?: string;
+  code?: string;
+  severity?: 'warning' | 'error' | 'critical';
+}): Promise<void> {
+  try {
+    await fetch(`${BASE}/health/report-error`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...error,
+        user_id: getUserId(),
+        url: error.url || window.location.href,
+      }),
+    });
+  } catch {
+    // fire-and-forget — don't throw on reporting failure
+  }
+}
+
+// Global error handler — captures unhandled errors and promise rejections
+let _errorHandlerInstalled = false;
+
+export function installGlobalErrorHandler(): void {
+  if (_errorHandlerInstalled) return;
+  _errorHandlerInstalled = true;
+
+  window.addEventListener('error', (event) => {
+    reportError({
+      type: 'uncaught_error',
+      message: event.message || 'Unknown error',
+      stack: event.error?.stack,
+      url: event.filename ? `${event.filename}:${event.lineno}:${event.colno}` : undefined,
+    });
+  });
+
+  window.addEventListener('unhandledrejection', (event) => {
+    const reason = event.reason;
+    reportError({
+      type: 'unhandled_rejection',
+      message: reason?.message || String(reason) || 'Unhandled promise rejection',
+      stack: reason?.stack,
+    });
+  });
+}
+
+// ── Extended Health Check ────────────────────────────────────────────────
+
+export interface HealthStatus {
+  status: string;
+  db?: string;
+  disk_free_mb?: number;
+  memory_mb?: number;
+  python?: string;
+  fastapi?: string;
+  lxml?: string;
+  networkx?: string;
+  log_buffer_size?: number;
+  error_count?: number;
+}
+
+export async function getHealth(): Promise<HealthStatus> {
+  const res = await fetch(`${BASE}/health`);
+  if (!res.ok) throw new Error(res.statusText);
+  return res.json();
+}
+
+export async function getErrorAggregation(params?: {
+  limit?: number;
+  source?: string;
+  severity?: string;
+}): Promise<Record<string, unknown>> {
+  const qs = new URLSearchParams();
+  if (params?.limit) qs.set('limit', String(params.limit));
+  if (params?.source) qs.set('source', params.source);
+  if (params?.severity) qs.set('severity', params.severity);
+  const res = await fetch(`${BASE}/health/errors?${qs}`);
+  if (!res.ok) throw new Error(res.statusText);
+  return res.json();
+}
+
+// ── Paginated Sessions ──────────────────────────────────────────────────
+
+export async function getPaginatedSessions(
+  uploadId: number,
+  params: { offset?: number; limit?: number; tier?: number; search?: string } = {},
+): Promise<{ sessions: any[]; total: number; offset: number; limit: number }> {
+  const qs = new URLSearchParams();
+  if (params.offset != null) qs.set('offset', String(params.offset));
+  if (params.limit != null) qs.set('limit', String(params.limit));
+  if (params.tier != null) qs.set('tier', String(params.tier));
+  if (params.search) qs.set('search', params.search);
+  const res = await fetch(`${BASE}/tier-map/uploads/${uploadId}/sessions?${qs}`, {
+    headers: userHeaders(),
+  });
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  return res.json();
+}

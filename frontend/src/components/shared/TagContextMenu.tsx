@@ -6,6 +6,15 @@
 import React, { useCallback, useState } from 'react';
 import { createActiveTag } from '../../api/client';
 
+// 5 preset color taxonomies
+const COLOR_PRESETS = [
+  { label: 'Coral', color: '#EF4444' },
+  { label: 'Amber', color: '#F59E0B' },
+  { label: 'Emerald', color: '#10B981' },
+  { label: 'Blue', color: '#3B82F6' },
+  { label: 'Violet', color: '#A855F7' },
+] as const;
+
 const BUILT_IN_TAGS = [
   { label: 'PII Risk', color: '#EF4444', tag_type: 'risk' },
   { label: 'Review Needed', color: '#F59E0B', tag_type: 'review' },
@@ -26,11 +35,13 @@ interface Props {
 
 export default function TagContextMenu({ objectId, objectType, position, onClose, onTagCreated }: Props) {
   const [customMode, setCustomMode] = useState(false);
+  const [noteMode, setNoteMode] = useState(false);
   const [customLabel, setCustomLabel] = useState('');
   const [customColor, setCustomColor] = useState('#3B82F6');
+  const [customNote, setCustomNote] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleAddTag = useCallback(async (label: string, color: string, tagType: string) => {
+  const handleAddTag = useCallback(async (label: string, color: string, tagType: string, note?: string) => {
     setLoading(true);
     try {
       await createActiveTag({
@@ -39,6 +50,7 @@ export default function TagContextMenu({ objectId, objectType, position, onClose
         tag_type: tagType,
         label,
         color,
+        note: note || customNote,
       });
       onTagCreated?.();
       onClose();
@@ -47,7 +59,7 @@ export default function TagContextMenu({ objectId, objectType, position, onClose
     } finally {
       setLoading(false);
     }
-  }, [objectId, objectType, onClose, onTagCreated]);
+  }, [objectId, objectType, onClose, onTagCreated, customNote]);
 
   const handleCustomSubmit = useCallback(() => {
     if (!customLabel.trim()) return;
@@ -101,13 +113,38 @@ export default function TagContextMenu({ objectId, objectType, position, onClose
               autoFocus
               onKeyDown={e => e.key === 'Enter' && handleCustomSubmit()}
             />
-            <div className="flex items-center gap-2">
+            {/* Color presets */}
+            <div className="flex items-center gap-1">
+              {COLOR_PRESETS.map(p => (
+                <button
+                  key={p.label}
+                  onClick={() => setCustomColor(p.color)}
+                  title={p.label}
+                  className="w-5 h-5 rounded-full border-2 transition-all"
+                  style={{
+                    backgroundColor: p.color,
+                    borderColor: customColor === p.color ? '#fff' : 'transparent',
+                    transform: customColor === p.color ? 'scale(1.2)' : 'scale(1)',
+                  }}
+                />
+              ))}
               <input
                 type="color"
                 value={customColor}
                 onChange={e => setCustomColor(e.target.value)}
-                className="w-6 h-6 rounded cursor-pointer bg-transparent border-0"
+                className="w-5 h-5 rounded cursor-pointer bg-transparent border-0"
+                title="Custom color"
               />
+            </div>
+            {/* Annotation note (Item 74) */}
+            <textarea
+              value={customNote}
+              onChange={e => setCustomNote(e.target.value)}
+              placeholder="Optional note..."
+              rows={2}
+              className="w-full px-2 py-1 text-xs bg-gray-700 border border-gray-600 rounded text-gray-300 placeholder-gray-500 resize-none"
+            />
+            <div className="flex items-center gap-2">
               <button
                 onClick={handleCustomSubmit}
                 disabled={loading || !customLabel.trim()}

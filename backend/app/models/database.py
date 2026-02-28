@@ -4,8 +4,8 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, Integer, String, Text, create_engine, inspect
-from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Index, Integer, String, Text, create_engine, inspect
+from sqlalchemy.orm import DeclarativeBase, Session, relationship, sessionmaker
 
 from app.config import settings
 
@@ -84,6 +84,73 @@ class ActivityLog(Base):
 
     def get_details(self) -> dict | None:
         return json.loads(self.details_json) if self.details_json else None
+
+
+# ── Normalized relational models (Wave 5) ─────────────────────────────────────
+
+class SessionRecord(Base):
+    """Normalized session record — one row per parsed ETL session."""
+
+    __tablename__ = "session_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    upload_id = Column(Integer, ForeignKey("uploads.id", ondelete="CASCADE"), nullable=False)
+    session_id = Column(String(64), nullable=False)   # e.g. S1, S2
+    name = Column(String(512), nullable=False)
+    full_name = Column(String(512), nullable=False)
+    tier = Column(Float, nullable=False, default=1.0)
+    step = Column(Integer, nullable=True)
+    workflow = Column(String(512), nullable=True)
+    transforms = Column(Integer, default=0)
+    critical = Column(Integer, default=0)  # boolean as int for SQLite
+    sources_json = Column(Text, nullable=True)   # JSON array of source table names
+    targets_json = Column(Text, nullable=True)   # JSON array of target table names
+    lookups_json = Column(Text, nullable=True)   # JSON array of lookup table names
+
+    __table_args__ = (
+        Index("ix_session_upload", "upload_id"),
+        Index("ix_session_tier", "upload_id", "tier"),
+        Index("ix_session_name", "upload_id", "full_name"),
+    )
+
+
+class TableRecord(Base):
+    """Normalized table record — one row per table in the dependency graph."""
+
+    __tablename__ = "table_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    upload_id = Column(Integer, ForeignKey("uploads.id", ondelete="CASCADE"), nullable=False)
+    table_id = Column(String(64), nullable=False)    # e.g. T_0, T_1
+    name = Column(String(512), nullable=False)
+    type = Column(String(32), nullable=False)        # source, chain, conflict, independent
+    tier = Column(Float, nullable=False, default=0.5)
+    conflict_writers = Column(Integer, default=0)
+    readers = Column(Integer, default=0)
+    lookup_users = Column(Integer, default=0)
+
+    __table_args__ = (
+        Index("ix_table_upload", "upload_id"),
+        Index("ix_table_name", "upload_id", "name"),
+    )
+
+
+class ConnectionRecord(Base):
+    """Normalized connection record — one row per edge in the dependency graph."""
+
+    __tablename__ = "connection_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    upload_id = Column(Integer, ForeignKey("uploads.id", ondelete="CASCADE"), nullable=False)
+    from_id = Column(String(64), nullable=False)
+    to_id = Column(String(64), nullable=False)
+    conn_type = Column(String(32), nullable=False)   # write_conflict, chain, source_read, etc.
+
+    __table_args__ = (
+        Index("ix_conn_upload", "upload_id"),
+        Index("ix_conn_from", "upload_id", "from_id"),
+        Index("ix_conn_to", "upload_id", "to_id"),
+    )
 
 
 def _migrate_db() -> None:

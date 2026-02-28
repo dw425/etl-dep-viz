@@ -31,8 +31,81 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-# Threshold for switching to iterparse (50MB)
-_ITERPARSE_THRESHOLD = 50 * 1024 * 1024
+# Threshold for switching to iterparse (20MB — lowered from 50MB for better memory)
+_ITERPARSE_THRESHOLD = 20 * 1024 * 1024
+
+
+# ── XML schema pre-validation (Item 6) ────────────────────────────────────────
+
+# Expected root-level elements for Informatica PowerCenter XML
+_INFA_ROOT_TAGS = frozenset({'POWERMART', 'REPOSITORY', 'FOLDER'})
+_INFA_REQUIRED_CHILD_TAGS = frozenset({'FOLDER', 'SOURCE', 'TARGET', 'MAPPING', 'SESSION', 'WORKFLOW', 'TRANSFORMATION'})
+
+
+def validate_xml_schema(content: bytes) -> dict:
+    """Pre-validate XML structure before full parse.
+
+    Returns dict with 'valid' bool, 'root_tag', 'warnings' list, 'element_counts'.
+    Fast check — reads only enough to verify structure.
+    """
+    warnings: list[str] = []
+    element_counts: dict[str, int] = {}
+
+    try:
+        # Quick peek at first 10KB to detect root structure
+        head = content[:10240]
+        try:
+            head_str = head.decode('utf-8', errors='replace')
+        except Exception:
+            head_str = head.decode('latin-1', errors='replace')
+
+        # Check for XML declaration
+        if not head_str.strip().startswith('<?xml') and not head_str.strip().startswith('<'):
+            return {'valid': False, 'root_tag': None, 'warnings': ['Not an XML file'], 'element_counts': {}}
+
+        # Parse root element
+        import io
+        if _LXML:
+            parser = _ET.XMLParser(recover=True, remove_comments=True)
+            try:
+                tree = _ET.parse(io.BytesIO(content), parser=parser)
+                root = tree.getroot()
+            except Exception as e:
+                return {'valid': False, 'root_tag': None, 'warnings': [f'XML parse error: {e}'], 'element_counts': {}}
+        else:
+            try:
+                root = _ET.fromstring(content)
+            except Exception as e:
+                return {'valid': False, 'root_tag': None, 'warnings': [f'XML parse error: {e}'], 'element_counts': {}}
+
+        root_tag = root.tag.upper() if root.tag else ''
+
+        # Check root tag is expected
+        if root_tag not in _INFA_ROOT_TAGS:
+            warnings.append(f'Unexpected root element <{root.tag}>; expected one of {sorted(_INFA_ROOT_TAGS)}')
+
+        # Count key child elements (just direct children + one level deep)
+        for child in root:
+            tag = (child.tag or '').upper()
+            element_counts[tag] = element_counts.get(tag, 0) + 1
+            for grandchild in child:
+                gtag = (grandchild.tag or '').upper()
+                element_counts[gtag] = element_counts.get(gtag, 0) + 1
+
+        # Check for expected child elements
+        found_tags = set(element_counts.keys())
+        expected_found = found_tags & _INFA_REQUIRED_CHILD_TAGS
+        if not expected_found:
+            warnings.append(f'No expected Informatica elements found; expected at least one of {sorted(_INFA_REQUIRED_CHILD_TAGS)}')
+
+        return {
+            'valid': len(warnings) == 0 or bool(expected_found),
+            'root_tag': root_tag,
+            'warnings': warnings,
+            'element_counts': element_counts,
+        }
+    except Exception as exc:
+        return {'valid': False, 'root_tag': None, 'warnings': [f'Validation error: {exc}'], 'element_counts': {}}
 
 
 # ── XML helpers ────────────────────────────────────────────────────────────────
@@ -44,20 +117,26 @@ def _parse_xml(content: bytes) -> Any:
     return _ET.fromstring(content)
 
 
-def _parse_xml_iterparse(content: bytes) -> Any:
+def _parse_xml_iterparse(content: bytes):
     """Parse large XML using iterparse for reduced memory usage.
 
-    Processes FOLDER elements one at a time, clearing completed elements
-    to keep memory bounded.
+    Yields FOLDER elements one at a time. Caller should clear each
+    element after processing to free memory.
     """
     import io
+    source = io.BytesIO(content)
     if _LXML:
         parser = _ET.XMLParser(recover=True, remove_comments=True)
-        # For lxml, iterparse needs a file-like object
-        context = _ET.iterparse(io.BytesIO(content), events=('end',), tag='FOLDER')
+        context = _ET.iterparse(source, events=('end',), tag='FOLDER')
     else:
-        context = _ET.iterparse(io.BytesIO(content), events=('end',))
-    return context
+        context = _ET.iterparse(source, events=('end',))
+
+    for event, elem in context:
+        tag = elem.tag if hasattr(elem, 'tag') else ''
+        if tag == 'FOLDER':
+            yield elem
+            # Clear processed element to free memory
+            elem.clear()
 
 
 def _attr(el: Any, name: str) -> str:
@@ -177,19 +256,22 @@ def _build_lookup_map(folder: Any) -> Dict[str, str]:
 def _parse_file(content: bytes, fname: str) -> Dict[str, Any]:
     """Return raw session data extracted from one XML file.
 
-    For files > 50MB, uses streaming parse to reduce peak memory.
+    For files > 20MB, uses streaming iterparse to reduce peak memory.
+    Each folder is processed and then cleared from memory.
     """
     if not content or not content.strip():
         return {'_error': 'Empty file content', '_file': fname}
 
     # Try UTF-8 first, fall back to Latin-1
     try:
+        content_decoded = content
         root = _parse_xml(content)
     except Exception:
         try:
             text = content.decode('latin-1')
-            content = text.encode('utf-8')
-            root = _parse_xml(content)
+            content_decoded = text.encode('utf-8')
+            root = _parse_xml(content_decoded)
+            content = content_decoded
             logger.info("Re-encoded %s from Latin-1 to UTF-8", fname)
         except Exception as exc:
             if _LXML and hasattr(_ET, 'XMLSyntaxError') and isinstance(exc, _ET.XMLSyntaxError):
@@ -203,6 +285,19 @@ def _parse_file(content: bytes, fname: str) -> Dict[str, Any]:
 
     sessions: Dict[str, Dict[str, Any]] = {}
 
+    # For large files, use iterparse to process folders with memory cleanup
+    if len(content) > _ITERPARSE_THRESHOLD:
+        logger.info("Using iterparse for large file %s (%.1fMB)", fname, size_mb)
+        try:
+            for folder in _parse_xml_iterparse(content):
+                _process_folder(folder, fname, sessions)
+            if not sessions:
+                return {'_error': f'No sessions found in {fname} (iterparse)', '_file': fname}
+            return sessions
+        except Exception as exc:
+            logger.warning("Iterparse failed for %s, falling back to full parse: %s", fname, exc)
+            # Fall through to standard parse
+
     folders = list(_iter(root, 'FOLDER'))
     if not folders:
         # No FOLDER elements — check if root itself has sessions
@@ -211,490 +306,499 @@ def _parse_file(content: bytes, fname: str) -> Dict[str, Any]:
         folders = [root]
 
     for folder in folders:
-        folder_name = _attr(folder, 'NAME')
+        _process_folder(folder, fname, sessions)
 
-        # ── Collect source/target name→table mappings for this folder ──────
-        src_tables: Dict[str, str] = {}   # SOURCE element name (upper) → table name
-        tgt_tables: Dict[str, str] = {}   # TARGET element name (upper) → table name
+    return sessions
 
-        for src in _iter(folder, 'SOURCE'):
-            n = _attr(src, 'NAME').strip().upper()
-            db_tbl = _attr(src, 'DATABASENAME').strip().upper() or n
-            if n:
-                src_tables[n] = db_tbl or n
 
-        for tgt in _iter(folder, 'TARGET'):
-            n = _attr(tgt, 'NAME').strip().upper()
-            db_tbl = _attr(tgt, 'DATABASENAME').strip().upper() or n
-            if n:
-                tgt_tables[n] = db_tbl or n
+def _process_folder(
+    folder: Any,
+    fname: str,
+    sessions: Dict[str, Dict[str, Any]],
+) -> None:
+    """Process a single FOLDER element, extracting sessions into the sessions dict."""
+    folder_name = _attr(folder, 'NAME')
 
-        # ── Informatica alias deduplication ────────────────────────────────
-        # When the same source table appears multiple times in a mapping,
-        # Informatica appends a numeric suffix to the SOURCE element NAME:
-        # CUSTOMER_ORDER_PRODUCT, CUSTOMER_ORDER_PRODUCT1, CUSTOMER_ORDER_PRODUCT11.
-        # If a suffixed name's base (digits stripped) exists in src_tables,
-        # remap the suffixed key → same table as the base name.
-        _SUFFIX_RE = re.compile(r'^(.+?)(\d+)$')
-        for n in list(src_tables.keys()):
-            m = _SUFFIX_RE.match(n)
-            if m:
-                base = m.group(1)
-                if base in src_tables:
-                    # The base exists: this is an alias — point it to the same table
-                    src_tables[n] = src_tables[base]
+    # ── Collect source/target name→table mappings for this folder ──────
+    src_tables: Dict[str, str] = {}   # SOURCE element name (upper) → table name
+    tgt_tables: Dict[str, str] = {}   # TARGET element name (upper) → table name
 
-        # ── Build lookup table map from TRANSFORMATION elements (THE FIX) ──
-        # TABLEATTRIBUTE "Lookup table name" lives on <TRANSFORMATION TYPE="Lookup Procedure">
-        # elements, NOT on INSTANCE elements. Build the map once per folder.
-        # folder.iter() finds them recursively inside MAPPLET and MAPPING elements too.
-        lkp_map: Dict[str, str] = _build_lookup_map(folder)
+    for src in _iter(folder, 'SOURCE'):
+        n = _attr(src, 'NAME').strip().upper()
+        db_tbl = _attr(src, 'DATABASENAME').strip().upper() or n
+        if n:
+            src_tables[n] = db_tbl or n
 
-        # ── Pre-parse MAPPLET definitions → resolve their sources/lookups ──
-        # When a MAPPING uses a MAPPLET instance (TYPE='MAPPLET'), we need to
-        # extract the sources/targets/lookups that the MAPPLET internally uses.
-        mapplet_data: Dict[str, Dict] = {}
-        for mlt in folder.iter('MAPPLET'):
-            mlt_name = _attr(mlt, 'NAME').strip().upper()
-            if not mlt_name:
-                continue
-            ml_src: List[str] = []
-            ml_tgt: List[str] = []
-            ml_lkp: List[str] = []
-            for inst in mlt.iter('INSTANCE'):
-                itype     = _attr(inst, 'TYPE').lower()
-                inst_name = _attr(inst, 'NAME').strip().upper()
-                tname     = _attr(inst, 'TRANSFORMATION_NAME').strip().upper() or inst_name
-                ttype     = _attr(inst, 'TRANSFORMATION_TYPE').lower()
-                if itype == 'source':
-                    t = src_tables.get(tname, tname)
-                    if t and t not in ml_src:
-                        ml_src.append(t)
-                    for asi in inst.iter('ASSOCIATED_SOURCE_INSTANCE'):
-                        asi_n = _attr(asi, 'NAME').strip().upper()
-                        t2 = src_tables.get(asi_n, asi_n)
-                        if t2 and t2 not in ml_src:
-                            ml_src.append(t2)
-                elif itype == 'target':
-                    t = tgt_tables.get(tname, tname)
-                    if t and t not in ml_tgt:
-                        ml_tgt.append(t)
-                elif 'lookup' in ttype:
-                    tbl = lkp_map.get(tname) or lkp_map.get(inst_name)
-                    if tbl and tbl not in ml_lkp:
-                        ml_lkp.append(tbl)
-            mapplet_data[mlt_name] = {
-                'sources': ml_src, 'targets': ml_tgt, 'lookups': ml_lkp,
-            }
+    for tgt in _iter(folder, 'TARGET'):
+        n = _attr(tgt, 'NAME').strip().upper()
+        db_tbl = _attr(tgt, 'DATABASENAME').strip().upper() or n
+        if n:
+            tgt_tables[n] = db_tbl or n
 
-        # ── Parse mappings: source/target/lookup lists + transform counts ──
-        mapping_data: Dict[str, Dict] = {}
-        for m_el in _iter(folder, 'MAPPING'):
-            mname = _attr(m_el, 'NAME')
-            if not mname:
-                continue
-            m_src: List[str] = []
-            m_tgt: List[str] = []
-            m_lkp: List[str] = []
-            tx_detail: Dict[str, int] = {}
-            # Track instance names that are lookups (for SESSTRANSFORMATIONINST matching)
-            lookup_instance_names: Set[str] = set()
+    # ── Informatica alias deduplication ────────────────────────────────
+    # When the same source table appears multiple times in a mapping,
+    # Informatica appends a numeric suffix to the SOURCE element NAME:
+    # CUSTOMER_ORDER_PRODUCT, CUSTOMER_ORDER_PRODUCT1, CUSTOMER_ORDER_PRODUCT11.
+    # If a suffixed name's base (digits stripped) exists in src_tables,
+    # remap the suffixed key → same table as the base name.
+    _SUFFIX_RE = re.compile(r'^(.+?)(\d+)$')
+    for n in list(src_tables.keys()):
+        m = _SUFFIX_RE.match(n)
+        if m:
+            base = m.group(1)
+            if base in src_tables:
+                # The base exists: this is an alias — point it to the same table
+                src_tables[n] = src_tables[base]
 
-            for inst in _iter(m_el, 'INSTANCE'):
-                itype      = _attr(inst, 'TYPE').lower()
-                inst_name  = _attr(inst, 'NAME').strip().upper()
-                trans_name = _attr(inst, 'TRANSFORMATION_NAME').strip().upper()
-                trans_type = _attr(inst, 'TRANSFORMATION_TYPE').lower()
+    # ── Build lookup table map from TRANSFORMATION elements (THE FIX) ──
+    # TABLEATTRIBUTE "Lookup table name" lives on <TRANSFORMATION TYPE="Lookup Procedure">
+    # elements, NOT on INSTANCE elements. Build the map once per folder.
+    # folder.iter() finds them recursively inside MAPPLET and MAPPING elements too.
+    lkp_map: Dict[str, str] = _build_lookup_map(folder)
 
-                if itype == 'mapplet':
-                    # MAPPLET instance — merge all sources/targets/lookups from the
-                    # pre-resolved MAPPLET definition
-                    mlt_key = trans_name or inst_name
-                    mlt_info = mapplet_data.get(mlt_key, {})
-                    for s in mlt_info.get('sources', []):
-                        if s not in m_src:
-                            m_src.append(s)
-                    for t in mlt_info.get('targets', []):
-                        if t not in m_tgt:
-                            m_tgt.append(t)
-                    for lk in mlt_info.get('lookups', []):
-                        if lk not in m_lkp:
-                            m_lkp.append(lk)
+    # ── Pre-parse MAPPLET definitions → resolve their sources/lookups ──
+    # When a MAPPING uses a MAPPLET instance (TYPE='MAPPLET'), we need to
+    # extract the sources/targets/lookups that the MAPPLET internally uses.
+    mapplet_data: Dict[str, Dict] = {}
+    for mlt in folder.iter('MAPPLET'):
+        mlt_name = _attr(mlt, 'NAME').strip().upper()
+        if not mlt_name:
+            continue
+        ml_src: List[str] = []
+        ml_tgt: List[str] = []
+        ml_lkp: List[str] = []
+        for inst in mlt.iter('INSTANCE'):
+            itype     = _attr(inst, 'TYPE').lower()
+            inst_name = _attr(inst, 'NAME').strip().upper()
+            tname     = _attr(inst, 'TRANSFORMATION_NAME').strip().upper() or inst_name
+            ttype     = _attr(inst, 'TRANSFORMATION_TYPE').lower()
+            if itype == 'source':
+                t = src_tables.get(tname, tname)
+                if t and t not in ml_src:
+                    ml_src.append(t)
+                for asi in inst.iter('ASSOCIATED_SOURCE_INSTANCE'):
+                    asi_n = _attr(asi, 'NAME').strip().upper()
+                    t2 = src_tables.get(asi_n, asi_n)
+                    if t2 and t2 not in ml_src:
+                        ml_src.append(t2)
+            elif itype == 'target':
+                t = tgt_tables.get(tname, tname)
+                if t and t not in ml_tgt:
+                    ml_tgt.append(t)
+            elif 'lookup' in ttype:
+                tbl = lkp_map.get(tname) or lkp_map.get(inst_name)
+                if tbl and tbl not in ml_lkp:
+                    ml_lkp.append(tbl)
+        mapplet_data[mlt_name] = {
+            'sources': ml_src, 'targets': ml_tgt, 'lookups': ml_lkp,
+        }
 
-                elif itype == 'source':
-                    # Direct SOURCE instance
-                    t = src_tables.get(trans_name, trans_name)
-                    if t and t not in m_src:
-                        m_src.append(t)
-                    # Source Qualifier instances often have ASSOCIATED_SOURCE_INSTANCE children
-                    # that list the actual source tables connected to them
+    # ── Parse mappings: source/target/lookup lists + transform counts ──
+    mapping_data: Dict[str, Dict] = {}
+    for m_el in _iter(folder, 'MAPPING'):
+        mname = _attr(m_el, 'NAME')
+        if not mname:
+            continue
+        m_src: List[str] = []
+        m_tgt: List[str] = []
+        m_lkp: List[str] = []
+        tx_detail: Dict[str, int] = {}
+        # Track instance names that are lookups (for SESSTRANSFORMATIONINST matching)
+        lookup_instance_names: Set[str] = set()
+
+        for inst in _iter(m_el, 'INSTANCE'):
+            itype      = _attr(inst, 'TYPE').lower()
+            inst_name  = _attr(inst, 'NAME').strip().upper()
+            trans_name = _attr(inst, 'TRANSFORMATION_NAME').strip().upper()
+            trans_type = _attr(inst, 'TRANSFORMATION_TYPE').lower()
+
+            if itype == 'mapplet':
+                # MAPPLET instance — merge all sources/targets/lookups from the
+                # pre-resolved MAPPLET definition
+                mlt_key = trans_name or inst_name
+                mlt_info = mapplet_data.get(mlt_key, {})
+                for s in mlt_info.get('sources', []):
+                    if s not in m_src:
+                        m_src.append(s)
+                for t in mlt_info.get('targets', []):
+                    if t not in m_tgt:
+                        m_tgt.append(t)
+                for lk in mlt_info.get('lookups', []):
+                    if lk not in m_lkp:
+                        m_lkp.append(lk)
+
+            elif itype == 'source':
+                # Direct SOURCE instance
+                t = src_tables.get(trans_name, trans_name)
+                if t and t not in m_src:
+                    m_src.append(t)
+                # Source Qualifier instances often have ASSOCIATED_SOURCE_INSTANCE children
+                # that list the actual source tables connected to them
+                for asi in _iter(inst, 'ASSOCIATED_SOURCE_INSTANCE'):
+                    asi_name = _attr(asi, 'NAME').strip().upper()
+                    t2 = src_tables.get(asi_name, asi_name)
+                    if t2 and t2 not in m_src:
+                        m_src.append(t2)
+
+            elif itype == 'target':
+                t = tgt_tables.get(trans_name, trans_name)
+                if t and t not in m_tgt:
+                    m_tgt.append(t)
+
+            else:
+                # Transformation instance — count by type
+                tt = trans_type or itype
+                if tt and tt not in ('source', 'target', ''):
+                    tx_detail[tt] = tx_detail.get(tt, 0) + 1
+
+                # ── Lookup table resolution (THE CRITICAL FIX) ──────────
+                # Look up by TRANSFORMATION_NAME in the lkp_map built from
+                # TRANSFORMATION elements — NOT by scanning INSTANCE children.
+                if 'lookup' in trans_type:
+                    lookup_instance_names.add(inst_name)
+                    lookup_instance_names.add(trans_name)
+
+                    # Primary: lkp_map keyed by TRANSFORMATION_NAME
+                    tbl = lkp_map.get(trans_name)
+                    if not tbl and inst_name:
+                        tbl = lkp_map.get(inst_name)
+                    if tbl and tbl not in m_lkp:
+                        m_lkp.append(tbl)
+
+                    # Fallback: TABLEATTRIBUTE directly on this INSTANCE element
+                    # (some embedded lookup definitions store it inline)
+                    for ta in _iter(inst, 'TABLEATTRIBUTE'):
+                        aname = _attr(ta, 'NAME').lower()
+                        if 'lookup table name' in aname or 'lookup source row' in aname:
+                            lval = _norm_lkp(_attr(ta, 'VALUE'))
+                            if lval and len(lval) > 2 and lval not in m_lkp:
+                                m_lkp.append(lval)
+
+                # Source Qualifier inside MAPPING (TYPE="TRANSFORMATION" but
+                # TRANSFORMATION_TYPE="Source Qualifier") — check ASSOCIATED_SOURCE_INSTANCE
+                elif 'source qualifier' in trans_type:
                     for asi in _iter(inst, 'ASSOCIATED_SOURCE_INSTANCE'):
                         asi_name = _attr(asi, 'NAME').strip().upper()
                         t2 = src_tables.get(asi_name, asi_name)
                         if t2 and t2 not in m_src:
                             m_src.append(t2)
 
-                elif itype == 'target':
-                    t = tgt_tables.get(trans_name, trans_name)
-                    if t and t not in m_tgt:
-                        m_tgt.append(t)
+        mapping_data[mname] = {
+            'sources':              m_src,
+            'targets':              m_tgt,
+            'lookups':              m_lkp,
+            'tx_detail':            tx_detail,
+            'tx_count':             sum(tx_detail.values()),
+            'lookup_instance_names': lookup_instance_names,
+        }
 
-                else:
-                    # Transformation instance — count by type
-                    tt = trans_type or itype
-                    if tt and tt not in ('source', 'target', ''):
-                        tx_detail[tt] = tx_detail.get(tt, 0) + 1
+    # ── Parse sessions ─────────────────────────────────────────────────
+    for sess_el in _iter(folder, 'SESSION'):
+        sname = _attr(sess_el, 'NAME')
+        if not sname:
+            continue
+        mname = _attr(sess_el, 'MAPPINGNAME')
+        m = mapping_data.get(mname, {})
 
-                    # ── Lookup table resolution (THE CRITICAL FIX) ──────────
-                    # Look up by TRANSFORMATION_NAME in the lkp_map built from
-                    # TRANSFORMATION elements — NOT by scanning INSTANCE children.
-                    if 'lookup' in trans_type:
-                        lookup_instance_names.add(inst_name)
-                        lookup_instance_names.add(trans_name)
+        sources = list(m.get('sources', []))
+        targets = list(m.get('targets', []))
+        lookups = list(m.get('lookups', []))
+        lookup_inst_names: Set[str] = m.get('lookup_instance_names', set())
 
-                        # Primary: lkp_map keyed by TRANSFORMATION_NAME
-                        tbl = lkp_map.get(trans_name)
-                        if not tbl and inst_name:
-                            tbl = lkp_map.get(inst_name)
-                        if tbl and tbl not in m_lkp:
-                            m_lkp.append(tbl)
+        # Session-level overrides via SESSTRANSFORMATIONINST/ATTRIBUTE
+        # These can override table names with runtime-resolved values
+        for sti in _iter(sess_el, 'SESSTRANSFORMATIONINST'):
+            sti_name = _attr(sti, 'TRANSFORMATIONNAME').strip().upper()
+            sti_type = _attr(sti, 'TRANSFORMATIONTYPE').lower()
+            is_lkp   = 'lookup' in sti_type or sti_name in lookup_inst_names
 
-                        # Fallback: TABLEATTRIBUTE directly on this INSTANCE element
-                        # (some embedded lookup definitions store it inline)
-                        for ta in _iter(inst, 'TABLEATTRIBUTE'):
-                            aname = _attr(ta, 'NAME').lower()
-                            if 'lookup table name' in aname or 'lookup source row' in aname:
-                                lval = _norm_lkp(_attr(ta, 'VALUE'))
-                                if lval and len(lval) > 2 and lval not in m_lkp:
-                                    m_lkp.append(lval)
-
-                    # Source Qualifier inside MAPPING (TYPE="TRANSFORMATION" but
-                    # TRANSFORMATION_TYPE="Source Qualifier") — check ASSOCIATED_SOURCE_INSTANCE
-                    elif 'source qualifier' in trans_type:
-                        for asi in _iter(inst, 'ASSOCIATED_SOURCE_INSTANCE'):
-                            asi_name = _attr(asi, 'NAME').strip().upper()
-                            t2 = src_tables.get(asi_name, asi_name)
-                            if t2 and t2 not in m_src:
-                                m_src.append(t2)
-
-            mapping_data[mname] = {
-                'sources':              m_src,
-                'targets':              m_tgt,
-                'lookups':              m_lkp,
-                'tx_detail':            tx_detail,
-                'tx_count':             sum(tx_detail.values()),
-                'lookup_instance_names': lookup_instance_names,
-            }
-
-        # ── Parse sessions ─────────────────────────────────────────────────
-        for sess_el in _iter(folder, 'SESSION'):
-            sname = _attr(sess_el, 'NAME')
-            if not sname:
-                continue
-            mname = _attr(sess_el, 'MAPPINGNAME')
-            m = mapping_data.get(mname, {})
-
-            sources = list(m.get('sources', []))
-            targets = list(m.get('targets', []))
-            lookups = list(m.get('lookups', []))
-            lookup_inst_names: Set[str] = m.get('lookup_instance_names', set())
-
-            # Session-level overrides via SESSTRANSFORMATIONINST/ATTRIBUTE
-            # These can override table names with runtime-resolved values
-            for sti in _iter(sess_el, 'SESSTRANSFORMATIONINST'):
-                sti_name = _attr(sti, 'TRANSFORMATIONNAME').strip().upper()
-                sti_type = _attr(sti, 'TRANSFORMATIONTYPE').lower()
-                is_lkp   = 'lookup' in sti_type or sti_name in lookup_inst_names
-
-                for attr_el in _iter(sti, 'ATTRIBUTE'):
-                    aname = _attr(attr_el, 'NAME').lower()
-                    aval  = _attr(attr_el, 'VALUE').strip()
-                    if not aval or aval.startswith('$'):
-                        continue
-                    aval_n = _norm(aval)
-                    if not aval_n or len(aval_n) < 2:
-                        continue
-
-                    if 'source table name' in aname:
-                        if aval_n not in sources:
-                            sources.append(aval_n)
-                    elif 'target table name' in aname or 'table name prefix' in aname:
-                        if aval_n not in targets:
-                            targets.append(aval_n)
-                    elif is_lkp and ('lookup table' in aname or 'lookup source' in aname):
-                        lval = _norm_lkp(aval)
-                        if lval and len(lval) > 2 and lval not in lookups:
-                            lookups.append(lval)
-
-            sessions[sname] = {
-                'file':     fname,
-                'folder':   folder_name,
-                'mapping':  mname,
-                'sources':  sources,
-                'targets':  targets,
-                'lookups':  lookups,
-                'tx_count': m.get('tx_count', 0),
-                'tx_detail':m.get('tx_detail', {}),
-                'workflow': '',
-                'step':     0,
-            }
-
-        # ── Parse workflow execution order ─────────────────────────────────
-        for wf in _iter(folder, 'WORKFLOW'):
-            wf_name = _attr(wf, 'NAME')
-
-            task_names: List[str] = []
-            for ti in _iter(wf, 'TASKINSTANCE'):
-                tt = _attr(ti, 'TASKTYPE').lower()
-                if tt in ('session', 'command', 'eventwaittask'):
-                    ref = _attr(ti, 'REFERENCETASKNAME')
-                    if ref:
-                        task_names.append(ref)
-
-            # Build topological order from WORKFLOWLINK edges
-            succ: Dict[str, List[str]] = defaultdict(list)
-            pred: Dict[str, int] = defaultdict(int)
-            for wfl in _iter(wf, 'WORKFLOWLINK'):
-                frm = _attr(wfl, 'FROMTASK')
-                to  = _attr(wfl, 'TOTASK')
-                if not frm or not to or frm.upper() == 'START':
+            for attr_el in _iter(sti, 'ATTRIBUTE'):
+                aname = _attr(attr_el, 'NAME').lower()
+                aval  = _attr(attr_el, 'VALUE').strip()
+                if not aval or aval.startswith('$'):
                     continue
-                succ[frm].append(to)
-                pred[to] += 1
+                aval_n = _norm(aval)
+                if not aval_n or len(aval_n) < 2:
+                    continue
 
-            roots = [t for t in task_names if pred[t] == 0]
-            order: List[str] = []
-            q = deque(roots)
-            while q:
-                n = q.popleft()
-                order.append(n)
-                for nxt in succ[n]:
-                    pred[nxt] -= 1
-                    if pred[nxt] == 0:
-                        q.append(nxt)
-            seen = set(order)
-            for t in task_names:
-                if t not in seen:
-                    order.append(t)
+                if 'source table name' in aname:
+                    if aval_n not in sources:
+                        sources.append(aval_n)
+                elif 'target table name' in aname or 'table name prefix' in aname:
+                    if aval_n not in targets:
+                        targets.append(aval_n)
+                elif is_lkp and ('lookup table' in aname or 'lookup source' in aname):
+                    lval = _norm_lkp(aval)
+                    if lval and len(lval) > 2 and lval not in lookups:
+                        lookups.append(lval)
 
-            for step, tname in enumerate(order, start=1):
-                if tname in sessions:
-                    sessions[tname]['workflow'] = wf_name
-                    if sessions[tname]['step'] == 0:
-                        sessions[tname]['step'] = step
+        sessions[sname] = {
+            'file':     fname,
+            'folder':   folder_name,
+            'mapping':  mname,
+            'sources':  sources,
+            'targets':  targets,
+            'lookups':  lookups,
+            'tx_count': m.get('tx_count', 0),
+            'tx_detail':m.get('tx_detail', {}),
+            'workflow': '',
+            'step':     0,
+        }
 
-        # ── Parse mapping detail for L5/L6 drill-down (ENHANCED) ─────────
-        for m_el in _iter(folder, 'MAPPING'):
-            mname = _attr(m_el, 'NAME')
-            if not mname:
+    # ── Parse workflow execution order ─────────────────────────────────
+    for wf in _iter(folder, 'WORKFLOW'):
+        wf_name = _attr(wf, 'NAME')
+
+        task_names: List[str] = []
+        for ti in _iter(wf, 'TASKINSTANCE'):
+            tt = _attr(ti, 'TASKTYPE').lower()
+            if tt in ('session', 'command', 'eventwaittask'):
+                ref = _attr(ti, 'REFERENCETASKNAME')
+                if ref:
+                    task_names.append(ref)
+
+        # Build topological order from WORKFLOWLINK edges
+        succ: Dict[str, List[str]] = defaultdict(list)
+        pred: Dict[str, int] = defaultdict(int)
+        for wfl in _iter(wf, 'WORKFLOWLINK'):
+            frm = _attr(wfl, 'FROMTASK')
+            to  = _attr(wfl, 'TOTASK')
+            if not frm or not to or frm.upper() == 'START':
                 continue
+            succ[frm].append(to)
+            pred[to] += 1
 
-            instances = []
-            for inst in _iter(m_el, 'INSTANCE'):
-                instances.append({
-                    'name': _attr(inst, 'NAME'),
-                    'type': _attr(inst, 'TYPE'),
-                    'transformation_name': _attr(inst, 'TRANSFORMATION_NAME'),
-                    'transformation_type': _attr(inst, 'TRANSFORMATION_TYPE'),
-                })
+        roots = [t for t in task_names if pred[t] == 0]
+        order: List[str] = []
+        q = deque(roots)
+        while q:
+            n = q.popleft()
+            order.append(n)
+            for nxt in succ[n]:
+                pred[nxt] -= 1
+                if pred[nxt] == 0:
+                    q.append(nxt)
+        seen = set(order)
+        for t in task_names:
+            if t not in seen:
+                order.append(t)
 
-            connectors = []
-            for conn in _iter(m_el, 'CONNECTOR'):
-                connectors.append({
-                    'from_instance': _attr(conn, 'FROMINSTANCE'),
-                    'from_field': _attr(conn, 'FROMFIELD'),
-                    'to_instance': _attr(conn, 'TOINSTANCE'),
-                    'to_field': _attr(conn, 'TOFIELD'),
-                    'from_type': _attr(conn, 'FROMINSTANCETYPE'),
-                    'to_type': _attr(conn, 'TOINSTANCETYPE'),
-                })
+        for step, tname in enumerate(order, start=1):
+            if tname in sessions:
+                sessions[tname]['workflow'] = wf_name
+                if sessions[tname]['step'] == 0:
+                    sessions[tname]['step'] = step
 
-            fields = []
-            sql_overrides = []
-            join_conditions = []
-            filter_conditions = []
-            router_groups = []
-            lookup_configs = []
-            parameters_found: Set[str] = set()
-            _PARAM_RE = re.compile(r'(\$\$\w+|\$PM\w+)')
+    # ── Parse mapping detail for L5/L6 drill-down (ENHANCED) ─────────
+    for m_el in _iter(folder, 'MAPPING'):
+        mname = _attr(m_el, 'NAME')
+        if not mname:
+            continue
 
-            for xf in _iter(m_el, 'TRANSFORMATION'):
-                xf_name = _attr(xf, 'NAME')
-                xf_type = _attr(xf, 'TYPE').lower()
+        instances = []
+        for inst in _iter(m_el, 'INSTANCE'):
+            instances.append({
+                'name': _attr(inst, 'NAME'),
+                'type': _attr(inst, 'TYPE'),
+                'transformation_name': _attr(inst, 'TRANSFORMATION_NAME'),
+                'transformation_type': _attr(inst, 'TRANSFORMATION_TYPE'),
+            })
 
-                # Extract TRANSFORMFIELD with expression classification
-                for tf in _iter(xf, 'TRANSFORMFIELD'):
-                    expr = _attr(tf, 'EXPRESSION')
-                    expr_type = 'passthrough'
-                    if expr:
-                        expr_upper = expr.upper().strip()
-                        if not expr_upper or expr_upper == _attr(tf, 'NAME').upper():
-                            expr_type = 'passthrough'
-                        elif any(fn in expr_upper for fn in ('SUM(', 'AVG(', 'COUNT(', 'MIN(', 'MAX(')):
-                            expr_type = 'aggregated'
-                        elif any(fn in expr_upper for fn in ('IIF(', 'DECODE(', 'CASE ', 'CONCAT(', 'SUBSTR(', 'TO_DATE(', 'LTRIM(', 'RTRIM(', 'LPAD(', 'RPAD(')):
-                            expr_type = 'derived'
-                        elif 'LOOKUP(' in expr_upper or 'LKP(' in expr_upper:
-                            expr_type = 'lookup'
-                        elif any(c in expr_upper for c in ('+', '-', '*', '/', '||')):
-                            expr_type = 'derived'
-                        elif expr_upper.startswith("'") or expr_upper.replace('.', '').isdigit():
-                            expr_type = 'constant'
-                        else:
-                            expr_type = 'derived'
-                        # Detect parameters
-                        for pm in _PARAM_RE.findall(expr):
-                            parameters_found.add(pm)
-                    fields.append({
-                        'transform': xf_name,
-                        'name': _attr(tf, 'NAME'),
-                        'datatype': _attr(tf, 'DATATYPE'),
-                        'precision': _attr(tf, 'PRECISION'),
-                        'expression': expr,
-                        'porttype': _attr(tf, 'PORTTYPE'),
-                        'expression_type': expr_type,
-                    })
+        connectors = []
+        for conn in _iter(m_el, 'CONNECTOR'):
+            connectors.append({
+                'from_instance': _attr(conn, 'FROMINSTANCE'),
+                'from_field': _attr(conn, 'FROMFIELD'),
+                'to_instance': _attr(conn, 'TOINSTANCE'),
+                'to_field': _attr(conn, 'TOFIELD'),
+                'from_type': _attr(conn, 'FROMINSTANCETYPE'),
+                'to_type': _attr(conn, 'TOINSTANCETYPE'),
+            })
 
-                # Extract SQL overrides, join/filter/router/lookup conditions
-                for ta in _iter(xf, 'TABLEATTRIBUTE'):
-                    aname = _attr(ta, 'NAME').lower()
-                    aval = _attr(ta, 'VALUE').strip()
-                    if not aval:
-                        continue
-                    # Detect parameters in TABLEATTRIBUTE values too
-                    for pm in _PARAM_RE.findall(aval):
+        fields = []
+        sql_overrides = []
+        join_conditions = []
+        filter_conditions = []
+        router_groups = []
+        lookup_configs = []
+        parameters_found: Set[str] = set()
+        _PARAM_RE = re.compile(r'(\$\$\w+|\$PM\w+)')
+
+        for xf in _iter(m_el, 'TRANSFORMATION'):
+            xf_name = _attr(xf, 'NAME')
+            xf_type = _attr(xf, 'TYPE').lower()
+
+            # Extract TRANSFORMFIELD with expression classification
+            for tf in _iter(xf, 'TRANSFORMFIELD'):
+                expr = _attr(tf, 'EXPRESSION')
+                expr_type = 'passthrough'
+                if expr:
+                    expr_upper = expr.upper().strip()
+                    if not expr_upper or expr_upper == _attr(tf, 'NAME').upper():
+                        expr_type = 'passthrough'
+                    elif any(fn in expr_upper for fn in ('SUM(', 'AVG(', 'COUNT(', 'MIN(', 'MAX(')):
+                        expr_type = 'aggregated'
+                    elif any(fn in expr_upper for fn in ('IIF(', 'DECODE(', 'CASE ', 'CONCAT(', 'SUBSTR(', 'TO_DATE(', 'LTRIM(', 'RTRIM(', 'LPAD(', 'RPAD(')):
+                        expr_type = 'derived'
+                    elif 'LOOKUP(' in expr_upper or 'LKP(' in expr_upper:
+                        expr_type = 'lookup'
+                    elif any(c in expr_upper for c in ('+', '-', '*', '/', '||')):
+                        expr_type = 'derived'
+                    elif expr_upper.startswith("'") or expr_upper.replace('.', '').isdigit():
+                        expr_type = 'constant'
+                    else:
+                        expr_type = 'derived'
+                    # Detect parameters
+                    for pm in _PARAM_RE.findall(expr):
                         parameters_found.add(pm)
+                fields.append({
+                    'transform': xf_name,
+                    'name': _attr(tf, 'NAME'),
+                    'datatype': _attr(tf, 'DATATYPE'),
+                    'precision': _attr(tf, 'PRECISION'),
+                    'expression': expr,
+                    'porttype': _attr(tf, 'PORTTYPE'),
+                    'expression_type': expr_type,
+                })
 
-                    if 'sql query' in aname or 'sql override' in aname:
-                        sql_overrides.append({'transform': xf_name, 'sql': aval})
-                    elif 'join condition' in aname:
-                        jtype = ''
-                        for ta2 in _iter(xf, 'TABLEATTRIBUTE'):
-                            if _attr(ta2, 'NAME').lower() == 'join type':
-                                jtype = _attr(ta2, 'VALUE')
-                                break
-                        join_conditions.append({'joiner': xf_name, 'condition': aval, 'type': jtype})
-                    elif 'filter condition' in aname and 'filter' in xf_type:
-                        filter_conditions.append({'filter': xf_name, 'condition': aval})
-                    elif 'lookup condition' in aname or ('lookup sql override' in aname):
-                        conn_info = ''
-                        tbl_name = ''
-                        for ta2 in _iter(xf, 'TABLEATTRIBUTE'):
-                            n2 = _attr(ta2, 'NAME').lower()
-                            if 'connection information' in n2:
-                                conn_info = _attr(ta2, 'VALUE')
-                            elif 'lookup table name' in n2:
-                                tbl_name = _attr(ta2, 'VALUE')
-                        lookup_configs.append({
-                            'lookup': xf_name,
-                            'condition': aval,
-                            'table': tbl_name,
-                            'connection': conn_info,
-                        })
+            # Extract SQL overrides, join/filter/router/lookup conditions
+            for ta in _iter(xf, 'TABLEATTRIBUTE'):
+                aname = _attr(ta, 'NAME').lower()
+                aval = _attr(ta, 'VALUE').strip()
+                if not aval:
+                    continue
+                # Detect parameters in TABLEATTRIBUTE values too
+                for pm in _PARAM_RE.findall(aval):
+                    parameters_found.add(pm)
 
-                # Router group conditions
-                if 'router' in xf_type:
-                    groups = []
-                    for grp in _iter(xf, 'GROUP'):
-                        gname = _attr(grp, 'NAME')
-                        gexpr = _attr(grp, 'EXPRESSION')
-                        if gname:
-                            groups.append({'name': gname, 'condition': gexpr})
-                    if groups:
-                        router_groups.append({'router': xf_name, 'groups': groups})
-
-            # ── Source definition fields ──
-            source_fields = []
-            for src in _iter(folder, 'SOURCE'):
-                sname = _attr(src, 'NAME')
-                src_flds = []
-                for sf in _iter(src, 'SOURCEFIELD'):
-                    src_flds.append({
-                        'name': _attr(sf, 'NAME'),
-                        'datatype': _attr(sf, 'DATATYPE'),
-                        'precision': _attr(sf, 'PRECISION'),
-                        'scale': _attr(sf, 'SCALE'),
-                        'keytype': _attr(sf, 'KEYTYPE'),
-                        'nullable': _attr(sf, 'NULLABLE'),
-                        'description': _attr(sf, 'DESCRIPTION') or _attr(sf, 'BUSINESSNAME'),
+                if 'sql query' in aname or 'sql override' in aname:
+                    sql_overrides.append({'transform': xf_name, 'sql': aval})
+                elif 'join condition' in aname:
+                    jtype = ''
+                    for ta2 in _iter(xf, 'TABLEATTRIBUTE'):
+                        if _attr(ta2, 'NAME').lower() == 'join type':
+                            jtype = _attr(ta2, 'VALUE')
+                            break
+                    join_conditions.append({'joiner': xf_name, 'condition': aval, 'type': jtype})
+                elif 'filter condition' in aname and 'filter' in xf_type:
+                    filter_conditions.append({'filter': xf_name, 'condition': aval})
+                elif 'lookup condition' in aname or ('lookup sql override' in aname):
+                    conn_info = ''
+                    tbl_name = ''
+                    for ta2 in _iter(xf, 'TABLEATTRIBUTE'):
+                        n2 = _attr(ta2, 'NAME').lower()
+                        if 'connection information' in n2:
+                            conn_info = _attr(ta2, 'VALUE')
+                        elif 'lookup table name' in n2:
+                            tbl_name = _attr(ta2, 'VALUE')
+                    lookup_configs.append({
+                        'lookup': xf_name,
+                        'condition': aval,
+                        'table': tbl_name,
+                        'connection': conn_info,
                     })
-                if src_flds:
-                    source_fields.append({'source': sname, 'fields': src_flds})
 
-            # ── Target definition fields ──
-            target_fields = []
-            for tgt in _iter(folder, 'TARGET'):
-                tname = _attr(tgt, 'NAME')
-                tgt_flds = []
-                for tf_el in _iter(tgt, 'TARGETFIELD'):
-                    tgt_flds.append({
-                        'name': _attr(tf_el, 'NAME'),
-                        'datatype': _attr(tf_el, 'DATATYPE'),
-                        'precision': _attr(tf_el, 'PRECISION'),
-                        'scale': _attr(tf_el, 'SCALE'),
-                        'keytype': _attr(tf_el, 'KEYTYPE'),
-                        'nullable': _attr(tf_el, 'NULLABLE'),
-                    })
-                if tgt_flds:
-                    target_fields.append({'target': tname, 'fields': tgt_flds})
+            # Router group conditions
+            if 'router' in xf_type:
+                groups = []
+                for grp in _iter(xf, 'GROUP'):
+                    gname = _attr(grp, 'NAME')
+                    gexpr = _attr(grp, 'EXPRESSION')
+                    if gname:
+                        groups.append({'name': gname, 'condition': gexpr})
+                if groups:
+                    router_groups.append({'router': xf_name, 'groups': groups})
 
-            detail: Dict[str, Any] = {
-                'instances': instances,
-                'connectors': connectors,
-                'fields': fields,
-            }
-            # Only include non-empty enhanced fields (sparse storage)
-            if sql_overrides:
-                detail['sql_overrides'] = sql_overrides
-            if join_conditions:
-                detail['join_conditions'] = join_conditions
-            if filter_conditions:
-                detail['filter_conditions'] = filter_conditions
-            if router_groups:
-                detail['router_groups'] = router_groups
-            if lookup_configs:
-                detail['lookup_configs'] = lookup_configs
-            if source_fields:
-                detail['source_fields'] = source_fields
-            if target_fields:
-                detail['target_fields'] = target_fields
-            if parameters_found:
-                detail['parameters'] = sorted(parameters_found)
+        # ── Source definition fields ──
+        source_fields = []
+        for src in _iter(folder, 'SOURCE'):
+            sname = _attr(src, 'NAME')
+            src_flds = []
+            for sf in _iter(src, 'SOURCEFIELD'):
+                src_flds.append({
+                    'name': _attr(sf, 'NAME'),
+                    'datatype': _attr(sf, 'DATATYPE'),
+                    'precision': _attr(sf, 'PRECISION'),
+                    'scale': _attr(sf, 'SCALE'),
+                    'keytype': _attr(sf, 'KEYTYPE'),
+                    'nullable': _attr(sf, 'NULLABLE'),
+                    'description': _attr(sf, 'DESCRIPTION') or _attr(sf, 'BUSINESSNAME'),
+                })
+            if src_flds:
+                source_fields.append({'source': sname, 'fields': src_flds})
 
-            # ── Pre/Post SQL from SESSTRANSFORMATIONINST ──
-            # Will be enriched per-session below
+        # ── Target definition fields ──
+        target_fields = []
+        for tgt in _iter(folder, 'TARGET'):
+            tname = _attr(tgt, 'NAME')
+            tgt_flds = []
+            for tf_el in _iter(tgt, 'TARGETFIELD'):
+                tgt_flds.append({
+                    'name': _attr(tf_el, 'NAME'),
+                    'datatype': _attr(tf_el, 'DATATYPE'),
+                    'precision': _attr(tf_el, 'PRECISION'),
+                    'scale': _attr(tf_el, 'SCALE'),
+                    'keytype': _attr(tf_el, 'KEYTYPE'),
+                    'nullable': _attr(tf_el, 'NULLABLE'),
+                })
+            if tgt_flds:
+                target_fields.append({'target': tname, 'fields': tgt_flds})
 
-            # Attach to all sessions that use this mapping
-            for sname, sdata in sessions.items():
-                if sdata.get('mapping') == mname:
-                    sdata['mapping_detail'] = detail
+        detail: Dict[str, Any] = {
+            'instances': instances,
+            'connectors': connectors,
+            'fields': fields,
+        }
+        # Only include non-empty enhanced fields (sparse storage)
+        if sql_overrides:
+            detail['sql_overrides'] = sql_overrides
+        if join_conditions:
+            detail['join_conditions'] = join_conditions
+        if filter_conditions:
+            detail['filter_conditions'] = filter_conditions
+        if router_groups:
+            detail['router_groups'] = router_groups
+        if lookup_configs:
+            detail['lookup_configs'] = lookup_configs
+        if source_fields:
+            detail['source_fields'] = source_fields
+        if target_fields:
+            detail['target_fields'] = target_fields
+        if parameters_found:
+            detail['parameters'] = sorted(parameters_found)
 
-        # ── Extract Pre/Post SQL from SESSION elements ────────────────────
-        for sess_el in _iter(folder, 'SESSION'):
-            sname = _attr(sess_el, 'NAME')
-            if sname not in sessions:
-                continue
-            pre_sql_list = []
-            post_sql_list = []
-            for sti in _iter(sess_el, 'SESSTRANSFORMATIONINST'):
-                for attr_el in _iter(sti, 'ATTRIBUTE'):
-                    aname = _attr(attr_el, 'NAME').lower()
-                    aval = _attr(attr_el, 'VALUE').strip()
-                    if not aval:
-                        continue
-                    if 'pre sql' in aname or 'pre-session sql' in aname:
-                        pre_sql_list.append(aval)
-                    elif 'post sql' in aname or 'post-session sql' in aname:
-                        post_sql_list.append(aval)
-            if pre_sql_list or post_sql_list:
-                md = sessions[sname].get('mapping_detail', {})
-                if pre_sql_list:
-                    md['pre_sql'] = pre_sql_list
-                if post_sql_list:
-                    md['post_sql'] = post_sql_list
-                sessions[sname]['mapping_detail'] = md
+        # ── Pre/Post SQL from SESSTRANSFORMATIONINST ──
+        # Will be enriched per-session below
 
-    return sessions
+        # Attach to all sessions that use this mapping
+        for sname, sdata in sessions.items():
+            if sdata.get('mapping') == mname:
+                sdata['mapping_detail'] = detail
+
+    # ── Extract Pre/Post SQL from SESSION elements ────────────────────
+    for sess_el in _iter(folder, 'SESSION'):
+        sname = _attr(sess_el, 'NAME')
+        if sname not in sessions:
+            continue
+        pre_sql_list = []
+        post_sql_list = []
+        for sti in _iter(sess_el, 'SESSTRANSFORMATIONINST'):
+            for attr_el in _iter(sti, 'ATTRIBUTE'):
+                aname = _attr(attr_el, 'NAME').lower()
+                aval = _attr(attr_el, 'VALUE').strip()
+                if not aval:
+                    continue
+                if 'pre sql' in aname or 'pre-session sql' in aname:
+                    pre_sql_list.append(aval)
+                elif 'post sql' in aname or 'post-session sql' in aname:
+                    post_sql_list.append(aval)
+        if pre_sql_list or post_sql_list:
+            md = sessions[sname].get('mapping_detail', {})
+            if pre_sql_list:
+                md['pre_sql'] = pre_sql_list
+            if post_sql_list:
+                md['post_sql'] = post_sql_list
+            sessions[sname]['mapping_detail'] = md
 
 
 # ── Main entry point ───────────────────────────────────────────────────────────
@@ -710,36 +814,40 @@ def analyze(
     Tiers are unlimited — as deep as the actual dependency graph requires.
     External source tables (read-only, not written by any session) appear at tier 0.5.
 
+    Uses parse_coordinator for parallel parsing, per-file fault isolation,
+    and SHA-256 duplicate detection when processing multiple files.
+
     Args:
         progress_fn: Optional callback(current, total, filename) called after each file is parsed.
     """
+    from app.engines.parse_coordinator import parse_files_parallel
 
-    # ── Phase 1: collect all sessions across all files ─────────────────────
-    all_sessions: Dict[str, Dict[str, Any]] = {}
+    # ── Phase 1: collect all sessions across all files (with fault isolation) ──
     warnings: List[str] = []
-    total = len(xml_contents)
 
-    for i, (content, fname) in enumerate(zip(xml_contents, filenames)):
-        result = _parse_file(content, fname)
-        if progress_fn is not None:
-            progress_fn(i + 1, total, fname)
-        if '_error' in result:
-            warnings.append(f"{fname}: {result['_error']}")
-            continue
-        for sname, sdata in result.items():
-            if sname not in all_sessions:
-                all_sessions[sname] = sdata
-            else:
-                # Merge sources/targets/lookups from duplicate definitions
-                for k in ('sources', 'targets', 'lookups'):
-                    existing = all_sessions[sname][k]
-                    for v in sdata[k]:
-                        if v not in existing:
-                            existing.append(v)
-                # Keep the workflow/step if not yet assigned
-                if not all_sessions[sname]['workflow'] and sdata['workflow']:
-                    all_sessions[sname]['workflow'] = sdata['workflow']
-                    all_sessions[sname]['step'] = sdata['step']
+    # Wrap progress_fn to match coordinator's 4-arg signature
+    coord_progress = None
+    if progress_fn is not None:
+        def coord_progress(current: int, total: int, fname: str, status: str) -> None:
+            progress_fn(current, total, fname)
+
+    all_sessions, audit = parse_files_parallel(
+        xml_contents, filenames, _parse_file,
+        progress_fn=coord_progress,
+        max_workers=min(4, len(xml_contents)),
+        deduplicate=(len(xml_contents) > 1),
+    )
+
+    # Collect warnings from audit
+    for fr in audit.file_results:
+        if fr.status == 'error' and fr.error:
+            warnings.append(f"{fr.filename}: {fr.error}")
+        elif fr.status == 'skipped_duplicate':
+            warnings.append(f"{fr.filename}: skipped (duplicate content)")
+
+    if audit.duplicates_skipped:
+        logger.info("Dedup: skipped %d duplicate files out of %d total",
+                     audit.duplicates_skipped, audit.total_files)
 
     if not all_sessions:
         return {

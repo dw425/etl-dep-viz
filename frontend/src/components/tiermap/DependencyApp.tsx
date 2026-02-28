@@ -53,12 +53,14 @@ const DuplicatePipelines = lazy(() => import('./DuplicatePipelines'));
 const ChunkingStrategy = lazy(() => import('./ChunkingStrategy'));
 const UserProfileView = lazy(() => import('./UserProfileView'));
 const FlowWalkerView = lazy(() => import('./FlowWalker'));
+const LineageBuilder = lazy(() => import('./LineageBuilder'));
+const ImpactAnalysisView = lazy(() => import('./ImpactAnalysis'));
 const HelpOverlay = lazy(() => import('../shared/HelpOverlay'));
 
 type ViewId = 'tier' | 'galaxy' | 'constellation' | 'explorer' | 'conflicts' | 'order' | 'matrix'
   | 'tables' | 'duplicates' | 'chunking'
   | 'complexity' | 'waves' | 'umap' | 'simulator' | 'concentration' | 'consensus'
-  | 'layers' | 'infra' | 'profile' | 'flowwalker';
+  | 'layers' | 'infra' | 'profile' | 'flowwalker' | 'lineage' | 'impact';
 
 const VIEWS: { id: ViewId; label: string; icon: string; group?: 'core' | 'vector' | 'nav' | 'harmonize' }[] = [
   { id: 'tier', label: 'Tier Diagram', icon: '\u25A4', group: 'core' },
@@ -80,6 +82,8 @@ const VIEWS: { id: ViewId; label: string; icon: string; group?: 'core' | 'vector
   { id: 'layers', label: 'Layers', icon: '\u25CF', group: 'nav' },
   { id: 'infra', label: 'Infra', icon: '\u229E', group: 'nav' },
   { id: 'flowwalker', label: 'Flow', icon: '\u21C4', group: 'nav' },
+  { id: 'lineage', label: 'Lineage', icon: '\u2192', group: 'nav' },
+  { id: 'impact', label: 'Impact', icon: '\u26A1', group: 'nav' },
 ];
 
 export function DependencyApp() {
@@ -888,6 +892,24 @@ export function DependencyApp() {
                 </ErrorBoundary>
               )}
 
+              {/* Lineage Builder (Items 53-54) */}
+              {view === 'lineage' && tierData && (
+                <ErrorBoundary>
+                  <div style={{ overflow: 'hidden', height: '100%' }}>
+                    <LineageBuilder tierData={tierData} />
+                  </div>
+                </ErrorBoundary>
+              )}
+
+              {/* Impact Analysis (Item 55) */}
+              {view === 'impact' && tierData && (
+                <ErrorBoundary>
+                  <div style={{ overflow: 'hidden', height: '100%' }}>
+                    <ImpactAnalysisView tierData={tierData} />
+                  </div>
+                </ErrorBoundary>
+              )}
+
               {/* User Profile */}
               {view === 'profile' && (
                 <ErrorBoundary>
@@ -907,7 +929,7 @@ export function DependencyApp() {
               <VectorControlPanel tierData={tierData} vectorResults={vectorResults} onVectorResults={setVectorResults} />
             )}
             {rightPanel === 'drill' && vectorResults && (
-              <DrillThroughPanel vectorResults={vectorResults} filter={drillFilter} onFilterChange={setDrillFilter} />
+              <DrillThroughPanel vectorResults={vectorResults} filter={drillFilter} onFilterChange={setDrillFilter} uploadId={uploadId} />
             )}
             {rightPanel === 'export' && (
               <ExportManager tierData={tierData} vectorResults={vectorResults} />

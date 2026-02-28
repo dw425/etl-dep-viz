@@ -3,7 +3,7 @@
  * Supports slicing by any combination of V1–V11 dimensions.
  */
 
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { VectorResults, DrillFilter } from '../../types/vectors';
 
 interface Props {
@@ -11,9 +11,35 @@ interface Props {
   filter: DrillFilter;
   onFilterChange: (filter: DrillFilter) => void;
   matchingCount?: number;
+  uploadId?: number | null;
 }
 
-export default function DrillThroughPanel({ vectorResults, filter, onFilterChange, matchingCount }: Props) {
+const STORAGE_PREFIX = 'edv-drill-filter-';
+
+export default function DrillThroughPanel({ vectorResults, filter, onFilterChange, matchingCount, uploadId }: Props) {
+  // Restore persisted filters on mount (Item 72)
+  useEffect(() => {
+    if (!uploadId) return;
+    try {
+      const stored = localStorage.getItem(`${STORAGE_PREFIX}${uploadId}`);
+      if (stored) {
+        const parsed = JSON.parse(stored) as DrillFilter;
+        if (Object.keys(parsed).length > 0) onFilterChange(parsed);
+      }
+    } catch { /* ignore */ }
+  }, [uploadId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Persist filter changes
+  useEffect(() => {
+    if (!uploadId) return;
+    try {
+      if (Object.keys(filter).length > 0) {
+        localStorage.setItem(`${STORAGE_PREFIX}${uploadId}`, JSON.stringify(filter));
+      } else {
+        localStorage.removeItem(`${STORAGE_PREFIX}${uploadId}`);
+      }
+    } catch { /* ignore */ }
+  }, [filter, uploadId]);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
     complexity: true,
     wave: false,

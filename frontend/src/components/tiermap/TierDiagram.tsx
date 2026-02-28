@@ -5,7 +5,7 @@
  * and recalculates SVG paths on scroll/resize.
  */
 
-import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useRef, useEffect, lazy, Suspense } from 'react';
 import type { TierMapResult, TierConn } from '../../types/tiermap';
 import {
   C,
@@ -16,6 +16,12 @@ import {
   type TierGroup,
   type ConnTypeConfig,
 } from './constants';
+import { shouldUseCanvas } from './WebGLCanvas';
+
+const WebGLCanvas = lazy(() => import('./WebGLCanvas'));
+
+/** Threshold for switching from SVG to Canvas rendering. */
+const CANVAS_SESSION_THRESHOLD = 500;
 
 interface Props {
   data: TierMapResult;
@@ -35,6 +41,14 @@ interface LineData {
 }
 
 const TierDiagram: React.FC<Props> = ({ data }) => {
+  // For very large datasets, use Canvas renderer instead of SVG
+  if (data.sessions.length >= CANVAS_SESSION_THRESHOLD) {
+    return (
+      <Suspense fallback={<div style={{ padding: 24, color: '#94a3b8' }}>Loading canvas renderer...</div>}>
+        <WebGLCanvas data={data} />
+      </Suspense>
+    );
+  }
   const containerRef = useRef<HTMLDivElement | null>(null);
   const nodeRefs = useRef<Record<string, HTMLDivElement>>({});
   const [lines, setLines] = useState<LineData[]>([]);

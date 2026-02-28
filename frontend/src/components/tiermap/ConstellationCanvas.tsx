@@ -4,7 +4,7 @@
  * Renders cluster hulls, labels, cross-chunk edges, and critical markers.
  */
 
-import React, { useRef, useEffect, useCallback, useMemo } from 'react';
+import React, { useRef, useEffect, useCallback, useMemo, useState } from 'react';
 import * as d3 from 'd3';
 import type {
   ConstellationPoint,
@@ -78,6 +78,8 @@ export default function ConstellationCanvas({
   const dirtyRef = useRef(true);
   const rafRef = useRef<number>(0);
   const dimsRef = useRef({ w: 800, h: 600 });
+  const mousePosRef = useRef<{ x: number; y: number } | null>(null);
+  const [fisheyeEnabled, setFisheyeEnabled] = useState(false);
 
   // Build chunk lookup + color map
   const chunkMap = useMemo(() => {
@@ -309,8 +311,77 @@ export default function ConstellationCanvas({
       });
     }
 
+    // ── Fisheye lens overlay ──────────────────────────────────────────
+    const mousePos = mousePosRef.current;
+    if (fisheyeEnabled && mousePos) {
+      const lensR = 80;
+      const magnification = 2.5;
+      const mx = mousePos.x;
+      const my = mousePos.y;
+
+      // Draw magnified region
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(mx, my, lensR, 0, Math.PI * 2);
+      ctx.clip();
+
+      // Draw magnified background
+      ctx.fillStyle = 'rgba(8, 12, 20, 0.9)';
+      ctx.fillRect(mx - lensR, my - lensR, lensR * 2, lensR * 2);
+
+      // Magnified dots
+      for (const p of points) {
+        const px = sx(p.x);
+        const py = sy(p.y);
+        const dx = px - mx;
+        const dy = py - my;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > lensR * magnification) continue;
+
+        // Apply fisheye distortion
+        const nd = dist / (lensR * magnification);
+        const fisheyeDist = nd < 1 ? nd * nd * lensR : dist;
+        const angle = Math.atan2(dy, dx);
+        const fpx = mx + Math.cos(angle) * fisheyeDist;
+        const fpy = my + Math.sin(angle) * fisheyeDist;
+
+        const color = chunkColorMap.get(p.chunk_id) || '#3B82F6';
+        const r = DOT_RADIUS * magnification;
+        ctx.beginPath();
+        ctx.arc(fpx, fpy, r, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+
+        // Show name label for nearby points
+        if (dist < lensR) {
+          ctx.font = '9px "JetBrains Mono", monospace';
+          ctx.fillStyle = '#e2e8f0';
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(p.name.slice(0, 16), fpx + r + 3, fpy);
+        }
+      }
+
+      ctx.restore();
+
+      // Draw lens border
+      ctx.beginPath();
+      ctx.arc(mx, my, lensR, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(59, 130, 246, 0.5)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Crosshair
+      ctx.beginPath();
+      ctx.moveTo(mx - 6, my); ctx.lineTo(mx + 6, my);
+      ctx.moveTo(mx, my - 6); ctx.lineTo(mx, my + 6);
+      ctx.strokeStyle = 'rgba(59, 130, 246, 0.3)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+
     ctx.restore();
-  }, [points, chunks, crossChunkEdges, chunkHulls, chunkCentroids, chunkColorMap, chunkMap, quadtree]);
+  }, [points, chunks, crossChunkEdges, chunkHulls, chunkCentroids, chunkColorMap, chunkMap, quadtree, fisheyeEnabled]);
 
   // ── Animation loop (only redraws when dirty) ──────────────────────────
 
@@ -400,11 +471,16 @@ export default function ConstellationCanvas({
   }, [points, quadtree]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    const canvas = canvasRef.current;
+    if (canvas) {
+      const rect = canvas.getBoundingClientRect();
+      mousePosRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      if (fisheyeEnabled) dirtyRef.current = true;
+    }
     const pt = hitTest(e.clientX, e.clientY);
     if (pt !== hoverRef.current) {
       hoverRef.current = pt;
       dirtyRef.current = true;
-      const canvas = canvasRef.current;
       if (canvas) canvas.style.cursor = pt ? 'pointer' : 'grab';
     }
   }, [hitTest]);
@@ -470,6 +546,21 @@ export default function ConstellationCanvas({
               cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>{b.label}</button>
           ))}
+          {/* Fisheye toggle */}
+          <button
+            onClick={() => setFisheyeEnabled(f => !f)}
+            title={fisheyeEnabled ? 'Disable fisheye lens' : 'Enable fisheye lens'}
+            style={{
+              width: 28, height: 28, borderRadius: 5,
+              border: `1px solid ${fisheyeEnabled ? 'rgba(59,130,246,0.5)' : 'rgba(255,255,255,0.1)'}`,
+              background: fisheyeEnabled ? 'rgba(59,130,246,0.2)' : 'rgba(15,23,42,0.85)',
+              color: fisheyeEnabled ? '#60A5FA' : '#94a3b8',
+              fontSize: 12, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            {'\u25CE'}
+          </button>
         </div>
 
         {/* Stats overlay */}
