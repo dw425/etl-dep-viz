@@ -511,10 +511,24 @@ def _compute_layout(
 ) -> dict[str, tuple[float, float]]:
     """Fruchterman-Reingold layout normalized to [0,1]."""
     n = len(all_ids)
-    iterations = 50 if n < 1000 else 30 if n < 5000 else 20
+    iterations = 50 if n < 1000 else 30 if n < 5000 else 15 if n < 10000 else 10
 
     if G.number_of_edges() > 0:
-        pos = nx.spring_layout(G, k=1.5 / math.sqrt(max(n, 1)), iterations=iterations, seed=42)
+        # For very dense graphs, use a sampled subgraph for layout to reduce time
+        layout_graph = G
+        if G.number_of_edges() > 200_000 and n > 5000:
+            import random
+            rng = random.Random(42)
+            edges = list(G.edges(data=True))
+            # Keep top edges by weight (strongest similarity) + random sample
+            edges.sort(key=lambda e: e[2].get('weight', 0), reverse=True)
+            keep = min(200_000, len(edges))
+            sampled = edges[:keep]
+            layout_graph = nx.Graph()
+            layout_graph.add_nodes_from(G.nodes())
+            layout_graph.add_edges_from(sampled)
+            logger.info("Layout: sampled %d/%d edges for spring_layout", keep, len(edges))
+        pos = nx.spring_layout(layout_graph, k=1.5 / math.sqrt(max(n, 1)), iterations=iterations, seed=42)
     else:
         pos = {}
         cols = max(int(math.sqrt(n)), 1)

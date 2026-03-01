@@ -413,11 +413,13 @@ export function DependencyApp() {
     localStorage.setItem('edv-onboarding-complete', '1');
   }, []);
 
-  // ── No data yet: show dashboard / upload screen ───────────────────────────
-  // Renders the full-page drop zone, recent uploads, and onboarding tour.
-  // Once tierData is populated, this branch never renders again.
-  if (!tierData) {
-    return (
+  // ── Render ─────────────────────────────────────────────────────────────────
+  // Single return with fragment: dashboard OR main layout, then shared overlays.
+  // This eliminates the early-return pattern that previously prevented modals
+  // from rendering on the dashboard screen.
+  return (
+    <>
+    {!tierData ? (
       <div
         style={{
           width: '100%', height: '100vh', background: T.bg, display: 'flex',
@@ -642,12 +644,9 @@ export function DependencyApp() {
             </div>
           </div>
         )}
-      </div>
-    );
-  }
 
-  // ── Main app layout with data ──────────────────────────────────────
-  return (
+      </div>
+    ) : (
     <div style={{ width: '100%', height: '100vh', background: T.bg, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* Top bar */}
       <div style={{
@@ -743,6 +742,24 @@ export function DependencyApp() {
             }}
           >
             HTML
+          </button>
+          <button
+            onClick={async () => { setLogLoading(true); setShowLogModal(true); try { setLogEntries(await getHealthLogs(100)); } catch { /* no-op */ } finally { setLogLoading(false); } }}
+            style={{
+              padding: '4px 10px', borderRadius: 5, border: `1px solid ${T.border}`,
+              background: 'transparent', color: '#F59E0B', fontSize: 10, cursor: 'pointer',
+            }}
+          >
+            Logs
+          </button>
+          <button
+            onClick={() => setShowHelp(true)}
+            style={{
+              padding: '4px 10px', borderRadius: 5, border: `1px solid ${T.border}`,
+              background: 'transparent', color: T.textMuted, fontSize: 10, cursor: 'pointer',
+            }}
+          >
+            ? Help
           </button>
           <button
             onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
@@ -1040,50 +1057,55 @@ export function DependencyApp() {
         </div>
       )}
 
-      {/* Help overlay */}
-      {showHelp && (
-        <Suspense fallback={null}>
-          <HelpOverlay onClose={() => setShowHelp(false)} views={VIEWS} theme={T} />
-        </Suspense>
-      )}
+    </div>
+    )}
 
-      {/* Log viewer modal */}
-      {showLogModal && (
+    {/* ── Shared overlays (rendered once, visible in both dashboard and data views) ── */}
+
+    {/* Help overlay */}
+    {showHelp && (
+      <Suspense fallback={null}>
+        <HelpOverlay onClose={() => setShowHelp(false)} views={VIEWS} theme={T} />
+      </Suspense>
+    )}
+
+    {/* Log viewer modal */}
+    {showLogModal && (
+      <div style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex',
+        alignItems: 'center', justifyContent: 'center', zIndex: 9999,
+      }} onClick={() => setShowLogModal(false)}>
         <div style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex',
-          alignItems: 'center', justifyContent: 'center', zIndex: 9999,
-        }} onClick={() => setShowLogModal(false)}>
-          <div style={{
-            width: 640, maxHeight: '70vh', background: T.bgCard, borderRadius: 12,
-            border: `1px solid ${T.border}`, overflow: 'hidden',
-          }} onClick={e => e.stopPropagation()}>
-            <div style={{ padding: '12px 16px', borderBottom: `1px solid ${T.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: T.text }}>Server Logs ({logEntries.length})</span>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <button onClick={async () => { setLogLoading(true); try { setLogEntries(await getHealthLogs(100)); } catch { /* no-op */ } finally { setLogLoading(false); } }}
-                  style={{ background: 'transparent', border: `1px solid ${T.border}`, color: T.textMuted, cursor: 'pointer', fontSize: 11, borderRadius: 4, padding: '2px 8px' }}>
-                  Refresh
-                </button>
-                <button onClick={() => setShowLogModal(false)} style={{ background: 'transparent', border: 'none', color: T.textMuted, cursor: 'pointer', fontSize: 16 }}>x</button>
-              </div>
-            </div>
-            <div style={{ overflow: 'auto', maxHeight: '60vh', padding: 8, fontFamily: 'monospace', fontSize: 11 }}>
-              {logLoading && <div style={{ color: T.textMuted, padding: 16, textAlign: 'center' }}>Loading logs...</div>}
-              {!logLoading && logEntries.length === 0 && <div style={{ color: T.textMuted, padding: 16, textAlign: 'center' }}>No log entries</div>}
-              {logEntries.map((entry, i) => (
-                <div key={i} style={{ padding: '4px 8px', borderBottom: `1px solid ${T.border}`, display: 'flex', gap: 8 }}>
-                  <span style={{
-                    color: entry.level === 'ERROR' ? '#ef4444' : entry.level === 'WARNING' ? '#F59E0B' : entry.level === 'INFO' ? '#10B981' : T.textMuted,
-                    fontWeight: 600, minWidth: 50,
-                  }}>{entry.level}</span>
-                  <span style={{ color: T.textMuted, minWidth: 70 }}>{entry.timestamp.split('T')[1]?.slice(0, 8)}</span>
-                  <span style={{ color: T.text, wordBreak: 'break-all' }}>{entry.message}</span>
-                </div>
-              ))}
+          width: 640, maxHeight: '70vh', background: T.bgCard, borderRadius: 12,
+          border: `1px solid ${T.border}`, overflow: 'hidden',
+        }} onClick={e => e.stopPropagation()}>
+          <div style={{ padding: '12px 16px', borderBottom: `1px solid ${T.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: T.text }}>Server Logs ({logEntries.length})</span>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button onClick={async () => { setLogLoading(true); try { setLogEntries(await getHealthLogs(100)); } catch { /* no-op */ } finally { setLogLoading(false); } }}
+                style={{ background: 'transparent', border: `1px solid ${T.border}`, color: T.textMuted, cursor: 'pointer', fontSize: 11, borderRadius: 4, padding: '2px 8px' }}>
+                Refresh
+              </button>
+              <button onClick={() => setShowLogModal(false)} style={{ background: 'transparent', border: 'none', color: T.textMuted, cursor: 'pointer', fontSize: 16 }}>x</button>
             </div>
           </div>
+          <div style={{ overflow: 'auto', maxHeight: '60vh', padding: 8, fontFamily: 'monospace', fontSize: 11 }}>
+            {logLoading && <div style={{ color: T.textMuted, padding: 16, textAlign: 'center' }}>Loading logs...</div>}
+            {!logLoading && logEntries.length === 0 && <div style={{ color: T.textMuted, padding: 16, textAlign: 'center' }}>No log entries</div>}
+            {logEntries.map((entry, i) => (
+              <div key={i} style={{ padding: '4px 8px', borderBottom: `1px solid ${T.border}`, display: 'flex', gap: 8 }}>
+                <span style={{
+                  color: entry.level === 'ERROR' ? '#ef4444' : entry.level === 'WARNING' ? '#F59E0B' : entry.level === 'INFO' ? '#10B981' : T.textMuted,
+                  fontWeight: 600, minWidth: 50,
+                }}>{entry.level}</span>
+                <span style={{ color: T.textMuted, minWidth: 70 }}>{entry.timestamp.split('T')[1]?.slice(0, 8)}</span>
+                <span style={{ color: T.text, wordBreak: 'break-all' }}>{entry.message}</span>
+              </div>
+            ))}
+          </div>
         </div>
-      )}
-    </div>
+      </div>
+    )}
+    </>
   );
 }

@@ -122,21 +122,35 @@ def _parse_xml_iterparse(content: bytes):
 
     Yields FOLDER elements one at a time. Caller should clear each
     element after processing to free memory.
+
+    Handles truncated XML gracefully: if the parser hits premature EOF,
+    it stops yielding but does NOT raise — any FOLDERs already yielded
+    are still valid.
     """
     import io
     source = io.BytesIO(content)
     if _LXML:
-        parser = _ET.XMLParser(recover=True, remove_comments=True)
-        context = _ET.iterparse(source, events=('end',), tag='FOLDER')
+        context = _ET.iterparse(source, events=('end',), tag='FOLDER',
+                                recover=True, remove_comments=True)
     else:
         context = _ET.iterparse(source, events=('end',))
 
-    for event, elem in context:
-        tag = elem.tag if hasattr(elem, 'tag') else ''
-        if tag == 'FOLDER':
-            yield elem
-            # Clear processed element to free memory
-            elem.clear()
+    try:
+        for event, elem in context:
+            tag = elem.tag if hasattr(elem, 'tag') else ''
+            if tag == 'FOLDER':
+                yield elem
+                # Clear processed element and predecessors to free memory
+                elem.clear()
+                # Also clear preceding siblings from parent to reduce memory
+                while elem.getprevious() is not None:
+                    try:
+                        del elem.getparent()[0]
+                    except (TypeError, AttributeError):
+                        break
+    except _ET.XMLSyntaxError as exc:
+        # Truncated XML — stop gracefully, caller keeps sessions from folders already yielded
+        logger.info("Iterparse stopped at truncated XML (recovered partial data): %s", exc)
 
 
 def _attr(el: Any, name: str) -> str:
@@ -290,17 +304,21 @@ def _parse_file(content: bytes, fname: str) -> Dict[str, Any]:
     if len(content) > _ITERPARSE_THRESHOLD:
         logger.info("Using iterparse for large file %s (%.1fMB)", fname, size_mb)
         folder_count = 0
+        # Skip deep extraction for very large files (>100MB) during iterparse
+        # to avoid 3-5x overhead; deep metadata can be loaded on-demand via L5/L6 endpoints
+        iter_deep = size_mb < 100
         try:
             for folder in _parse_xml_iterparse(content):
                 folder_count += 1
                 before = len(sessions)
-                _process_folder(folder, fname, sessions, deep=True)
+                _process_folder(folder, fname, sessions, deep=iter_deep)
                 after = len(sessions)
                 logger.info("  %s folder %d: +%d sessions (total %d)",
                             fname, folder_count, after - before, after)
-            if not sessions:
-                return {'_error': f'No sessions found in {fname} (iterparse)', '_file': fname}
-            return sessions
+            if sessions:
+                return sessions
+            # iterparse yielded no folders or no sessions — fall through to standard parse
+            logger.info("Iterparse yielded 0 sessions for %s, falling back to full parse", fname)
         except Exception as exc:
             # Salvage whatever sessions were extracted before the error
             if sessions:
@@ -318,8 +336,8 @@ def _parse_file(content: bytes, fname: str) -> Dict[str, Any]:
             return {'_error': f'No FOLDER or SESSION elements found in {fname}', '_file': fname}
         folders = [root]
 
-    # All files get full deep extraction (TABLEATTRIBUTE dict cache keeps it efficient)
-    use_deep = True
+    # Skip deep extraction for very large files (>100MB) in fallback path too
+    use_deep = size_mb < 100
     for i, folder in enumerate(folders, 1):
         before = len(sessions)
         _process_folder(folder, fname, sessions, deep=use_deep)
