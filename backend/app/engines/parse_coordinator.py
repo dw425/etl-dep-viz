@@ -74,7 +74,7 @@ def parse_files_parallel(
     contents: List[bytes],
     filenames: List[str],
     parse_fn: Callable[[bytes, str], Dict[str, Any]],
-    progress_fn: Optional[Callable[[int, int, str, str], None]] = None,
+    progress_fn: Optional[Callable[[int, int, str, str, int], None]] = None,
     max_workers: int = _MAX_WORKERS,
     deduplicate: bool = True,
 ) -> tuple[Dict[str, Any], ParseAudit]:
@@ -84,7 +84,7 @@ def parse_files_parallel(
         contents: List of file contents (bytes)
         filenames: List of filenames
         parse_fn: Function to parse a single file: (content, filename) -> dict
-        progress_fn: Optional callback(current, total, filename, status)
+        progress_fn: Optional callback(current, total, filename, status, sessions_so_far)
         max_workers: Maximum parallel workers
         deduplicate: If True, skip files with duplicate SHA-256 hashes
 
@@ -107,7 +107,7 @@ def parse_files_parallel(
             audit.file_results.append(fr)
             audit.parse_errors += 1
             if progress_fn:
-                progress_fn(i + 1, len(contents), fname, 'error')
+                progress_fn(i + 1, len(contents), fname, 'error', audit.total_sessions)
             continue
 
         content_hash = _hash_content(content) if deduplicate else ''
@@ -121,7 +121,7 @@ def parse_files_parallel(
             audit.duplicates_skipped += 1
             logger.info("Skipping duplicate file %s (same as %s)", fname, seen_hashes[content_hash])
             if progress_fn:
-                progress_fn(i + 1, len(contents), fname, 'skipped_duplicate')
+                progress_fn(i + 1, len(contents), fname, 'skipped_duplicate', audit.total_sessions)
             continue
 
         if deduplicate:
@@ -143,7 +143,7 @@ def parse_files_parallel(
             else:
                 audit.parse_errors += 1
             if progress_fn:
-                progress_fn(idx + 1, len(contents), fname, fr.status)
+                progress_fn(idx + 1, len(contents), fname, fr.status, audit.total_sessions)
     else:
         # Parallel parsing with ThreadPoolExecutor
         futures = {}
@@ -170,7 +170,7 @@ def parse_files_parallel(
                 else:
                     audit.parse_errors += 1
                 if progress_fn:
-                    progress_fn(idx + 1, len(contents), fname, fr.status)
+                    progress_fn(idx + 1, len(contents), fname, fr.status, audit.total_sessions)
 
     # Sort file_results by original order
     audit.file_results.sort(key=lambda r: filenames.index(r.filename) if r.filename in filenames else 999)

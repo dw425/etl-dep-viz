@@ -138,6 +138,7 @@ export function DependencyApp() {
   const [staleDetected, setStaleDetected] = useState(false);
   const [showLogModal, setShowLogModal] = useState(false);
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
+  const [logLoading, setLogLoading] = useState(false);
   // lastEventTime is a ref (not state) so updates don't cause re-renders
   const lastEventTime = useRef<number>(0);
   const abortRef = useRef<AbortController | null>(null);
@@ -570,7 +571,7 @@ export function DependencyApp() {
                 style={{ fontSize: 11, color: T.accent, background: 'transparent', border: `1px solid ${T.accent}`, borderRadius: 4, padding: '3px 10px', cursor: 'pointer' }}>
                 Retry
               </button>
-              <button onClick={() => { getHealthLogs(50).then(setLogEntries).catch(() => {}); setShowLogModal(true); }}
+              <button onClick={async () => { setLogLoading(true); setShowLogModal(true); try { setLogEntries(await getHealthLogs(50)); } catch { /* no-op */ } finally { setLogLoading(false); } }}
                 style={{ fontSize: 11, color: '#F59E0B', background: 'transparent', border: `1px solid #F59E0B`, borderRadius: 4, padding: '3px 10px', cursor: 'pointer' }}>
                 View Logs
               </button>
@@ -1014,7 +1015,7 @@ export function DependencyApp() {
             </div>
             <button onClick={() => setError(null)} style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 14, lineHeight: 1, flexShrink: 0 }}>x</button>
           </div>
-          <button onClick={() => { getHealthLogs(50).then(setLogEntries).catch(() => {}); setShowLogModal(true); }}
+          <button onClick={async () => { setLogLoading(true); setShowLogModal(true); try { setLogEntries(await getHealthLogs(50)); } catch { /* no-op */ } finally { setLogLoading(false); } }}
             style={{ fontSize: 10, color: '#F59E0B', background: 'transparent', border: 'none', cursor: 'pointer', marginTop: 4, padding: 0, textDecoration: 'underline' }}>
             View Logs
           </button>
@@ -1039,11 +1040,18 @@ export function DependencyApp() {
             border: `1px solid ${T.border}`, overflow: 'hidden',
           }} onClick={e => e.stopPropagation()}>
             <div style={{ padding: '12px 16px', borderBottom: `1px solid ${T.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: T.text }}>Server Logs</span>
-              <button onClick={() => setShowLogModal(false)} style={{ background: 'transparent', border: 'none', color: T.textMuted, cursor: 'pointer', fontSize: 16 }}>x</button>
+              <span style={{ fontSize: 13, fontWeight: 700, color: T.text }}>Server Logs ({logEntries.length})</span>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <button onClick={async () => { setLogLoading(true); try { setLogEntries(await getHealthLogs(100)); } catch { /* no-op */ } finally { setLogLoading(false); } }}
+                  style={{ background: 'transparent', border: `1px solid ${T.border}`, color: T.textMuted, cursor: 'pointer', fontSize: 11, borderRadius: 4, padding: '2px 8px' }}>
+                  Refresh
+                </button>
+                <button onClick={() => setShowLogModal(false)} style={{ background: 'transparent', border: 'none', color: T.textMuted, cursor: 'pointer', fontSize: 16 }}>x</button>
+              </div>
             </div>
             <div style={{ overflow: 'auto', maxHeight: '60vh', padding: 8, fontFamily: 'monospace', fontSize: 11 }}>
-              {logEntries.length === 0 && <div style={{ color: T.textMuted, padding: 16, textAlign: 'center' }}>No log entries</div>}
+              {logLoading && <div style={{ color: T.textMuted, padding: 16, textAlign: 'center' }}>Loading logs...</div>}
+              {!logLoading && logEntries.length === 0 && <div style={{ color: T.textMuted, padding: 16, textAlign: 'center' }}>No log entries</div>}
               {logEntries.map((entry, i) => (
                 <div key={i} style={{ padding: '4px 8px', borderBottom: `1px solid ${T.border}`, display: 'flex', gap: 8 }}>
                   <span style={{

@@ -806,7 +806,7 @@ def _process_folder(
 def analyze(
     xml_contents: List[bytes],
     filenames: List[str],
-    progress_fn: Optional[Callable[[int, int, str], None]] = None,
+    progress_fn: Optional[Callable[..., None]] = None,
 ) -> Dict[str, Any]:
     """Parse N Informatica XML files and return Lumen_Retro-compatible tier diagram data.
 
@@ -825,11 +825,11 @@ def analyze(
     # ── Phase 1: collect all sessions across all files (with fault isolation) ──
     warnings: List[str] = []
 
-    # Wrap progress_fn to match coordinator's 4-arg signature
+    # Wrap progress_fn to match coordinator's 5-arg signature, forwarding session count
     coord_progress = None
     if progress_fn is not None:
-        def coord_progress(current: int, total: int, fname: str, status: str) -> None:
-            progress_fn(current, total, fname)
+        def coord_progress(current: int, total: int, fname: str, status: str, sessions_so_far: int = 0) -> None:
+            progress_fn(current, total, fname, sessions_so_far)
 
     all_sessions, audit = parse_files_parallel(
         xml_contents, filenames, _parse_file,

@@ -462,9 +462,10 @@ async def analyze_constellation_stream(
             files_parsed = [0]
             file_statuses: list[dict] = []
 
-            def progress_fn(current: int, total_files: int, filename: str) -> None:
+            def progress_fn(current: int, total_files: int, filename: str, cumulative_sessions: int = 0) -> None:
                 """Called by the engine after each file is parsed; maps to SSE percent 5–95."""
                 files_parsed[0] = current
+                sessions_so_far[0] = cumulative_sessions
                 pct = round((current / total_files) * 90.0, 1)  # parsing occupies 5%–95% of the range
                 elapsed_ms = int((time.monotonic() - t0) * 1000)
                 # ETA: linear extrapolation based on average ms-per-file so far
@@ -494,18 +495,25 @@ async def analyze_constellation_stream(
             platform = _detect_platform(raw)
             logger.info("step=classify platform=%s files=%d", platform, total)
 
-            # Wrap parse in a timeout so oversized inputs don't hang the server
+            # Scale timeout: base timeout + 60s per file + 30s per 100MB
+            total_size_mb = sum(len(r) for r in raw) / (1024 * 1024)
+            scaled_timeout = max(
+                settings.parse_timeout_seconds,
+                int(60 * total + 30 * (total_size_mb / 100)),
+            )
+            logger.info("step=timeout_calc base=%ds files=%d size_mb=%.0f scaled=%ds",
+                        settings.parse_timeout_seconds, total, total_size_mb, scaled_timeout)
             try:
                 tier_data = await asyncio.wait_for(
                     _analyze_mixed(raw, names, progress_fn),
-                    timeout=settings.parse_timeout_seconds,
+                    timeout=scaled_timeout,
                 )
             except asyncio.TimeoutError:
                 elapsed_ms = int((time.monotonic() - t0) * 1000)
                 logger.error("step=error phase=parsing type=TimeoutError message=Parse timeout after %dms", elapsed_ms)
                 await queue.put({
                     'phase': 'timeout',
-                    'message': f'Parse timed out after {settings.parse_timeout_seconds}s. Try uploading fewer files.',
+                    'message': f'Parse timed out after {scaled_timeout}s. Try uploading fewer files.',
                     'elapsed_ms': elapsed_ms,
                 })
                 return

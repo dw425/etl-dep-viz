@@ -107,8 +107,8 @@ class TestScaleParsing:
         from app.engines.infa_engine import analyze
 
         progress_calls = []
-        def on_progress(current, total, filename):
-            progress_calls.append((current, total, filename))
+        def on_progress(current, total, filename, sessions_so_far=0):
+            progress_calls.append((current, total, filename, sessions_so_far))
 
         analyze([xml_a, xml_b], ["a.xml", "b.xml"], progress_fn=on_progress)
 
