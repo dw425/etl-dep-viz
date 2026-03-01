@@ -1,11 +1,15 @@
 """Layers router — 6-layer progressive disclosure data endpoints.
 
-L1: Enterprise constellation (supernodes)
-L2: Domain cluster (sessions within a group)
-L3: Workflow neighborhood
-L4: Session blueprint
-L5: Mapping pipeline
-L6: Object detail
+Each layer exposes a progressively deeper slice of the ETL dependency graph:
+  L1 (Enterprise)   — high-level supernode graph; one node per community cluster
+  L2 (Domain)       — all sessions inside one L1 community, with meso sub-clusters
+  L3 (Workflow)     — sessions inside a sub-cluster or named workflow scope
+  L4 (Session)      — single session exploded: complexity, criticality, direct connections
+  L5 (Mapping)      — transform pipeline inside a session/mapping (requires deep XML data)
+  L6 (Object)       — individual table or transform object detail
+
+Clients drill down from L1 → L6; each layer accepts the full tier_data body plus
+optional vector_results so the API stays stateless (no server-side session needed).
 """
 
 from __future__ import annotations
@@ -37,7 +41,7 @@ async def enterprise_constellation(
     if not sessions:
         raise HTTPException(400, "tier_data must contain sessions")
 
-    # Run vectors if not provided
+    # Auto-run Phase 1 vectors if not supplied by the caller (lazy bootstrap)
     if vector_results is None or "v1_communities" not in vector_results:
         orch = VectorOrchestrator()
         vector_results = await asyncio.to_thread(orch.run_phase1, tier_data)
@@ -46,22 +50,23 @@ async def enterprise_constellation(
     v11 = vector_results.get("v11_complexity", {})
     v4 = vector_results.get("v4_wave_plan", {})
 
-    # Build session lookup
     session_map = {s["id"]: s for s in sessions}
 
-    # Supernode graph from V1
+    # The V1 engine pre-builds the supernode graph; use it directly for L1
     supernode_graph = v1.get("supernode_graph", {"supernodes": [], "superedges": []})
 
-    # Enrich supernodes with complexity stats
+    # ── Enrich each supernode with aggregated complexity metrics from V11 ──
     complexity_by_session = {}
     for score in v11.get("scores", []):
         complexity_by_session[score["session_id"]] = score
 
     for sn in supernode_graph.get("supernodes", []):
         sids = sn.get("session_ids", [])
+        # Average complexity score across all member sessions; default 50 if no data
         complexities = [complexity_by_session.get(sid, {}).get("overall_score", 50.0) for sid in sids]
         sn["avg_complexity"] = round(sum(complexities) / max(len(complexities), 1), 1)
         buckets = [complexity_by_session.get(sid, {}).get("bucket", "Medium") for sid in sids]
+        # Count how many sessions fall into each complexity bucket for the donut chart
         sn["bucket_distribution"] = {
             b: buckets.count(b) for b in ["Simple", "Medium", "Complex", "Very Complex"] if buckets.count(b) > 0
         }
@@ -95,7 +100,9 @@ async def domain_cluster(
     sessions = tier_data.get("sessions", [])
     session_map = {s["id"]: s for s in sessions}
 
-    # Find sessions in this group
+    # ── Resolve group_id to its member session list ──
+    # Community keys may be stored as plain integers or with a "community_" prefix;
+    # strip the prefix and try both forms.
     group_sessions = []
     v1 = vector_results.get("v1_communities", {})
     macro_comms = v1.get("macro_communities", {})
@@ -104,7 +111,7 @@ async def domain_cluster(
     member_ids = macro_comms.get(group_key, [])
 
     if not member_ids:
-        # Try numeric key
+        # Fallback: scan all community keys for a match (handles integer keys)
         for k, v in macro_comms.items():
             if k == group_key or f"community_{k}" == group_id:
                 member_ids = v
@@ -115,7 +122,8 @@ async def domain_cluster(
     if not group_sessions:
         raise HTTPException(404, f"Group {group_id} not found or empty")
 
-    # Get meso sub-clusters for this group
+    # ── Find meso-level sub-clusters that intersect with this group ──
+    # Meso communities provide finer-grained groupings within the macro community.
     meso_comms = v1.get("meso_communities", {})
     sub_clusters: dict[str, list[str]] = {}
     for meso_id, meso_sids in meso_comms.items():
@@ -123,14 +131,14 @@ async def domain_cluster(
         if overlap:
             sub_clusters[meso_id] = overlap
 
-    # Get complexity scores for group members
+    # Filter V11 complexity scores to only the sessions in this group
     v11 = vector_results.get("v11_complexity", {})
     member_complexity = []
     for score in v11.get("scores", []):
         if score["session_id"] in member_ids:
             member_complexity.append(score)
 
-    # Connections within group
+    # Include connections where at least one endpoint is in this group
     connections = tier_data.get("connections", [])
     group_connections = [
         c for c in connections
@@ -160,30 +168,33 @@ async def workflow_neighborhood(
     sessions = tier_data.get("sessions", [])
     session_map = {s["id"]: s for s in sessions}
 
-    # Find sessions in scope
+    # ── Resolve scope to a list of session IDs ──
     scope_sids = []
     if scope_type == "sub_cluster":
+        # Meso community key → member session IDs
         v1 = vector_results.get("v1_communities", {})
         meso = v1.get("meso_communities", {})
         scope_sids = meso.get(scope_id, [])
     elif scope_type == "workflow":
+        # Match by the fully-qualified workflow path prefix stored in session["full"]
         for s in sessions:
             if s.get("full", "").startswith(scope_id):
                 scope_sids.append(s["id"])
 
     scope_sessions = [session_map[sid] for sid in scope_sids if sid in session_map]
 
-    # Wave cascade data
+    # V9 wave cascade data for scope members (failure propagation risk)
     v9 = vector_results.get("v9_wave_function", {})
     cascade_data = [s for s in v9.get("sessions", []) if s["session_id"] in scope_sids]
 
-    # SCC groups within scope
+    # Strongly-connected components that overlap with the scope (cyclic dependency groups)
     v4 = vector_results.get("v4_wave_plan", {})
     scc_groups = [
         g for g in v4.get("scc_groups", [])
         if any(sid in scope_sids for sid in g.get("session_ids", []))
     ]
 
+    # Only include connections where both endpoints are within the scope (internal edges)
     connections = tier_data.get("connections", [])
     scope_connections = [
         c for c in connections
@@ -216,7 +227,7 @@ async def session_blueprint(
     if not session:
         raise HTTPException(404, f"Session {session_id} not found")
 
-    # Complexity breakdown
+    # Scan V11 scores list for this session's complexity entry (linear, list is not indexed)
     v11 = vector_results.get("v11_complexity", {})
     complexity = None
     for score in v11.get("scores", []):
@@ -224,7 +235,7 @@ async def session_blueprint(
             complexity = score
             break
 
-    # Wave/criticality data
+    # Scan V9 results for this session's wave/failure-propagation criticality score
     v9 = vector_results.get("v9_wave_function", {})
     criticality = None
     for s in v9.get("sessions", []):
@@ -232,7 +243,8 @@ async def session_blueprint(
             criticality = s
             break
 
-    # Upstream/downstream
+    # Direct upstream = connections that target this session
+    # Direct downstream = connections that originate from this session
     connections = tier_data.get("connections", [])
     upstream = [c for c in connections if c.get("to") == session_id]
     downstream = [c for c in connections if c.get("from") == session_id]
@@ -321,9 +333,11 @@ async def flow_walker(
     if not session:
         raise HTTPException(404, f"Session {session_id} not found")
 
-    # Build adjacency for upstream/downstream traversal
-    # upstream: who writes to a table that this session reads
-    # downstream: who reads from a table that this session writes
+    # ── Build lookup indices for the recursive traversal ──
+    # The connection graph is bipartite: sessions (S*) connect to tables (T*).
+    # To walk upstream/downstream we need the reverse mappings:
+    #   writes_to[table_id]  → which sessions write to this table
+    #   reads_from[table_id] → which sessions read from this table
     writes_to: dict[str, list[str]] = {}      # table_id → [session_ids that write]
     reads_from: dict[str, list[str]] = {}     # table_id → [session_ids that read]
     for c in connections:
@@ -333,7 +347,10 @@ async def flow_walker(
         elif frm.startswith("T") and to.startswith("S"):
             reads_from.setdefault(frm, []).append(to)
 
-    # Find upstream chain (recursive)
+    # ── Recursive upstream walker ──
+    # For session `sid`: find every table it reads, then find every session that
+    # writes to that table — those are the upstream producers.  Recurse into each.
+    # `visited` prevents infinite loops in cyclic graphs.
     def _upstream(sid: str, visited: set[str] | None = None) -> list[dict]:
         if visited is None:
             visited = set()
@@ -344,11 +361,9 @@ async def flow_walker(
         s = session_map.get(sid)
         if not s:
             return []
-        # Find tables this session reads from
         for c in connections:
             if c.get("to") == sid and c.get("from", "").startswith("T"):
                 table_id = c["from"]
-                # Find sessions that write to that table
                 for writer_sid in writes_to.get(table_id, []):
                     if writer_sid != sid and writer_sid not in visited:
                         ws = session_map.get(writer_sid)
@@ -362,7 +377,9 @@ async def flow_walker(
                             result.extend(_upstream(writer_sid, visited))
         return result
 
-    # Find downstream chain (recursive)
+    # ── Recursive downstream walker ──
+    # Mirror of _upstream: for each table this session writes to, find every
+    # session that reads from it — those are the downstream consumers.
     def _downstream(sid: str, visited: set[str] | None = None) -> list[dict]:
         if visited is None:
             visited = set()
@@ -392,7 +409,7 @@ async def flow_walker(
     upstream = _upstream(session_id)
     downstream = _downstream(session_id)
 
-    # Tables touched by this session
+    # ── Collect all tables read or written by this session ──
     tables_touched = []
     for c in connections:
         if c.get("from") == session_id and c.get("to", "").startswith("T"):
@@ -404,7 +421,7 @@ async def flow_walker(
             if t:
                 tables_touched.append({**t, "relation": "reads"})
 
-    # Complexity from V11
+    # Look up this session's V11 complexity score (used for effort estimation)
     v11 = vector_results.get("v11_complexity", {})
     complexity = None
     for score in v11.get("scores", []):
@@ -412,7 +429,7 @@ async def flow_walker(
             complexity = score
             break
 
-    # Wave from V4
+    # Find which migration wave this session belongs to (V4 topological ordering)
     v4 = vector_results.get("v4_wave_plan", {})
     wave_info = None
     for w in v4.get("waves", []):
@@ -420,7 +437,7 @@ async def flow_walker(
             wave_info = {"wave": w.get("wave"), "session_ids": w.get("session_ids", [])}
             break
 
-    # SCC membership
+    # Check if session is part of a strongly-connected component (cyclic dependency)
     scc = None
     for g in v4.get("scc_groups", []):
         if session_id in g.get("session_ids", []):

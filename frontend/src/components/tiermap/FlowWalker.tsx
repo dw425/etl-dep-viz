@@ -1,6 +1,16 @@
 /**
  * FlowWalker — End-to-end flow walking view.
- * Left: upstream/downstream chain. Center: mapping pipeline. Right: context.
+ *
+ * Layout (three-panel):
+ *   Left  (260px) — Session browser + upstream/downstream chain for the selected session
+ *   Center (flex) — Mapping pipeline: sources → transforms (expandable) → targets + connectors
+ *   Right (280px) — Context: session metadata, complexity score, tables, parameters, pre/post SQL
+ *
+ * Data flow:
+ *   1. Sessions from tierData are listed and filtered by searchTerm (capped at 50)
+ *   2. Selecting a session calls loadFlow() → POST /api/layers/flow/{sessionId}
+ *   3. The response (FlowData) populates all three panels
+ *   4. SQL overrides, join/filter conditions, and expressions are rendered via lazy viewers
  */
 
 import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react';
@@ -45,6 +55,7 @@ export default function FlowWalkerView({ tierData, vectorResults }: Props) {
   const [selectedField, setSelectedField] = useState<string | null>(null);
 
   const sessions = useMemo(() => tierData.sessions || [], [tierData]);
+  // Cap at 50 results to keep the browser list scrollable; filtered by full path or short name
   const filteredSessions = useMemo(() => {
     if (!searchTerm) return sessions.slice(0, 50);
     const term = searchTerm.toLowerCase();
@@ -53,9 +64,12 @@ export default function FlowWalkerView({ tierData, vectorResults }: Props) {
     ).slice(0, 50);
   }, [sessions, searchTerm]);
 
+  // ── loadFlow — fetches flow data for a session and populates all panels ──
+  // Vector results are merged into the request body when available so the backend
+  // can enrich the response with complexity scores and wave info.
   const loadFlow = useCallback(async (sessionId: string) => {
     setLoading(true);
-    setExpandedTransform(null);
+    setExpandedTransform(null); // collapse any previously expanded transform
     setSelectedField(null);
     try {
       const body = vectorResults
@@ -71,13 +85,16 @@ export default function FlowWalkerView({ tierData, vectorResults }: Props) {
     }
   }, [tierData, vectorResults]);
 
-  // Auto-select first session
+  // Auto-load the first session on mount so the view is never blank after opening
   useEffect(() => {
     if (!selectedSessionId && sessions.length > 0) {
       loadFlow(sessions[0].id);
     }
   }, [sessions, selectedSessionId, loadFlow]);
 
+  // ── Destructure mapping_detail from the flow response ─────────────────────
+  // mapping_detail contains the deep Informatica parse results (instances, connectors,
+  // fields, SQL overrides, join/filter conditions, router groups, lookup configs).
   const md = flowData?.mapping_detail as Record<string, unknown> | null;
   const instances = (md?.instances as Record<string, unknown>[]) || [];
   const connectors = (md?.connectors as Record<string, unknown>[]) || [];
@@ -87,11 +104,12 @@ export default function FlowWalkerView({ tierData, vectorResults }: Props) {
   const filterConditions = (md?.filter_conditions as Record<string, unknown>[]) || [];
   const routerGroups = (md?.router_groups as Record<string, unknown>[]) || [];
   const lookupConfigs = (md?.lookup_configs as Record<string, unknown>[]) || [];
+  // Pre/post SQL run at the session level (not per-transform)
   const preSql = (md?.pre_sql as string[]) || [];
   const postSql = (md?.post_sql as string[]) || [];
   const parameters = (md?.parameters as string[]) || [];
 
-  // Group fields by transform
+  // Group field metadata by transform name so each transform card can show its own fields
   const fieldsByTransform = useMemo(() => {
     const map: Record<string, Record<string, unknown>[]> = {};
     for (const f of fields) {
@@ -102,7 +120,7 @@ export default function FlowWalkerView({ tierData, vectorResults }: Props) {
     return map;
   }, [fields]);
 
-  // Categorize instances
+  // Split instances into source, target, and transform buckets for rendering order
   const sourceInsts = instances.filter(i => (i.type as string)?.toLowerCase() === 'source');
   const targetInsts = instances.filter(i => (i.type as string)?.toLowerCase() === 'target');
   const transformInsts = instances.filter(i => {
@@ -267,6 +285,8 @@ export default function FlowWalkerView({ tierData, vectorResults }: Props) {
                     const tName = inst.name as string;
                     const tType = (inst.transformation_type as string) || (inst.type as string);
                     const isExpanded = expandedTransform === tName;
+                    // Look up fields/conditions by both instance name and transformation_name
+                    // because Informatica XML uses slightly different keys in different places
                     const instFields = fieldsByTransform[inst.transformation_name as string] || fieldsByTransform[tName] || [];
                     const sqlOvr = sqlOverrides.find(s => s.transform === (inst.transformation_name as string) || s.transform === tName);
                     const joinCond = joinConditions.find(j => j.joiner === tName || j.joiner === (inst.transformation_name as string));
@@ -324,7 +344,7 @@ export default function FlowWalkerView({ tierData, vectorResults }: Props) {
                                 <ExpressionViewer expression={lkpCfg.condition as string} onFieldClick={setSelectedField} />
                               </div>
                             )}
-                            {/* Fields */}
+                            {/* Field table — shows all output fields with datatype, port, expr type, and expression */}
                             {instFields.length > 0 && (
                               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10, marginTop: 8 }}>
                                 <thead>
@@ -345,6 +365,7 @@ export default function FlowWalkerView({ tierData, vectorResults }: Props) {
                                       <td style={{ padding: '3px 4px', color: '#e2e8f0', fontWeight: 500 }}>{f.name as string}</td>
                                       <td style={{ padding: '3px 4px', color: '#64748b' }}>{f.datatype as string}</td>
                                       <td style={{ padding: '3px 4px', color: '#64748b' }}>{f.porttype as string}</td>
+                                      {/* expression_type badge: derived=blue, aggregated=purple, constant=amber */}
                                       <td style={{ padding: '3px 4px' }}>
                                         <span style={{
                                           padding: '1px 5px', borderRadius: 3, fontSize: 9,

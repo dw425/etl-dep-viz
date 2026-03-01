@@ -1,10 +1,17 @@
 """AI Chat router — natural language questions about ETL data via RAG.
 
-Endpoints:
-  POST /chat/index/{upload_id}  — build vector index for an upload
-  POST /chat/{upload_id}        — ask a question (RAG pipeline)
-  POST /chat/{upload_id}/search — semantic search without LLM
-  GET  /chat/{upload_id}/status — check if upload is indexed
+RAG pipeline flow:
+  1. index/{upload_id}  — run IndexingPipeline: chunk tier_data + vector_results into
+                          documents, embed with EmbeddingEngine, store in ChromaDB.
+  2. /{upload_id}       — receive a question, run HybridSearchEngine to retrieve the
+                          most relevant documents, pass them as context to RAGChatEngine
+                          (LLM), return a structured ChatResponse.
+  3. /{upload_id}/search — retrieval only (no LLM call), useful for debugging what
+                           documents are being found for a query.
+  4. /{upload_id}/status — lightweight check whether the ChromaDB collection exists.
+
+Engine instances are lazy-initialised once per process and shared across requests.
+A threading.Lock guards the double-checked initialisation pattern.
 """
 
 from __future__ import annotations
@@ -23,17 +30,28 @@ logger = logging.getLogger("edv.chat")
 
 router = APIRouter(prefix="/chat", tags=["AI Chat"])
 
-# Shared engine instances (lazy-initialized, thread-safe)
+# Module-level singletons: initialised once, reused for every request.
+# None before first call; replaced atomically inside the lock.
 _engines: dict | None = None
 _engines_lock = threading.Lock()
 
 
 def _get_engines() -> dict:
-    """Lazy-initialize embedding engine, vector store, and chat engine."""
+    """Lazy-initialize embedding engine, vector store, and chat engine.
+
+    Uses a double-checked locking pattern:
+      - First check (no lock) avoids lock overhead on the hot path after init.
+      - Second check (inside lock) prevents duplicate initialisation if two
+        threads race to the first check simultaneously.
+    Imports are deferred so the heavy ML libraries only load when the chat
+    feature is first used, keeping cold start time low.
+    """
     global _engines
+    # Fast path: already initialised
     if _engines is not None:
         return _engines
     with _engines_lock:
+        # Slow path: re-check inside lock in case another thread initialised first
         if _engines is not None:
             return _engines
 
@@ -46,6 +64,7 @@ def _get_engines() -> dict:
         model=settings.embedding_model,
     )
     store = VectorStore(persist_dir=settings.chroma_persist_dir)
+    # HybridSearchEngine combines dense (embedding) and sparse (BM25-style) retrieval
     search = HybridSearchEngine(store, embedding)
     chat = RAGChatEngine(
         search,
@@ -89,13 +108,19 @@ class SearchRequest(BaseModel):
 
 @router.post("/index/{upload_id}")
 async def index_upload(upload_id: int, db: Session = Depends(get_db)):
-    """Build vector index for an upload. Call after parsing + optional vector analysis."""
+    """Build vector index for an upload. Call after parsing + optional vector analysis.
+
+    The IndexingPipeline chunks tier_data sessions, tables, and (if available)
+    vector_results into text documents, embeds them, and persists the ChromaDB
+    collection keyed by upload_id.  Subsequent chat calls will retrieve from this
+    collection.  Re-indexing an already-indexed upload overwrites the collection.
+    """
     upload = db.query(Upload).filter(Upload.id == upload_id).first()
     if not upload:
         raise HTTPException(404, "Upload not found")
 
     tier_data = upload.get_tier_data()
-    vector_results = upload.get_vector_results()
+    vector_results = upload.get_vector_results()  # None if vector analysis hasn't run
 
     from app.engines.indexing_pipeline import IndexingPipeline
     pipeline = IndexingPipeline(
@@ -112,7 +137,15 @@ async def index_upload(upload_id: int, db: Session = Depends(get_db)):
 
 @router.post("/{upload_id}", response_model=ChatResponse)
 async def chat(upload_id: int, request: ChatRequest, db: Session = Depends(get_db)):
-    """Ask a natural language question about the ETL environment."""
+    """Ask a natural language question about the ETL environment.
+
+    RAG flow:
+      1. Verify the ChromaDB collection for this upload exists.
+      2. Pass the question + conversation history to RAGChatEngine.
+      3. The engine retrieves relevant documents, builds a prompt, calls the LLM,
+         and returns a structured response including cited sessions/tables and
+         suggested follow-up questions.
+    """
     upload = db.query(Upload).filter(Upload.id == upload_id).first()
     if not upload:
         raise HTTPException(404, "Upload not found")
@@ -121,13 +154,14 @@ async def chat(upload_id: int, request: ChatRequest, db: Session = Depends(get_d
     store = engines["store"]
     chat_engine = engines["chat"]
 
-    # Verify index exists
+    # Guard: the index must be built first via POST /chat/index/{upload_id}
     if not store.collection_exists(upload_id):
         raise HTTPException(
             400,
             "Upload not indexed. Call POST /api/chat/index/{upload_id} first.",
         )
 
+    # tier_data provides session/table metadata for grounding the LLM response
     tier_data = upload.get_tier_data()
 
     result = await chat_engine.chat(
@@ -144,7 +178,12 @@ async def chat(upload_id: int, request: ChatRequest, db: Session = Depends(get_d
 
 @router.post("/{upload_id}/search")
 async def search(upload_id: int, request: SearchRequest):
-    """Semantic search without LLM — returns raw matched documents."""
+    """Semantic search without LLM — returns raw matched documents.
+
+    Useful for debugging retrieval quality: call this to see exactly which
+    indexed document chunks would be fed to the LLM for a given question.
+    doc_type can be 'session', 'table', 'vector_insight', etc. to narrow results.
+    """
     engines = _get_engines()
     embedding = engines["embedding"]
     store = engines["store"]
@@ -152,6 +191,7 @@ async def search(upload_id: int, request: SearchRequest):
     if not store.collection_exists(upload_id):
         raise HTTPException(400, "Upload not indexed.")
 
+    # Embed the query text into a dense vector before searching ChromaDB
     query_embedding = embedding.embed_single(request.query)
     results = store.search(
         upload_id, query_embedding,

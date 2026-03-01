@@ -1,4 +1,13 @@
-"""Vectors router — run analysis vectors on tier map data."""
+"""Vectors router — run analysis vectors on tier map data.
+
+Vector execution is organised into three phases:
+  Phase 1 (Core):     V1 community detection, V4 topological sort / wave plan, V11 complexity scoring
+  Phase 2 (Advanced): V2 partition quality, V3 centrality, V9 UMAP/wave function, V10 concentration
+  Phase 3 (Ensemble): V5 affinity propagation, V6 spectral, V7 HDBSCAN, V8 ensemble consensus
+
+All heavy computation runs in a thread pool via asyncio.to_thread to keep the
+async event loop responsive.  SSE streaming is available via /analyze-stream.
+"""
 
 from __future__ import annotations
 
@@ -21,7 +30,12 @@ router = APIRouter(prefix="/vectors", tags=["vectors"])
 
 
 def _compute_cache_key(tier_data: dict, phase: int = 3, params: dict | None = None) -> str:
-    """Content-addressed cache key: SHA-256 of (session IDs + connections + phase + params)."""
+    """Content-addressed cache key: SHA-256 of (session IDs + connections + phase + params).
+
+    Sorting IDs before hashing ensures the key is order-independent, so the
+    same logical dataset always produces the same cache key regardless of
+    the order sessions appear in the JSON body.
+    """
     session_ids = sorted(s.get('id', '') for s in tier_data.get('sessions', []))
     conn_keys = sorted(
         f"{c.get('from', '')}-{c.get('to', '')}" for c in tier_data.get('connections', [])
@@ -32,6 +46,7 @@ def _compute_cache_key(tier_data: dict, phase: int = 3, params: dict | None = No
         'phase': phase,
         'params': params or {},
     }, sort_keys=True)
+    # Truncate to 16 hex chars — short enough for URLs, long enough to avoid collisions
     return hashlib.sha256(key_data.encode()).hexdigest()[:16]
 
 
@@ -59,15 +74,18 @@ async def analyze_vectors(
 
     orchestrator = VectorOrchestrator()
 
+    # ── Phase execution: each phase depends on the previous phase's results ──
     if phase == 1:
         result = await asyncio.to_thread(orchestrator.run_phase1, tier_data)
     elif phase == 2:
+        # Phase 2 vectors need Phase 1 community/wave data as input features
         p1 = await asyncio.to_thread(orchestrator.run_phase1, tier_data)
         result = await asyncio.to_thread(orchestrator.run_phase2, tier_data, p1)
     else:
+        # Phase 3 runs all phases internally via run_all for a full ensemble result
         result = await asyncio.to_thread(orchestrator.run_all, tier_data)
 
-    # Persist vector results if upload_id provided
+    # Persist vector results against the upload row if an ID was provided
     if upload_id:
         upload = db.query(Upload).filter(Upload.id == upload_id).first()
         if upload:
@@ -103,22 +121,26 @@ async def analyze_vectors_stream(
     queue: asyncio.Queue = asyncio.Queue()
 
     async def _process():
+        """Run all three vector phases sequentially, emitting SSE progress events."""
         try:
             orchestrator = VectorOrchestrator()
 
+            # ── Phase 1: Core vectors (V1, V4, V11) ──
             await queue.put({"phase": "v1_community", "percent": 5})
             p1 = await asyncio.to_thread(orchestrator.run_phase1, tier_data)
             await queue.put({"phase": "phase1_complete", "percent": 33})
 
+            # ── Phase 2: Advanced vectors (V2, V3, V9, V10) — builds on Phase 1 ──
             await queue.put({"phase": "v2_hierarchical", "percent": 35})
             p2 = await asyncio.to_thread(orchestrator.run_phase2, tier_data, p1)
             await queue.put({"phase": "phase2_complete", "percent": 66})
 
+            # ── Phase 3: Ensemble vectors (V5–V8) — builds on Phase 2 ──
             await queue.put({"phase": "v5_affinity", "percent": 70})
             p3 = await asyncio.to_thread(orchestrator.run_phase3, tier_data, p2)
             await queue.put({"phase": "phase3_complete", "percent": 95})
 
-            # Cache if upload_id provided
+            # Persist final results if an upload_id was supplied
             if upload_id:
                 upload = db.query(Upload).filter(Upload.id == upload_id).first()
                 if upload:
@@ -131,6 +153,7 @@ async def analyze_vectors_stream(
             await queue.put({"phase": "error", "message": str(exc)})
 
     async def _event_generator():
+        """Drain the queue and yield SSE lines; stop on terminal phase."""
         while True:
             event = await queue.get()
             yield f"data: {json.dumps(event)}\n\n"
@@ -190,11 +213,14 @@ async def what_if_simulation(
             extract_session_features,
         )
 
+        # Build the feature matrix and adjacency graph required by V9
         features = extract_session_features(tier_data)
         builder = FeatureMatrixBuilder(features)
         connections = tier_data.get("connections", [])
         adjacency = builder.build_adjacency_matrix(connections)
 
+        # what_if_failure simulates removing session_id and propagating the
+        # cascade of downstream sessions that would be affected
         v9 = WaveFunctionVector()
         result = await asyncio.to_thread(
             v9.what_if_failure, session_id, adjacency, builder.session_ids
@@ -263,13 +289,13 @@ async def analyze_selective(
     if not sessions:
         raise HTTPException(400, "tier_data must contain at least one session")
 
-    # Content-addressed cache check
+    # Compute a deterministic cache key for this exact input + vector selection
     cache_key = _compute_cache_key(tier_data, phase, {'vectors': sorted(vectors)})
 
     orchestrator = VectorOrchestrator()
     t0 = time.monotonic()
 
-    # Phase 1 is always required (core vectors)
+    # Phase 1 must always run — later phases depend on its community/wave output
     p1 = await asyncio.to_thread(orchestrator.run_phase1, tier_data)
     result = dict(p1)
 
@@ -281,9 +307,10 @@ async def analyze_selective(
         p3 = await asyncio.to_thread(orchestrator.run_phase3, tier_data, result)
         result.update(p3)
 
-    # Filter to only requested vectors (if specified)
+    # Post-filter: if the caller named specific vectors, strip all others.
+    # Internal metadata keys (prefix '_') are always retained.
     if vectors:
-        allowed = set(vectors) | {'_timings'}  # always keep timings
+        allowed = set(vectors) | {'_timings'}  # always keep timings metadata
         result = {k: v for k, v in result.items() if k in allowed or k.startswith('_')}
 
     elapsed_ms = int((time.monotonic() - t0) * 1000)
@@ -333,7 +360,7 @@ async def analyze_incremental(
     if not sessions:
         raise HTTPException(400, "tier_data must contain at least one session")
 
-    # Load previous results from cache if available
+    # ── Load previously cached results to avoid recomputing unchanged vectors ──
     previous = None
     if upload_id:
         upload = db.query(Upload).filter(Upload.id == upload_id).first()
@@ -342,12 +369,14 @@ async def analyze_incremental(
 
     orchestrator = VectorOrchestrator()
     t0 = time.monotonic()
+    # The orchestrator merges `previous` with freshly computed vectors, only
+    # re-running vectors listed in `vectors` (plus any unresolved dependencies).
     result = await asyncio.to_thread(
         orchestrator.run_incremental, tier_data, vectors, previous
     )
     result['_elapsed_ms'] = int((time.monotonic() - t0) * 1000)
 
-    # Cache updated results
+    # Persist the merged (old + new) results back to the upload row
     if upload_id:
         upload = db.query(Upload).filter(Upload.id == upload_id).first()
         if upload:

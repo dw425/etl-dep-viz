@@ -1,11 +1,14 @@
 """Document Generator — converts parsed ETL data into structured text documents for vector embedding.
 
 Produces 5 document types at different granularity levels:
-  1. Session Profile  — one per session, full context
-  2. Table Profile    — one per table, readers/writers/lineage
-  3. Dependency Chain  — one per significant chain (3+ sessions)
-  4. Group Summary     — one per community/gravity group
-  5. Environment Summary — one global overview
+  1. Session Profile    — one per session: deps, transforms, complexity, wave, community
+  2. Table Profile      — one per table: readers, writers, lookups, lineage
+  3. Dependency Chain   — one per significant chain (>=3 sessions), traced via DFS
+  4. Group Summary      — one per community/gravity group: shared tables, avg complexity
+  5. Environment Summary — one global overview: stats, complexity distribution, wave plan
+
+Documents are consumed by the IndexingPipeline, which embeds them into ChromaDB for
+semantic search via the RAGChatEngine.
 """
 
 from __future__ import annotations
@@ -47,7 +50,11 @@ def _get_downstream_sessions(session_id: str, tier_data: dict) -> list[str]:
 
 
 def _get_write_conflicts(session_id: str, tier_data: dict) -> list[dict]:
-    """Find write conflicts involving this session."""
+    """Find write conflicts involving this session.
+
+    A write conflict occurs when two or more sessions target the same table,
+    which can cause race conditions or data overwrites at runtime.
+    """
     conflicts = []
     session = _find_session(session_id, tier_data)
     if not session:
@@ -57,10 +64,13 @@ def _get_write_conflicts(session_id: str, tier_data: dict) -> list[dict]:
     for other in tier_data.get("sessions", []):
         other_id = other.get("full") or other.get("id")
         if other_id == session_id:
+            # Skip self-comparison
             continue
         other_targets = set(other.get("targets", []))
+        # Intersection reveals tables written by both this session and 'other'
         shared = targets & other_targets
         for table in shared:
+            # Group multiple co-writers under the same table entry
             existing = next((c for c in conflicts if c["table"] == table), None)
             if existing:
                 existing["other_writers"].append(other_id)
@@ -181,11 +191,17 @@ def _get_downstream_tables(table_name: str, tier_data: dict) -> list[str]:
 
 
 def _extract_longest_chains(tier_data: dict, max_chains: int = 200) -> list[list[str]]:
-    """Extract the longest dependency chains from the tier data."""
+    """Extract the longest dependency chains from the tier data.
+
+    Builds a directed adjacency list from dependency connections, then runs DFS
+    from every entry-point (node with no incoming edges) to collect all paths.
+    Only paths of 3+ sessions are kept; the top `max_chains` by length are returned.
+    """
     adj: dict[str, list[str]] = defaultdict(list)
     all_ids = set()
     has_incoming = set()
 
+    # Build adjacency list; track which nodes have at least one parent
     for conn in tier_data.get("connections", []):
         if conn.get("type") in ("dep", "dependency", None):
             from_id = conn["from"]
@@ -195,30 +211,36 @@ def _extract_longest_chains(tier_data: dict, max_chains: int = 200) -> list[list
             all_ids.add(to_id)
             has_incoming.add(to_id)
 
-    # Start from entry points (no incoming edges)
+    # Entry points are nodes with no incoming edges (DAG roots)
     entry_points = all_ids - has_incoming
     if not entry_points:
+        # Fallback for cyclic graphs: start from every node
         entry_points = all_ids
 
     chains: list[list[str]] = []
 
     def dfs(node: str, path: list[str]) -> None:
+        # Hard cap to avoid exponential blowup on dense subgraphs
         if len(path) > 50:
             return
         nexts = adj.get(node, [])
         if not nexts:
+            # Leaf node reached — record chain if long enough to be meaningful
             if len(path) >= 3:
                 chains.append(path[:])
             return
         for nxt in nexts:
+            # Guard against cycles — skip already-visited nodes
             if nxt not in path:
                 path.append(nxt)
                 dfs(nxt, path)
-                path.pop()
+                path.pop()  # backtrack
 
+    # Limit starting nodes to keep runtime bounded on very large graphs
     for start in sorted(entry_points)[:100]:
         dfs(start, [start])
 
+    # Return the longest chains first, up to the requested cap
     chains.sort(key=len, reverse=True)
     return chains[:max_chains]
 
@@ -230,16 +252,21 @@ def _get_tier(session_id: str, tier_data: dict) -> int:
 
 
 def _common_tables(members: list[str], field: str, tier_data: dict) -> list[str]:
-    """Find tables common to multiple members."""
+    """Find tables common to all members by intersecting their source/target sets.
+
+    `field` is either "sources" or "targets". Only inspects the first 20 members
+    to keep runtime bounded for large groups.
+    """
     if not members:
         return []
     table_sets = []
-    for mid in members[:20]:
+    for mid in members[:20]:  # Cap to avoid O(n) cost on very large groups
         s = _find_session(mid, tier_data)
         if s:
             table_sets.append(set(s.get(field, [])))
     if not table_sets:
         return []
+    # Rolling intersection — start from the first set and narrow down
     common = table_sets[0]
     for ts in table_sets[1:]:
         common &= ts
@@ -421,10 +448,16 @@ These {len(members)} sessions are tightly coupled and should be migrated togethe
 
 
 def generate_environment_document(tier_data: dict, vectors: dict | None) -> str:
-    """Global environment summary for high-level questions."""
+    """Global environment summary for high-level questions.
+
+    This is always a single document (id="environment:summary") per upload.
+    It aggregates stats, complexity distribution from V11, and the wave plan
+    from V4 so the RAG system can answer overview-level questions without
+    scanning every session document.
+    """
     stats = tier_data.get("stats", {})
 
-    # Complexity distribution
+    # Build bucket histogram from V11 complexity scores (e.g., Low/Medium/High/Critical)
     complexity_dist = ""
     if vectors and "v11_complexity" in vectors:
         buckets: dict[str, int] = defaultdict(int)
@@ -434,7 +467,7 @@ def generate_environment_document(tier_data: dict, vectors: dict | None) -> str:
             f"  {bucket}: {count}" for bucket, count in sorted(buckets.items())
         )
 
-    # Wave summary
+    # Summarise V4 topological wave plan — each wave is a migration execution batch
     wave_summary = ""
     if vectors and "v4_topological" in vectors:
         for wave_data in vectors["v4_topological"].get("waves", []):
@@ -442,7 +475,7 @@ def generate_environment_document(tier_data: dict, vectors: dict | None) -> str:
             count = len(wave_data.get("sessions", []))
             wave_summary += f"  Wave {wave_num}: {count} sessions\n"
 
-    # Top complex sessions
+    # Top 10 most complex sessions (descending overall_score) for quick triage
     top_complex = ""
     if vectors and "v11_complexity" in vectors:
         scores = sorted(
@@ -490,10 +523,14 @@ class DocumentGenerator:
         self.documents: list[dict] = []
 
     def generate_all(self) -> list[dict]:
-        """Generate all document types. Returns list of {id, type, content, metadata}."""
+        """Generate all document types. Returns list of {id, type, content, metadata}.
+
+        Each document dict has a stable `id` (prefixed by type) used as the
+        ChromaDB primary key, allowing a full re-index to replace previous docs.
+        """
         t0 = time.monotonic()
 
-        # Type 1: Session profiles
+        # ── Type 1: Session profiles (one per session) ──────────────────────
         for session in self.tier_data.get("sessions", []):
             sid = session.get("full") or session.get("id", "")
             doc = generate_session_document(session, self.tier_data, self.vectors)
@@ -501,6 +538,7 @@ class DocumentGenerator:
                 "id": f"session:{sid}",
                 "type": "session",
                 "content": doc,
+                # Metadata fields are stored in ChromaDB for post-retrieval filtering
                 "metadata": {
                     "session_id": sid,
                     "session_name": session.get("name", ""),
@@ -511,7 +549,7 @@ class DocumentGenerator:
                 },
             })
 
-        # Type 2: Table profiles
+        # ── Type 2: Table profiles (one per table) ───────────────────────────
         for table in self.tier_data.get("tables", []):
             name = table.get("name", "")
             doc = generate_table_document(table, self.tier_data)
@@ -526,7 +564,7 @@ class DocumentGenerator:
                 },
             })
 
-        # Type 3: Dependency chains (top 200 longest)
+        # ── Type 3: Dependency chains (top 200 longest paths) ───────────────
         chains = _extract_longest_chains(self.tier_data, max_chains=200)
         for i, chain in enumerate(chains):
             doc = generate_chain_document(chain, self.tier_data)
@@ -541,7 +579,9 @@ class DocumentGenerator:
                 },
             })
 
-        # Type 4: Group summaries (from V10 concentration or V1 community)
+        # ── Type 4: Group summaries (sourced from V10 gravity groups) ────────
+        # V10 groups are preferred over V1 communities for group docs because
+        # they capture spatial/gravity clustering rather than graph topology alone.
         if self.vectors and "v10_concentration" in self.vectors:
             for group in self.vectors["v10_concentration"].get("groups", []):
                 doc = generate_group_document(
@@ -557,7 +597,7 @@ class DocumentGenerator:
                     },
                 })
 
-        # Type 5: Environment summary (always 1 document)
+        # ── Type 5: Environment summary (always exactly 1 document) ─────────
         env_doc = generate_environment_document(self.tier_data, self.vectors)
         self.documents.append({
             "id": "environment:summary",

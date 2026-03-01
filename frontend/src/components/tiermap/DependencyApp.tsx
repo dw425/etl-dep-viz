@@ -1,6 +1,12 @@
 /**
  * DependencyApp — Master layout with 15-view tab bar, file upload, persistence,
  * vector analysis, 6-layer navigation, drill-through, and export.
+ *
+ * Layout:
+ *   Top bar    — tab navigation, right-panel toggles, upload/export actions
+ *   Stats bar  — session/table/conflict counts from parsed data
+ *   Main area  — active view (left) + optional right sidebar panel
+ *   Overlays   — help modal, log viewer modal, onboarding tour
  */
 
 import { lazy, Suspense, useState, useCallback, useEffect, useRef } from 'react';
@@ -39,7 +45,7 @@ import ExportManager from './ExportManager';
 import { NavigationProvider } from '../../navigation/NavigationProvider';
 import ErrorBoundary from '../shared/ErrorBoundary';
 
-// Lazy-load vector views
+// ── Lazy imports (code-split heavy views to keep initial bundle small) ────────
 const ComplexityOverlay = lazy(() => import('./ComplexityOverlay'));
 const WavePlanView = lazy(() => import('./WavePlanView'));
 const UMAPView = lazy(() => import('./UMAPView'));
@@ -58,11 +64,15 @@ const ImpactAnalysisView = lazy(() => import('./ImpactAnalysis'));
 const HelpOverlay = lazy(() => import('../shared/HelpOverlay'));
 const AIChat = lazy(() => import('../chat/AIChat'));
 
+// ── View registry ─────────────────────────────────────────────────────────────
+// ViewId is the union of all valid tab identifiers. Adding a new tab requires:
+//   1. Adding its id to ViewId  2. Adding it to VIEWS  3. Rendering it below.
 type ViewId = 'tier' | 'galaxy' | 'constellation' | 'explorer' | 'conflicts' | 'order' | 'matrix'
   | 'tables' | 'duplicates' | 'chunking'
   | 'complexity' | 'waves' | 'umap' | 'simulator' | 'concentration' | 'consensus'
   | 'layers' | 'infra' | 'profile' | 'flowwalker' | 'lineage' | 'impact' | 'chat';
 
+// Group determines tab section: core, harmonize, vector, nav
 const VIEWS: { id: ViewId; label: string; icon: string; group?: 'core' | 'vector' | 'nav' | 'harmonize' }[] = [
   { id: 'tier', label: 'Tier Diagram', icon: '\u25A4', group: 'core' },
   { id: 'galaxy', label: 'Galaxy Map', icon: '\u25C9', group: 'core' },
@@ -89,28 +99,30 @@ const VIEWS: { id: ViewId; label: string; icon: string; group?: 'core' | 'vector
 ];
 
 export function DependencyApp() {
-  // ── State ──────────────────────────────────────────────────────────
+  // ── Core data state ────────────────────────────────────────────────────────
   const [view, setView] = useState<ViewId>('tier');
   const [tierData, setTierData] = useState<TierMapResult | null>(null);
   const [constellation, setConstellation] = useState<ConstellationResult | null>(null);
   const [algorithm, setAlgorithm] = useState<AlgorithmKey>('louvain');
   const [selectedChunkId, setSelectedChunkId] = useState<string | null>(null);
+  // uploadId is passed to the vector/export endpoints to avoid re-sending large tier data
   const [uploadId, setUploadId] = useState<number | null>(null);
   const [recentUploads, setRecentUploads] = useState<UploadSummary[]>([]);
 
-  // Vector analysis state
+  // ── Vector analysis state ──────────────────────────────────────────────────
   const [vectorResults, setVectorResults] = useState<VectorResults | null>(null);
   const [drillFilter, setDrillFilter] = useState<DrillFilter>({});
+  // rightPanel: which sidebar panel is open (null = collapsed)
   const [rightPanel, setRightPanel] = useState<'vectors' | 'drill' | 'export' | null>(null);
 
-  // Theme state — default light, persist to localStorage
+  // ── Theme state — default light, persist to localStorage ──────────────────
   const [theme, setTheme] = useState<'dark' | 'light'>(() =>
     (localStorage.getItem('edv-theme') as 'dark' | 'light') || 'light'
   );
   const isDark = theme === 'dark';
   useEffect(() => { localStorage.setItem('edv-theme', theme); }, [theme]);
 
-  // Upload state
+  // ── Upload / streaming state ───────────────────────────────────────────────
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressPhase, setProgressPhase] = useState('');
@@ -118,16 +130,19 @@ export function DependencyApp() {
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Parse timer state
+  // ── Parse timer / stale detection ─────────────────────────────────────────
+  // parseStartTime drives the elapsed mm:ss counter in the upload UI
   const [parseStartTime, setParseStartTime] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  // staleDetected becomes true when no SSE progress event arrives for 60 s
   const [staleDetected, setStaleDetected] = useState(false);
   const [showLogModal, setShowLogModal] = useState(false);
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
+  // lastEventTime is a ref (not state) so updates don't cause re-renders
   const lastEventTime = useRef<number>(0);
   const abortRef = useRef<AbortController | null>(null);
 
-  // Parse timer interval
+  // Tick the elapsed counter every second while an upload is running
   useEffect(() => {
     if (!parseStartTime) return;
     const interval = setInterval(() => {
@@ -141,12 +156,14 @@ export function DependencyApp() {
     return () => clearInterval(interval);
   }, [parseStartTime]);
 
-  // Init user on mount
+  // Register/refresh the user profile record on first render
   useEffect(() => { upsertUser().catch(() => {}); }, []);
 
-  // View history (back/forward)
+  // ── View history (browser-style back/forward) ──────────────────────────────
+  // Stored in refs so history mutations don't trigger re-renders
   const viewHistory = useRef<ViewId[]>(['tier']);
   const viewHistoryIdx = useRef(0);
+  // Truncates forward history on each navigation (like a browser)
   const navigateView = useCallback((newView: ViewId) => {
     viewHistory.current = viewHistory.current.slice(0, viewHistoryIdx.current + 1);
     viewHistory.current.push(newView);
@@ -166,7 +183,12 @@ export function DependencyApp() {
     }
   }, []);
 
-  // Keyboard shortcuts
+  // ── Keyboard shortcuts ─────────────────────────────────────────────────────
+  // ?         — toggle help overlay
+  // Esc       — close overlay / drill up via goBack
+  // Alt+←/→   — view history navigation
+  // 1-6       — jump to core views (tier/galaxy/constellation/explorer/conflicts/order)
+  // F11       — toggle browser fullscreen
   const [showHelp, setShowHelp] = useState(false);
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -177,7 +199,7 @@ export function DependencyApp() {
       if (e.key === 'Escape') {
         if (showHelp) { setShowHelp(false); return; }
         if (showLogModal) { setShowLogModal(false); return; }
-        // Drill up
+        // Drill up through view history
         goBack();
         return;
       }
@@ -187,7 +209,7 @@ export function DependencyApp() {
       if (e.altKey && e.key === 'ArrowLeft') { e.preventDefault(); goBack(); return; }
       if (e.altKey && e.key === 'ArrowRight') { e.preventDefault(); goForward(); return; }
 
-      // Number keys 1-6 for layer jump (when in layers view)
+      // Number keys 1-6 jump directly to core views
       if (e.key >= '1' && e.key <= '6' && !e.ctrlKey && !e.metaKey && !e.altKey) {
         const layerViews: ViewId[] = ['tier', 'galaxy', 'constellation', 'explorer', 'conflicts', 'order'];
         const idx = parseInt(e.key) - 1;
@@ -206,15 +228,17 @@ export function DependencyApp() {
     return () => window.removeEventListener('keydown', handler);
   }, [showHelp, showLogModal, goBack, goForward, navigateView]);
 
-  // ── Derived ────────────────────────────────────────────────────────
+  // ── Derived ────────────────────────────────────────────────────────────────
+  // Resolve the full chunk object for the currently selected cluster id
   const selectedChunk = constellation?.chunks.find(c => c.id === selectedChunkId) ?? null;
 
-  // ── Load recent uploads on mount ───────────────────────────────────
+  // Populate the Recent Uploads list shown on the dashboard before any data is loaded
   useEffect(() => {
     listUploads(10).then(setRecentUploads).catch(() => {});
   }, []);
 
-  // ── Upload handler ─────────────────────────────────────────────────
+  // ── Upload handler ─────────────────────────────────────────────────────────
+  // Initiates an SSE stream upload; handles progress, completion, error, and timeout phases
   const handleUpload = useCallback((files: File[]) => {
     if (!files.length) return;
     setError(null);
@@ -226,12 +250,14 @@ export function DependencyApp() {
     setStaleDetected(false);
     lastEventTime.current = Date.now();
 
+    // Format total file size for display in the progress label
     const totalSize = files.reduce((s, f) => s + f.size, 0);
     const sizeStr = totalSize > 1024 * 1024
       ? `${(totalSize / (1024 * 1024)).toFixed(1)}MB`
       : `${(totalSize / 1024).toFixed(0)}KB`;
     setProgressPhase(`Uploading ${sizeStr} (${files.length} file${files.length > 1 ? 's' : ''})...`);
 
+    // Open SSE stream; each event updates the progress UI
     const ctrl = analyzeConstellationStream(files, algorithm, (event: StreamEvent) => {
       lastEventTime.current = Date.now();
       setStaleDetected(false);
@@ -266,7 +292,7 @@ export function DependencyApp() {
     abortRef.current = ctrl;
   }, [algorithm]);
 
-  // ── Cancel upload ─────────────────────────────────────────────────
+  // ── Cancel upload — aborts the in-flight fetch via AbortController ───────
   const handleCancelUpload = useCallback(() => {
     abortRef.current?.abort();
     setUploading(false);
@@ -275,7 +301,7 @@ export function DependencyApp() {
     setProgressPhase('');
   }, []);
 
-  // ── Recluster handler ──────────────────────────────────────────────
+  // ── Recluster — re-runs clustering on already-parsed tierData, no re-upload ─
   const handleRecluster = useCallback(async (algo: AlgorithmKey) => {
     if (!tierData) return;
     setAlgorithm(algo);
@@ -289,7 +315,7 @@ export function DependencyApp() {
     }
   }, [tierData]);
 
-  // ── Load from persistence ──────────────────────────────────────────
+  // ── Load from persistence — restores tier/constellation data from SQLite ────
   const handleLoadUpload = useCallback(async (id: number) => {
     try {
       const data = await getUpload(id);
@@ -305,7 +331,7 @@ export function DependencyApp() {
     }
   }, []);
 
-  // ── Export HTML ────────────────────────────────────────────────────
+  // ── Export HTML — generates a self-contained static report and triggers download ─
   const handleExport = useCallback(() => {
     if (!tierData) return;
     const html = buildTierMapHTML(tierData);
@@ -321,7 +347,7 @@ export function DependencyApp() {
     logActivity('export', 'tier_map_export.html', { session_count: tierData.stats?.session_count });
   }, [tierData]);
 
-  // ── Drag & drop ────────────────────────────────────────────────────
+  // ── Drag & drop — filters to only .xml and .zip files before upload ──────
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
@@ -331,12 +357,15 @@ export function DependencyApp() {
     if (files.length) handleUpload(files);
   }, [handleUpload]);
 
-  // ── Scoped data for constellation chunk ────────────────────────────
+  // ── Scoped data for constellation chunk ────────────────────────────────────
+  // When a cluster is selected, all core views receive only that cluster's sessions,
+  // plus the tables and edges that touch those sessions. Full data is used otherwise.
   const scopedTierData = (() => {
     if (!selectedChunk || !tierData) return tierData;
     const ids = new Set(selectedChunk.session_ids);
     const sessions = tierData.sessions.filter(s => ids.has(s.id));
     const sessionIds = new Set(sessions.map(s => s.id));
+    // Include edges where at least one endpoint is inside the cluster
     const connections = tierData.connections.filter(c => sessionIds.has(c.from) || sessionIds.has(c.to));
     const tableIds = new Set<string>();
     connections.forEach(c => {
@@ -349,7 +378,7 @@ export function DependencyApp() {
 
   const stats = tierData?.stats;
 
-  // ── Theme colors ─────────────────────────────────────────────────────
+  // ── Theme token map — all JSX uses T.* so switching themes is a one-liner ──
   const T = isDark ? {
     bg: '#080C14', bgCard: '#111827', bgBar: 'rgba(15,23,42,0.9)', bgPanel: 'rgba(15,23,42,0.95)',
     border: '#1e293b', borderActive: '#3b82f6',
@@ -364,14 +393,16 @@ export function DependencyApp() {
     dropBg: '#FFFFFF', dropBgActive: 'rgba(37,99,235,0.05)',
   };
 
-  // ── Onboarding state ────────────────────────────────────────────────
+  // ── Onboarding — shown once until dismissed, then suppressed via localStorage
   const [showOnboarding, setShowOnboarding] = useState(() => !localStorage.getItem('edv-onboarding-complete'));
   const dismissOnboarding = useCallback(() => {
     setShowOnboarding(false);
     localStorage.setItem('edv-onboarding-complete', '1');
   }, []);
 
-  // ── No data yet: show dashboard/upload screen ─────────────────────
+  // ── No data yet: show dashboard / upload screen ───────────────────────────
+  // Renders the full-page drop zone, recent uploads, and onboarding tour.
+  // Once tierData is populated, this branch never renders again.
   if (!tierData) {
     return (
       <div
@@ -606,16 +637,19 @@ export function DependencyApp() {
         background: T.bgBar, backdropFilter: 'blur(12px)',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {/* Logo — clicking resets to dashboard (tierData = null) */}
           <span
             style={{ fontSize: 14, fontWeight: 800, color: T.text, cursor: 'pointer', letterSpacing: '-0.02em' }}
             onClick={() => { setTierData(null); setConstellation(null); setUploadId(null); setSelectedChunkId(null); }}
           >
             ETL Dep Viz
           </span>
+          {/* ── Tab bar — vector tabs disabled until vector analysis has run ── */}
           <div style={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
             {VIEWS.map(v => {
               const isVector = v.group === 'vector';
               const vectorDisabled = isVector && !vectorResults;
+              // Each vector tab is individually gated on its specific result key
               const specificDisabled = isVector && (
                 (v.id === 'complexity' && !vectorResults?.v11_complexity) ||
                 (v.id === 'waves' && !vectorResults?.v4_wave_plan) ||
@@ -772,11 +806,12 @@ export function DependencyApp() {
           />
         )}
 
-        {/* View content */}
+        {/* ── View content — each view is conditionally rendered; lazy views are
+                  wrapped in Suspense. Edge-to-edge views use padding=0. ── */}
         <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, color: '#64748b' }}>Loading view...</div>}>
             <div style={{ flex: 1, overflow: 'hidden', padding: (['tier', 'matrix', 'galaxy', 'constellation', 'tables', 'duplicates'].includes(view)) ? 0 : 20 }}>
-              {/* Core views */}
+              {/* ── Core views ── */}
               {view === 'tier' && scopedTierData && (
                 <ErrorBoundary><TierDiagram data={scopedTierData} /></ErrorBoundary>
               )}
@@ -810,7 +845,7 @@ export function DependencyApp() {
                 <ErrorBoundary><MatrixView data={scopedTierData} /></ErrorBoundary>
               )}
 
-              {/* Data harmonization views */}
+              {/* ── Data harmonization views ── */}
               {view === 'tables' && scopedTierData && (
                 <ErrorBoundary>
                   <div style={{ overflow: 'hidden', height: '100%' }}>
@@ -837,7 +872,7 @@ export function DependencyApp() {
                 </ErrorBoundary>
               )}
 
-              {/* Vector views */}
+              {/* ── Vector analysis views (require vectorResults) ── */}
               {view === 'complexity' && vectorResults?.v11_complexity && (
                 <ErrorBoundary>
                   <div style={{ overflow: 'auto', height: '100%' }}>
@@ -881,7 +916,7 @@ export function DependencyApp() {
                 </ErrorBoundary>
               )}
 
-              {/* Layer navigation */}
+              {/* ── Layer / navigation views ── */}
               {view === 'layers' && tierData && (
                 <ErrorBoundary>
                   <NavigationProvider initialTierData={tierData} initialVectorResults={vectorResults} onVectorResults={setVectorResults}>
@@ -947,16 +982,19 @@ export function DependencyApp() {
           </Suspense>
         </div>
 
-        {/* Right sidebar panel */}
+        {/* ── Right sidebar panel — toggled by the Vectors/Drill/Export header buttons ── */}
         {rightPanel && tierData && (
           <div style={{ width: 280, borderLeft: `1px solid ${T.border}`, overflow: 'auto', padding: 12, flexShrink: 0, background: T.bgPanel }}>
             {rightPanel === 'vectors' && (
+              // Vector control: run phases 1-3 and view results summary
               <VectorControlPanel tierData={tierData} vectorResults={vectorResults} onVectorResults={setVectorResults} />
             )}
             {rightPanel === 'drill' && vectorResults && (
+              // Drill panel: filter any view by vector score ranges
               <DrillThroughPanel vectorResults={vectorResults} filter={drillFilter} onFilterChange={setDrillFilter} uploadId={uploadId} />
             )}
             {rightPanel === 'export' && (
+              // Export manager: Excel, DOT, Mermaid, Jira CSV, Snapshot, etc.
               <ExportManager tierData={tierData} vectorResults={vectorResults} />
             )}
           </div>

@@ -81,7 +81,8 @@ export default function ConstellationCanvas({
   const mousePosRef = useRef<{ x: number; y: number } | null>(null);
   const [fisheyeEnabled, setFisheyeEnabled] = useState(false);
 
-  // Build chunk lookup + color map
+  // ── Pre-computed chunk lookup maps ────────────────────────────────────────
+  // Built once per chunks prop change; used in the draw loop for O(1) lookup
   const chunkMap = useMemo(() => {
     const m = new Map<string, ConstellationChunk>();
     for (const c of chunks) m.set(c.id, c);
@@ -94,7 +95,8 @@ export default function ConstellationCanvas({
     return m;
   }, [chunks]);
 
-  // Build chunk centroids for labels + cross-chunk edges
+  // Compute the arithmetic centroid of each chunk (average of its point positions)
+  // used for label placement and as endpoints for cross-chunk edge drawing
   const chunkCentroids = useMemo(() => {
     const centroids = new Map<string, { x: number; y: number; count: number }>();
     for (const p of points) {
@@ -114,7 +116,8 @@ export default function ConstellationCanvas({
     return result;
   }, [points]);
 
-  // Build convex hulls for each chunk
+  // Build convex hulls for each chunk to visually delineate cluster boundaries
+  // d3.polygonHull requires ≥3 points; clusters with fewer get the raw points instead
   const chunkHulls = useMemo(() => {
     const grouped = new Map<string, [number, number][]>();
     for (const p of points) {
@@ -135,7 +138,8 @@ export default function ConstellationCanvas({
     return hulls;
   }, [points]);
 
-  // Build quadtree for hit detection
+  // Spatial index for O(log N) nearest-neighbor hit-testing on mouse events.
+  // The quadtree works in normalized [0,1] coordinate space (same as ConstellationPoint.x/y).
   const quadtree = useMemo(() => {
     return d3.quadtree<ConstellationPoint>()
       .x((d) => d.x)
@@ -143,8 +147,9 @@ export default function ConstellationCanvas({
       .addAll(points);
   }, [points]);
 
-  // ── Drawing ──────────────────────────────────────────────────────────────
-
+  // ── Drawing ───────────────────────────────────────────────────────────────
+  // Full-canvas redraw. Called by the RAF loop only when dirtyRef is true.
+  // Rendering order: background → hulls → cross-edges → dots → labels → tooltip → fisheye
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -156,7 +161,8 @@ export default function ConstellationCanvas({
     const t = transformRef.current;
     const hover = hoverRef.current;
 
-    // Map normalized [0,1] coords to canvas pixels
+    // sx/sy map normalized point coordinates → physical canvas pixels,
+    // applying both the 40px padding inset and the current D3 zoom transform
     const pad = 40;
     const cw = w - pad * 2;
     const ch = h - pad * 2;
@@ -211,7 +217,7 @@ export default function ConstellationCanvas({
     const chunkSizeMap = new Map<string, number>();
     for (const chunk of chunks) chunkSizeMap.set(chunk.id, chunk.session_count);
 
-    // Draw dots (size scaled by cluster size for big clusters)
+    // Draw dots — larger clusters get slightly bigger dots so hub nodes stand out
     for (const p of points) {
       const px = sx(p.x);
       const py = sy(p.y);
@@ -311,7 +317,9 @@ export default function ConstellationCanvas({
       });
     }
 
-    // ── Fisheye lens overlay ──────────────────────────────────────────
+    // ── Fisheye lens overlay ──────────────────────────────────────────────────
+    // Clips a circular region around the cursor, redraws dots with a squared-distance
+    // distortion (nd² maps far→center) to magnify dense clusters for inspection.
     const mousePos = mousePosRef.current;
     if (fisheyeEnabled && mousePos) {
       const lensR = 80;
@@ -319,17 +327,15 @@ export default function ConstellationCanvas({
       const mx = mousePos.x;
       const my = mousePos.y;
 
-      // Draw magnified region
+      // Clip to the lens circle so overdraw stays contained
       ctx.save();
       ctx.beginPath();
       ctx.arc(mx, my, lensR, 0, Math.PI * 2);
       ctx.clip();
 
-      // Draw magnified background
       ctx.fillStyle = 'rgba(8, 12, 20, 0.9)';
       ctx.fillRect(mx - lensR, my - lensR, lensR * 2, lensR * 2);
 
-      // Magnified dots
       for (const p of points) {
         const px = sx(p.x);
         const py = sy(p.y);
@@ -338,7 +344,7 @@ export default function ConstellationCanvas({
         const dist = Math.sqrt(dx * dx + dy * dy);
         if (dist > lensR * magnification) continue;
 
-        // Apply fisheye distortion
+        // Apply fisheye distortion: nd² compresses distant points toward the center
         const nd = dist / (lensR * magnification);
         const fisheyeDist = nd < 1 ? nd * nd * lensR : dist;
         const angle = Math.atan2(dy, dx);
@@ -383,8 +389,9 @@ export default function ConstellationCanvas({
     ctx.restore();
   }, [points, chunks, crossChunkEdges, chunkHulls, chunkCentroids, chunkColorMap, chunkMap, quadtree, fisheyeEnabled]);
 
-  // ── Animation loop (only redraws when dirty) ──────────────────────────
-
+  // ── Animation loop — uses requestAnimationFrame but only redraws when dirty ─
+  // dirtyRef acts as a "paint requested" flag; zoom/hover/resize events set it true.
+  // This avoids redundant redraws every frame while still being GPU-driven.
   useEffect(() => {
     const loop = () => {
       if (dirtyRef.current) {
@@ -397,8 +404,9 @@ export default function ConstellationCanvas({
     return () => cancelAnimationFrame(rafRef.current);
   }, [draw]);
 
-  // ── Resize observer ──────────────────────────────────────────────────────
-
+  // ── Resize observer ───────────────────────────────────────────────────────
+  // Keeps the canvas buffer sized to the container (×DPR for retina sharpness).
+  // CSS size is set independently so the element fills the flex container at 1× pixels.
   useEffect(() => {
     const container = containerRef.current;
     const canvas = canvasRef.current;
@@ -410,6 +418,7 @@ export default function ConstellationCanvas({
       const w = Math.floor(rect.width);
       const h = Math.floor(rect.height);
       dimsRef.current = { w, h };
+      // Buffer is w*dpr × h*dpr; CSS size is w × h — canvas context is scaled by dpr in draw()
       canvas.width = w * dpr;
       canvas.height = h * dpr;
       canvas.style.width = `${w}px`;
@@ -423,8 +432,9 @@ export default function ConstellationCanvas({
     return () => ro.disconnect();
   }, []);
 
-  // ── D3 zoom ──────────────────────────────────────────────────────────────
-
+  // ── D3 zoom ───────────────────────────────────────────────────────────────
+  // Zoom is applied to a canvas (not SVG): D3 updates transformRef on each event,
+  // then the RAF draw() loop applies sx/sy using that transform. Scale range 0.3–20×.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -443,8 +453,10 @@ export default function ConstellationCanvas({
     };
   }, []);
 
-  // ── Mouse events: hover + click ──────────────────────────────────────────
-
+  // ── Mouse hit-test ────────────────────────────────────────────────────────
+  // Converts a mouse client position → normalized [0,1] coords by inverting the
+  // D3 zoom transform, then queries the quadtree with a search radius that accounts
+  // for the current zoom scale (larger zoom = smaller radius in normalized space).
   const hitTest = useCallback((clientX: number, clientY: number): ConstellationPoint | null => {
     const canvas = canvasRef.current;
     if (!canvas || points.length === 0) return null;
@@ -459,11 +471,11 @@ export default function ConstellationCanvas({
     const cw = w - pad * 2;
     const ch = h - pad * 2;
 
-    // Invert transform to get normalized coords
+    // Invert the zoom transform to get canvas-space coords, then normalize to [0,1]
     const nx = (t.invertX(mx) - pad) / cw;
     const ny = (t.invertY(my) - pad) / ch;
 
-    // Search radius in normalized coords
+    // At higher zoom levels the same pixel distance covers less normalized space
     const searchR = (DOT_RADIUS_HOVER * 2) / (Math.min(cw, ch) * t.k);
 
     const found = quadtree.find(nx, ny, searchR);

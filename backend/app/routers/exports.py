@@ -1,6 +1,15 @@
 """Exports router — download tier data in various formats.
 
-Items: 59 (lineage export), 81 (PDF), 82 (Excel), 83 (JIRA), 84 (Databricks), 89 (snapshot).
+Supported formats and their backing modules:
+  - Lineage DOT / Mermaid / JSON  (app.exports.lineage_export)
+  - Excel multi-sheet workbook    (app.exports.excel_workbook — requires openpyxl)
+  - JIRA CSV / JSON               (app.integrations.jira_export)
+  - Databricks notebook scaffold  (app.exports.databricks_scaffold)
+  - Full JSON snapshot            (inline — bundles tier_data + vectors + constellation)
+  - Multi-upload merge            (inline — deduplicates sessions/tables/connections)
+
+All endpoints accept tier_data in the request body so they can be used without
+a persisted upload; optional upload_id is used only to enrich with cached vector results.
 """
 
 from __future__ import annotations
@@ -76,7 +85,7 @@ async def export_excel(
     except ImportError:
         raise HTTPException(501, "openpyxl not installed — Excel export unavailable")
 
-    # Get vector results if cached
+    # Optionally enrich the workbook with cached vector results (adds analysis sheets)
     vector_results = None
     if upload_id:
         upload = db.query(Upload).filter(Upload.id == upload_id).first()
@@ -223,7 +232,7 @@ async def merge_uploads(
         for c in td.get('connections', []):
             merged_connections.append(c)
 
-    # Deduplicate connections
+    # ── Deduplicate connections across uploads (same from-to-type triple) ──
     conn_keys = set()
     unique_conns = []
     for c in merged_connections:
@@ -232,6 +241,7 @@ async def merge_uploads(
             conn_keys.add(key)
             unique_conns.append(c)
 
+    # Recompute stats over the merged dataset
     stats = {
         'session_count': len(merged_sessions),
         'write_conflicts': sum(1 for c in unique_conns if c.get('type') == 'write_conflict'),

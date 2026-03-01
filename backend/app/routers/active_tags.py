@@ -1,4 +1,12 @@
-"""Active tags router — create, list, and delete annotations on ETL objects."""
+"""Active tags router — CRUD operations for user annotations on ETL objects.
+
+Tags are freeform labels that users attach to sessions, tables, or transforms
+to mark migration status, review notes, or custom categories.  Each tag carries
+a colour, label, and optional note so the UI can render coloured badges.
+
+tag_id is a short 8-character UUID prefix — short enough for URLs, unique enough
+to avoid collisions in typical datasets.
+"""
 
 from __future__ import annotations
 
@@ -15,6 +23,9 @@ from app.models.tags import ActiveTag
 router = APIRouter(prefix="/active-tags", tags=["active-tags"])
 
 
+# ── Create ────────────────────────────────────────────────────────────────
+
+
 @router.post("")
 def create_tag(
     data: dict[str, Any] = Body(...),
@@ -22,7 +33,7 @@ def create_tag(
 ):
     """Create a tag on a session, table, or transform."""
     tag = ActiveTag(
-        tag_id=str(uuid.uuid4())[:8],
+        tag_id=str(uuid.uuid4())[:8],  # short but collision-resistant prefix
         object_id=data.get("object_id", ""),
         object_type=data.get("object_type", "session"),
         tag_type=data.get("tag_type", "custom"),
@@ -44,6 +55,9 @@ def create_tag(
         "color": tag.color,
         "note": tag.note,
     }
+
+
+# ── Read (by object) ──────────────────────────────────────────────────────
 
 
 @router.get("/{object_id}")
@@ -69,6 +83,9 @@ def get_tags_for_object(
     }
 
 
+# ── Update ────────────────────────────────────────────────────────────────
+
+
 @router.patch("/{tag_id}")
 def update_tag(
     tag_id: str,
@@ -79,6 +96,7 @@ def update_tag(
     tag = db.query(ActiveTag).filter(ActiveTag.tag_id == tag_id).first()
     if not tag:
         raise HTTPException(404, "Tag not found")
+    # Apply only the fields that were supplied; other fields remain unchanged
     for field in ('color', 'label', 'note', 'tag_type'):
         if field in data:
             setattr(tag, field, data[field])
@@ -95,6 +113,9 @@ def update_tag(
     }
 
 
+# ── Delete ────────────────────────────────────────────────────────────────
+
+
 @router.delete("/{tag_id}")
 def delete_tag(
     tag_id: str,
@@ -107,6 +128,9 @@ def delete_tag(
     db.delete(tag)
     db.commit()
     return {"deleted": True}
+
+
+# ── List (all tags, optional filter) ──────────────────────────────────────
 
 
 @router.get("")

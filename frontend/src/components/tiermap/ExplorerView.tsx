@@ -87,10 +87,12 @@ const ExplorerView: React.FC<Props> = ({ data }) => {
   const readAfterWrite = useMemo(() => deriveReadAfterWrite(sessionData), [sessionData]);
   const allTables = useMemo(() => deriveTableAggregates(sessionData), [sessionData]);
 
-  // Sorted + filtered session list
+  // ── Sorted + filtered session list ────────────────────────────────────────
+  // Filtering is case-insensitive on session name and short label.
+  // Sorting is multi-key: the primary sort key is set by sortBy; sortDesc toggles direction.
+  // sortIcon() returns ▲/▼ on the active column header button for visual feedback.
   const sortedSessions = useMemo(() => {
     let list = [...executionOrder];
-    // Filter
     if (filterText) {
       const term = filterText.toLowerCase();
       list = list.filter(name => {
@@ -98,7 +100,6 @@ const ExplorerView: React.FC<Props> = ({ data }) => {
         return name.toLowerCase().includes(term) || d?.short?.toLowerCase().includes(term);
       });
     }
-    // Sort
     list.sort((a, b) => {
       const da = sessionData[a];
       const db = sessionData[b];
@@ -127,7 +128,8 @@ const ExplorerView: React.FC<Props> = ({ data }) => {
 
   const sel: SessionDetail | null = selectedSession ? sessionData[selectedSession] ?? null : null;
 
-  /* Sessions connected to the currently-highlighted table */
+  // Sessions that read, write, or lookup the currently-highlighted table —
+  // used to dim unrelated sessions in the list when a table badge is clicked
   const connSessions = useMemo(() => {
     if (!selectedTable) return new Set<string>();
     const s = new Set<string>();
@@ -167,12 +169,17 @@ const ExplorerView: React.FC<Props> = ({ data }) => {
     [],
   );
 
-  // Virtual scrolling for large session lists
+  // ── Virtual scrolling ──────────────────────────────────────────────────────
+  // All session cards use position:absolute inside a fixed-height spacer div,
+  // so only ~(viewportHeight / ITEM_HEIGHT) cards are in the DOM at any time.
+  // visibleRange adds a 2-item overscan above and 4-item overscan below to
+  // prevent blank flashes during fast scrolling.
   const listRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [containerHeight, setContainerHeight] = useState(600);
-  const ITEM_HEIGHT = 90; // approximate height of each session card
+  const ITEM_HEIGHT = 90; // fixed card height (px) — must match actual card height
 
+  // Track the scrollable list's height so visibleRange stays accurate after resize
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
@@ -183,6 +190,7 @@ const ExplorerView: React.FC<Props> = ({ data }) => {
     return () => ro.disconnect();
   }, []);
 
+  // Compute which slice of sortedSessions should be rendered (with overscan)
   const visibleRange = useMemo(() => {
     const start = Math.max(0, Math.floor(scrollTop / ITEM_HEIGHT) - 2);
     const end = Math.min(sortedSessions.length, start + Math.ceil(containerHeight / ITEM_HEIGHT) + 4);
@@ -246,13 +254,16 @@ const ExplorerView: React.FC<Props> = ({ data }) => {
           </div>
         </div>
 
-        {/* Virtual scroll spacer */}
+        {/* Spacer div provides the full scrollable height so the scrollbar is correct.
+             Each card is absolutely positioned at (visibleRange.start + idx) * ITEM_HEIGHT. */}
         <div style={{ height: sortedSessions.length * ITEM_HEIGHT, position: 'relative' }}>
         {sortedSessions.slice(visibleRange.start, visibleRange.end).map((name, idx) => {
           const d = sessionData[name];
           if (!d) return null;
           const isSel = selectedSession === name;
+          // isHi — session touches the highlighted table (highlight it)
           const isHi = !!selectedTable && connSessions.has(name);
+          // dim — table is selected but this session is unrelated (fade it out)
           const dim = !!selectedTable && !connSessions.has(name);
 
           return (
@@ -411,11 +422,14 @@ const ExplorerView: React.FC<Props> = ({ data }) => {
         </div>
       </div>
 
-      {/* Right: detail panel */}
+      {/* ── Right: detail panel ────────────────────────────────────────────────
+            Three states: session selected → writes/reads/lookups + downstream
+                          table selected  → writers/readers/lookers for that table
+                          nothing         → empty state prompt                     */}
       <div style={{ flex: 1, overflowY: 'auto', paddingRight: 4 }}>
         {sel ? (
           <div>
-            {/* Header */}
+            {/* Session header — full path and short display name */}
             <div style={{ marginBottom: 16 }}>
               <div
                 style={{
@@ -488,7 +502,7 @@ const ExplorerView: React.FC<Props> = ({ data }) => {
                 </div>
               ))}
 
-            {/* Downstream consumers */}
+            {/* Downstream consumers — sessions that read from this session's output tables */}
             {sel.targets.some(t => !!readAfterWrite[t]) && (
               <div
                 style={{

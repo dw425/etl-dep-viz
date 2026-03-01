@@ -1,7 +1,15 @@
 """RAG Query Engine — query classification, hybrid search, and LLM-powered chat.
 
-Classifies user questions to optimize retrieval, combines vector similarity
-search with structured database queries, and assembles prompts for the LLM.
+Pipeline for each user question (RAGChatEngine.chat):
+  1. classify_query       — keyword-based intent detection + entity extraction
+  2. HybridSearchEngine   — vector similarity search + direct entity lookup
+  3. _build_context       — format top-N retrieved docs into an LLM context block
+  4. _call_llm            — send system prompt + context + history to Anthropic/OpenAI
+  5. _extract_references  — scan response text for session/table names (sidebar)
+  6. _generate_suggestions — return follow-up question prompts for the UI
+
+Intent classification is done with lightweight keyword matching (no ML) so it
+remains fast and deterministic regardless of embedding availability.
 """
 
 from __future__ import annotations
@@ -26,20 +34,35 @@ logger = logging.getLogger("edv.query")
 # ── Query Classification ─────────────────────────────────────────────────
 
 class QueryIntent(Enum):
-    SESSION_LOOKUP = "session_lookup"
-    TABLE_LOOKUP = "table_lookup"
-    LINEAGE_TRACE = "lineage_trace"
-    IMPACT_ANALYSIS = "impact_analysis"
-    COMPLEXITY_QUERY = "complexity_query"
-    WAVE_QUERY = "wave_query"
-    GROUP_QUERY = "group_query"
-    COMPARISON = "comparison"
-    ENVIRONMENT = "environment"
-    GENERAL = "general"
+    """Enumerated intents used to steer document-type selection during retrieval.
+
+    The intent determines which ChromaDB document types are searched and which
+    structured augmentations are fetched (upstream/downstream sessions, lineage, etc.).
+    """
+    SESSION_LOOKUP = "session_lookup"   # Ask about a specific session
+    TABLE_LOOKUP = "table_lookup"       # Ask about a specific table's readers/writers
+    LINEAGE_TRACE = "lineage_trace"     # Trace data flow from source to destination
+    IMPACT_ANALYSIS = "impact_analysis" # What breaks if X fails?
+    COMPLEXITY_QUERY = "complexity_query" # Complexity scores and migration effort
+    WAVE_QUERY = "wave_query"           # Migration wave planning questions
+    GROUP_QUERY = "group_query"         # Community/gravity group questions
+    COMPARISON = "comparison"           # Compare two sessions or tables
+    ENVIRONMENT = "environment"         # Overview/count/summary questions
+    GENERAL = "general"                 # Fallback — search all document types
 
 
 @dataclass
 class ClassifiedQuery:
+    """Result of classify_query, carrying all retrieval strategy parameters.
+
+    Attributes:
+        intent: Detected user intent (drives doc_types selection).
+        entities: Uppercase identifiers extracted from the question (session/table names).
+        doc_types: ChromaDB document types to search; empty means search all types.
+        structured_filter: Reserved for future metadata-level filtering in ChromaDB.
+        augment_with: Labels for structured lookups to run alongside vector search
+                      (e.g., "upstream_sessions", "full_lineage_path").
+    """
     intent: QueryIntent
     entities: list[str] = field(default_factory=list)
     doc_types: list[str] = field(default_factory=list)
@@ -48,10 +71,16 @@ class ClassifiedQuery:
 
 
 def classify_query(question: str) -> ClassifiedQuery:
-    """Classify user question to optimize retrieval strategy."""
+    """Classify user question into an intent + entity list to guide retrieval.
+
+    Classification uses deterministic keyword matching on the lowercased question
+    so there is no dependency on an LLM or additional model at this step.
+    Patterns are evaluated in priority order; the first match wins.
+    """
     q = question.lower()
 
-    # Extract potential session/table names (uppercase identifiers)
+    # Capture uppercase identifiers (4+ chars) as probable session or table names.
+    # Example: "SQ_CUSTOMER" or "STG_ORDERS" in "Tell me about SQ_CUSTOMER".
     entities = re.findall(r'\b[A-Z][A-Z0-9_]{3,}\b', question)
 
     # Session lookup patterns
@@ -144,7 +173,7 @@ def classify_query(question: str) -> ClassifiedQuery:
             augment_with=[],
         )
 
-    # Default: search everything
+    # No pattern matched — fall back to unfiltered search across all document types
     return ClassifiedQuery(
         intent=QueryIntent.GENERAL,
         entities=entities,
@@ -188,7 +217,16 @@ def _deduplicate_results(results: list[dict]) -> list[dict]:
 
 
 class HybridSearchEngine:
-    """Combines vector similarity search with structured database queries."""
+    """Combines vector similarity search with structured database queries.
+
+    The "hybrid" approach has two phases per query:
+      1. Vector search — embed the question and query ChromaDB by cosine similarity.
+         When the classification specifies doc_types, each type is searched separately
+         (5 results each) so no single type dominates the context window.
+      2. Entity augmentation — for each uppercase identifier extracted by classify_query,
+         attempt an exact name match against tier_data and inject those documents with
+         distance=0.0 (highest priority) so they always appear in the context.
+    """
 
     def __init__(self, vector_store: VectorStore, embedding_engine: EmbeddingEngine):
         self.vector_store = vector_store
@@ -201,24 +239,31 @@ class HybridSearchEngine:
         tier_data: dict,
         classification: ClassifiedQuery,
     ) -> list[dict]:
-        """Hybrid search: vector similarity + structured lookups."""
+        """Hybrid search: vector similarity + structured lookups.
+
+        Returns up to 15 deduplicated results sorted by ascending distance.
+        Direct entity matches (distance=0.0) always sort first.
+        """
         results = []
 
-        # Vector search
+        # Embed the full question text for semantic similarity matching
         query_embedding = self.embedding_engine.embed_single(question)
 
         if classification.doc_types:
+            # Search each targeted type separately to ensure coverage across types
             for doc_type in classification.doc_types:
                 hits = self.vector_store.search(
                     upload_id, query_embedding, n_results=5, doc_type=doc_type,
                 )
                 results.extend(hits)
         else:
+            # GENERAL intent — unfiltered search returns a broader set
             results = self.vector_store.search(
                 upload_id, query_embedding, n_results=10,
             )
 
-        # Structured augmentation for extracted entity names
+        # Direct entity augmentation — bypass vector search for named entities
+        # so that explicitly mentioned sessions/tables are always in context.
         for entity in classification.entities:
             session = _find_session_by_name(entity, tier_data)
             if session:
@@ -226,7 +271,7 @@ class HybridSearchEngine:
                     "id": f"direct:session:{entity}",
                     "content": generate_session_document(session, tier_data, None),
                     "metadata": {"type": "session", "source": "direct_lookup"},
-                    "distance": 0.0,
+                    "distance": 0.0,  # distance=0 ensures this sorts to the top
                 })
 
             table = _find_table_by_name(entity, tier_data)
@@ -238,9 +283,11 @@ class HybridSearchEngine:
                     "distance": 0.0,
                 })
 
+        # Remove duplicate doc IDs, then rank by distance ascending
         results = _deduplicate_results(results)
         results.sort(key=lambda r: r["distance"])
 
+        # Cap at 15 to keep the LLM context window manageable
         return results[:15]
 
 
@@ -281,24 +328,30 @@ You have access to detailed parsed data about the user's ETL environment. When a
         tier_data: dict,
         conversation_history: list[dict] | None = None,
     ) -> dict:
-        """Full RAG chat: question -> search -> LLM -> structured response."""
-        # Step 1: Classify the question
+        """Full RAG chat: question -> classify -> search -> LLM -> structured response.
+
+        Returns a dict with the LLM answer, intent label, referenced entity lists
+        (for the context sidebar), and follow-up question suggestions.
+        """
+        # ── Step 1: Intent classification ────────────────────────────────────
         classification = classify_query(question)
         logger.info("Query classified: intent=%s entities=%s", classification.intent.value, classification.entities)
 
-        # Step 2: Hybrid search
+        # ── Step 2: Hybrid vector + entity search ────────────────────────────
         search_results = self.search_engine.search(
             upload_id, question, tier_data, classification,
         )
 
-        # Step 3: Build context block
+        # ── Step 3: Assemble retrieved documents into a single context block ─
         context = self._build_context(search_results)
 
-        # Step 4: Build messages
+        # ── Step 4: Build message list for the LLM ───────────────────────────
         messages = []
         if conversation_history:
+            # Include only the last 10 turns to avoid exceeding the context window
             messages.extend(conversation_history[-10:])
 
+        # Inject retrieved context as XML-tagged block within the user message
         messages.append({
             "role": "user",
             "content": f"""Based on the following ETL pipeline data, answer this question:
@@ -310,10 +363,10 @@ You have access to detailed parsed data about the user's ETL environment. When a
 Question: {question}""",
         })
 
-        # Step 5: Call LLM
+        # ── Step 5: LLM inference ────────────────────────────────────────────
         response_text = await self._call_llm(messages)
 
-        # Step 6: Extract referenced entities
+        # ── Step 6: Post-process — find entity names mentioned in the response ─
         referenced = self._extract_references(response_text, search_results, tier_data)
 
         return {
@@ -326,7 +379,11 @@ Question: {question}""",
         }
 
     def _build_context(self, results: list[dict]) -> str:
-        """Assemble retrieved documents into a context block for the LLM."""
+        """Assemble retrieved documents into a numbered context block for the LLM.
+
+        Each document is separated by a typed header so the LLM can attribute
+        answers to specific documents if needed.
+        """
         sections = []
         for i, result in enumerate(results):
             doc_type = result.get("metadata", {}).get("type", "unknown")
@@ -336,9 +393,15 @@ Question: {question}""",
         return "\n\n".join(sections)
 
     async def _call_llm(self, messages: list[dict]) -> str:
-        """Call the LLM with assembled messages."""
+        """Call the configured LLM provider with the assembled message list.
+
+        Returns the raw response text, or a user-facing error string on failure.
+        The system prompt is always injected but handled differently per provider:
+          - Anthropic: system prompt is a top-level parameter (not a message)
+          - OpenAI: system prompt is prepended as a {"role": "system"} message
+        """
         if not self.api_key:
-            # No API key — return context-only response
+            # Degrade gracefully: the frontend still shows raw search hits in the sidebar
             return (
                 "LLM not configured. Set the EDV_LLM_API_KEY environment variable "
                 "with your Anthropic API key. Raw search results are shown in the "
@@ -352,7 +415,7 @@ Question: {question}""",
                 response = await client.messages.create(
                     model=self.model,
                     max_tokens=2048,
-                    system=self.SYSTEM_PROMPT,
+                    system=self.SYSTEM_PROMPT,  # Anthropic uses top-level system param
                     messages=messages,
                 )
                 return response.content[0].text
@@ -366,6 +429,7 @@ Question: {question}""",
                 client = openai.AsyncOpenAI(api_key=self.api_key)
                 response = await client.chat.completions.create(
                     model=self.model,
+                    # OpenAI requires system prompt as the first message in the list
                     messages=[{"role": "system", "content": self.SYSTEM_PROMPT}] + messages,
                     max_tokens=2048,
                 )
@@ -379,10 +443,17 @@ Question: {question}""",
     def _extract_references(
         self, response: str, results: list[dict], tier_data: dict,
     ) -> dict:
-        """Extract session/table names from response for the context sidebar."""
+        """Extract session/table names mentioned in the LLM response for the context sidebar.
+
+        Performs a simple substring scan of the response against all known session
+        and table names. Matches are surfaced in the frontend sidebar so the user
+        can click through to the relevant node in the visualization. Results are
+        capped at 10 each to keep the sidebar readable.
+        """
         sessions = []
         tables = []
 
+        # Scan all sessions — match on either full ID or short display name
         for session in tier_data.get("sessions", []):
             full = session.get("full", "")
             name = session.get("name", "")
@@ -394,6 +465,7 @@ Question: {question}""",
                     "complexity": session.get("complexity_score"),
                 })
 
+        # Scan all tables — match on exact table name
         for table in tier_data.get("tables", []):
             tname = table.get("name", "")
             if tname and tname in response:
@@ -402,6 +474,7 @@ Question: {question}""",
                     "type": table.get("type", ""),
                 })
 
+        # Cap to avoid sending oversized payloads to the frontend
         return {"sessions": sessions[:10], "tables": tables[:10]}
 
     def _generate_suggestions(

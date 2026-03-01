@@ -29,17 +29,21 @@ import GalaxyFilterSidebar, { type GalaxyFilters, getDefaultFilters, applyGalaxy
 
 // ── Colors ────────────────────────────────────────────────────────────────────
 
+// Maps tier number → color, cycling through 8 palette entries
 function tierColor(t: number): string {
   const p = ['#3B82F6','#EAB308','#A855F7','#10B981','#F97316','#06B6D4','#EC4899','#84CC16'];
   return p[Math.max(0, Math.floor(t) - 1) % p.length];
 }
 
+// CC — connection type → stroke color
 const CC: Record<string, string> = {
   write_conflict: '#EF4444', write_clean: '#3B82F6',
   read_after_write: '#A855F7', lookup_stale: '#F59E0B',
   chain: '#F97316', source_read: '#10B981',
 };
+// CD — connection type → SVG stroke-dasharray (undefined = solid)
 const CD: Record<string, string> = { lookup_stale: '6,3', source_read: '4,4' };
+// CL — connection type → human-readable label for tooltips/legend
 const CL: Record<string, string> = {
   write_conflict: 'Write Conflict', write_clean: 'Write',
   read_after_write: 'Read After Write', lookup_stale: 'Lookup (stale)',
@@ -47,9 +51,10 @@ const CL: Record<string, string> = {
 };
 
 // ── Stars ─────────────────────────────────────────────────────────────────────
+// Pre-computed deterministic star positions (rendered outside D3 zoom group for parallax)
 const STARS = Array.from({ length: 200 }, (_, i) => ({
-  x: ((i * 7919 + 1327) % 10000) / 100,
-  y: ((i * 6271 + 4523) % 10000) / 100,
+  x: ((i * 7919 + 1327) % 10000) / 100, // hash-based pseudo-random x [0, 100]
+  y: ((i * 6271 + 4523) % 10000) / 100, // hash-based pseudo-random y [0, 100]
   r: i % 7 === 0 ? 1.4 : i % 3 === 0 ? 0.9 : 0.5,
   o: 0.06 + (i % 5) * 0.04,
 }));
@@ -80,7 +85,7 @@ export default function GalaxyMapCanvas({
   const [filterVisible, setFilterVisible] = useState(false);
   const [zoomScale, setZoomScale] = useState(1);
 
-  // Apply filters to data
+  // Filters are applied once here; all layout memos below operate on filteredData
   const filteredData = useMemo(() => applyGalaxyFilters(data, galaxyFilters), [data, galaxyFilters]);
   const { sessions, tables, connections } = filteredData;
 
@@ -113,7 +118,10 @@ export default function GalaxyMapCanvas({
     return () => window.removeEventListener('keydown', fn);
   }, [focusId, onClose, showSearch, detailNode]);
 
-  // ── D3 Zoom ─────────────────────────────────────────────────────────────────
+  // ── D3 Zoom ──────────────────────────────────────────────────────────────────
+  // Attaches a D3 zoom behavior to the SVG. The zoom transform is applied to
+  // the inner <g ref={gRef}> so stars (outside the group) stay fixed for parallax.
+  // zoomScale state drives semantic LOD switching on session nodes.
   useEffect(() => {
     if (!svgRef.current || !gRef.current) return;
 
@@ -130,13 +138,16 @@ export default function GalaxyMapCanvas({
     zoomRef.current = zoom;
     svg.call(zoom);
 
-    // Disable double-click zoom (we use double-click for detail panel)
+    // Double-click is used for session detail panel, not zoom
     svg.on('dblclick.zoom', null);
 
     return () => { svg.on('.zoom', null); };
   }, []);
 
-  // ── Zoom to focused session ───────────────────────────────────────────────
+  // ── Zoom to focused session ────────────────────────────────────────────────
+  // When focusId changes, smoothly pan/zoom to center the selected session at 2× scale.
+  // When focus is cleared, animate back to the identity transform (full overview).
+  // The translate positions the session at the viewport center after applying the scale.
   useEffect(() => {
     if (!svgRef.current || !zoomRef.current) return;
     const svg = d3.select(svgRef.current);
@@ -145,6 +156,7 @@ export default function GalaxyMapCanvas({
       const p = sessPos.get(focusId);
       if (p) {
         const scale = 2.0;
+        // Translate so that (p.x * scale, p.y * scale) lands at (dims.w/2, dims.h/2)
         const transform = d3.zoomIdentity
           .translate(dims.w / 2 - p.x * scale, dims.h / 2 - p.y * scale)
           .scale(scale);
@@ -152,6 +164,7 @@ export default function GalaxyMapCanvas({
           .call(zoomRef.current.transform, transform);
       }
     } else {
+      // Return to overview at identity (zoom=1, translate=0,0)
       svg.transition().duration(480).ease(d3.easeCubicInOut)
         .call(zoomRef.current.transform, d3.zoomIdentity);
     }
@@ -164,26 +177,32 @@ export default function GalaxyMapCanvas({
   const cx = dims.w / 2;
   const cy = dims.h / 2;
 
-  // ── Equal-distance circle layout ───────────────────────────────────────────
+  // ── Equal-distance circle layout ────────────────────────────────────────────
+  // Sessions are sorted by tier then step, then distributed uniformly on a circle.
+  // R is clamped so nodes never overlap (110px arc-gap per node) and stay inside 36% of viewport.
+  // Node radius grows with connection count (more edges → larger sphere, capped at +12px).
   const sessPos = useMemo((): Map<string, SP> => {
     const sorted = [...sessions].sort((a, b) => a.tier - b.tier || a.step - b.step);
     const N      = sorted.length;
+    // Choose radius that guarantees ~110px arc-gap between adjacent nodes
     const R      = Math.max((110 * N) / (2 * Math.PI), Math.min(dims.w, dims.h) * 0.36);
     const pos    = new Map<string, SP>();
     sorted.forEach((s, i) => {
+      // Start at -π/2 so the first node appears at the top
       const angle  = (i / N) * Math.PI * 2 - Math.PI / 2;
       const connCt = connections.filter(c => c.from === s.id || c.to === s.id).length;
       pos.set(s.id, {
         x: cx + Math.cos(angle) * R,
         y: cy + Math.sin(angle) * R,
-        r: 28 + Math.min(connCt * 1.5, 12),
+        r: 28 + Math.min(connCt * 1.5, 12), // base 28px + up to 12px for hub nodes
         color: tierColor(s.tier),
       });
     });
     return pos;
   }, [sessions, connections, cx, cy, dims]);
 
-  // ── Search results ──────────────────────────────────────────────────────────
+  // ── Search results ───────────────────────────────────────────────────────────
+  // Matches session name/full path and table name case-insensitively; capped at 20 results
   const searchResults = useMemo(() => {
     if (!search.trim()) return [];
     const q = search.toLowerCase();
@@ -201,10 +220,11 @@ export default function GalaxyMapCanvas({
     return results.slice(0, 20);
   }, [search, sessions, tables]);
 
-  // ── Highlight set from search ───────────────────────────────────────────────
+  // Collect result IDs into a Set for O(1) highlight lookup during rendering
   const highlightSet = useMemo(() => new Set(searchResults.map(r => r.id)), [searchResults]);
 
   // ── External orb (overview only) ──────────────────────────────────────────
+  // Tier ≤ 0.6 indicates a source table not produced by any session (upstream external source)
   const extCount = useMemo(() => tables.filter(t => t.tier <= 0.6).length, [tables]);
   const EXT      = useMemo((): SP => ({
     x: dims.w * 0.90, y: dims.h * 0.12, r: 48, color: '#475569',
@@ -217,6 +237,8 @@ export default function GalaxyMapCanvas({
   );
 
   // ── Tier ring guides (overview) ────────────────────────────────────────────
+  // Computes the average radial distance of each tier's sessions from the center,
+  // then draws a faint guide circle at that radius labeled "T{n} (count)".
   const tierRings = useMemo(() => {
     const tiers = [...new Set(sessions.map(s => s.tier))].sort((a, b) => a - b);
     return tiers.map(t => {
@@ -230,6 +252,11 @@ export default function GalaxyMapCanvas({
   }, [sessions, sessPos, cx, cy]);
 
   // ── Orbit computation for the focused session ─────────────────────────────
+  // Builds three concentric rings around the focused session:
+  //   Ring 1 (IR=185px) — up to 12 connected tables (inner ring)
+  //   Ring 2 (OR=285px) — overflow tables beyond the first 12
+  //   Ring 3 (SR=355px) — connected sessions (clickable to switch focus)
+  // Angles start at -π/2 (top) for single items, distributed evenly for multiple.
   const { orbitNodes, orbitEdges } = useMemo((): { orbitNodes: ONode[]; orbitEdges: OEdge[] } => {
     if (!focusId) return { orbitNodes: [], orbitEdges: [] };
     const sp = sessPos.get(focusId);
@@ -308,7 +335,9 @@ export default function GalaxyMapCanvas({
     return { orbitNodes: nodes, orbitEdges: edges };
   }, [focusId, sessPos, sessById, tblById, connections]);
 
-  // ── Level-2: expanded orbit table → sessions connected to that table ──────
+  // ── Level-2: expanded orbit — shows sessions connected to a clicked table ──
+  // When a table node is expanded (expTbls set), places its connected sessions
+  // in a mini ring (95px) around that table node. This is the drill-down layer.
   const { l2Nodes, l2Edges } = useMemo((): { l2Nodes: ONode[]; l2Edges: OEdge[] } => {
     if (!focusId) return { l2Nodes: [], l2Edges: [] };
     const nodes: ONode[] = [];
@@ -703,7 +732,11 @@ export default function GalaxyMapCanvas({
             </>
           )}
 
-          {/* ── Session nodes — semantic zoom: dot/circle/full based on zoom ── */}
+          {/* ── Session nodes — LOD rendering based on D3 zoom scale ───────────
+               dot    (k < 0.4) — minimal filled circle, best for far-out views
+               circle (0.4–0.8) — circle + tier badge, for medium zoom
+               full   (k > 0.8) — name label + all decorations (glow, ring, etc.)
+               Focused session always uses full LOD regardless of zoom scale.   ── */}
           {sessions.map(s => {
             const p = sessPos.get(s.id);
             if (!p) return null;
@@ -880,7 +913,9 @@ export default function GalaxyMapCanvas({
         ))}
       </div>
 
-      {/* ── Minimap ────────────────────────────────────────────────────────── */}
+      {/* ── Minimap — visible when sessions > 20; uses the same sessPos coords as
+               the main SVG, scaled down via viewBox to 160×120. The focused
+               session is highlighted with a white stroke ring.               ── */}
       {sessions.length > 20 && (
         <div style={{
           position: 'absolute', bottom: 64, right: 16, width: 160, height: 120,

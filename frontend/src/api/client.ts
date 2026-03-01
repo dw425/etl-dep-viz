@@ -1,6 +1,22 @@
 /**
  * API client for ETL Dependency Visualizer.
- * Tier-map functions + persistence + vector analysis + layers + tags.
+ *
+ * All functions call the FastAPI backend at BASE = '/api' (proxied from :3000 → :8000 in dev).
+ * Sections (in order):
+ *   User ID management
+ *   Upload & analyze (tier-map, constellation, SSE stream, recluster)
+ *   Persistence (list/get/delete uploads, paginated sessions)
+ *   Vector analysis (analyze, cache, stream, wave plan, complexity, what-if, incremental, sweep)
+ *   Layer data (L1–L4 progressive disclosure)
+ *   Active tags (CRUD, batch, color update)
+ *   User profile & activity log
+ *   Health & logs
+ *   Flow Walker
+ *   Lineage (graph, forward/backward trace, table lineage, column lineage, impact)
+ *   Export downloads (Excel, DOT, Mermaid, Jira CSV, Databricks, Snapshot, Merge)
+ *   AI Chat (index, query, search, status)
+ *   Error reporting (reportError, installGlobalErrorHandler)
+ *   Extended health check (getHealth, getErrorAggregation)
  */
 
 import type { TierMapResult, ConstellationResult, AlgorithmKey } from '../types/tiermap';
@@ -8,8 +24,11 @@ import type { VectorResults, WavePlan, ComplexityResult, WhatIfResult, L1Data, A
 
 const BASE = '/api';
 
-// ── User ID management ───────────────────────────────────────────────────
+// ── User ID management ────────────────────────────────────────────────────
+// A UUID is generated on first visit and stored in localStorage so the user's
+// upload history persists across sessions without requiring auth.
 
+// Returns the persistent user UUID, creating one if it doesn't exist yet
 export function getUserId(): string {
   let id = localStorage.getItem('edv-user-id');
   if (!id) {
@@ -19,12 +38,14 @@ export function getUserId(): string {
   return id;
 }
 
+// Convenience: builds the X-User-Id header used by endpoints that track ownership
 export function userHeaders(): Record<string, string> {
   return { 'X-User-Id': getUserId() };
 }
 
-// ── Upload + analyze ──────────────────────────────────────────────────────
+// ── Upload & analyze ──────────────────────────────────────────────────────
 
+// Parses files and returns a tier-map result synchronously (non-streaming)
 export async function analyzeTierMap(files: File[]): Promise<TierMapResult & { upload_id?: number }> {
   const form = new FormData();
   files.forEach(f => form.append('files', f));
@@ -33,6 +54,7 @@ export async function analyzeTierMap(files: File[]): Promise<TierMapResult & { u
   return res.json();
 }
 
+// Parses files and clusters sessions in one call; returns tier data + constellation
 export async function analyzeConstellation(
   files: File[],
   algorithm: AlgorithmKey = 'louvain',
@@ -49,6 +71,9 @@ export async function analyzeConstellation(
 }
 
 // ── SSE streaming upload ──────────────────────────────────────────────────
+// Preferred for production: yields progress events so the UI shows granular
+// step-by-step feedback (extracting → parsing → clustering → complete).
+// Returns an AbortController so the caller can cancel the in-flight request.
 
 export interface StreamEvent {
   phase: 'extracting' | 'parsing' | 'clustering' | 'complete' | 'error' | 'timeout';
@@ -89,8 +114,9 @@ export function analyzeConstellationStream(
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
 
+      // SSE wire format: "data: {json}\n\n" — split on double-newline, strip "data:" prefix
       const lines = buffer.split('\n\n');
-      buffer = lines.pop() || '';
+      buffer = lines.pop() || ''; // keep incomplete chunk for next iteration
 
       for (const line of lines) {
         const trimmed = line.replace(/^data:\s*/, '').trim();
@@ -99,7 +125,7 @@ export function analyzeConstellationStream(
           const event: StreamEvent = JSON.parse(trimmed);
           onEvent(event);
           if (event.phase === 'complete' || event.phase === 'error') return;
-        } catch { /* skip malformed */ }
+        } catch { /* skip malformed frames */ }
       }
     }
   }).catch(err => {
@@ -112,6 +138,8 @@ export function analyzeConstellationStream(
 }
 
 // ── Recluster (no re-upload) ──────────────────────────────────────────────
+// Re-runs clustering on already-stored tier data using a different algorithm
+// without requiring the user to re-upload their files.
 
 export async function recluster(
   tierData: TierMapResult,
@@ -127,7 +155,7 @@ export async function recluster(
 }
 
 // ── Algorithm list ────────────────────────────────────────────────────────
-
+// Returns all available clustering algorithms and their human-readable descriptions
 export async function getAlgorithms(): Promise<Record<string, { name: string; desc: string }>> {
   const res = await fetch(`${BASE}/tier-map/algorithms`);
   if (!res.ok) throw new Error(res.statusText);
@@ -136,6 +164,7 @@ export async function getAlgorithms(): Promise<Record<string, { name: string; de
 }
 
 // ── Persistence endpoints ─────────────────────────────────────────────────
+// SQLite-backed upload history; allows restoring a previous analysis without re-parsing
 
 export interface UploadSummary {
   id: number;
@@ -174,6 +203,8 @@ export async function deleteUpload(uploadId: number): Promise<void> {
 }
 
 // ── Vector Analysis ──────────────────────────────────────────────────────
+// 11 vector engines run in 3 phases: Core (phase=1) → Advanced (phase=2) → Ensemble (phase=3)
+// upload_id is optional; when provided the backend can cache results by upload
 
 export async function analyzeVectors(
   tierData: TierMapResult,
@@ -191,6 +222,7 @@ export async function analyzeVectors(
   return res.json();
 }
 
+// Returns null on 404 (no cached results yet) without throwing
 export async function getCachedVectors(uploadId: number): Promise<VectorResults | null> {
   const res = await fetch(`${BASE}/vectors/results/${uploadId}`);
   if (res.status === 404) return null;
@@ -205,6 +237,7 @@ export interface VectorStreamEvent {
   result?: VectorResults;
 }
 
+// SSE-streaming variant of analyzeVectors — emits progress events for each engine
 export function analyzeVectorsStream(
   tierData: TierMapResult,
   uploadId: number | undefined,
@@ -247,6 +280,7 @@ export function analyzeVectorsStream(
   return ctrl;
 }
 
+// Standalone wave plan endpoint (bypasses full vector pipeline)
 export async function getWavePlan(tierData: TierMapResult): Promise<WavePlan> {
   const res = await fetch(`${BASE}/vectors/wave-plan`, {
     method: 'POST',
@@ -267,6 +301,7 @@ export async function getComplexity(tierData: TierMapResult): Promise<Complexity
   return res.json();
 }
 
+// Simulates the impact of removing/changing sessionId on downstream ripple chains
 export async function whatIfSimulation(tierData: TierMapResult, sessionId: string): Promise<WhatIfResult> {
   const res = await fetch(`${BASE}/vectors/what-if/${sessionId}`, {
     method: 'POST',
@@ -277,7 +312,9 @@ export async function whatIfSimulation(tierData: TierMapResult, sessionId: strin
   return res.json();
 }
 
-// ── Layer Data ───────────────────────────────────────────────────────────
+// ── Layer Data ────────────────────────────────────────────────────────────
+// 6-layer progressive disclosure: L1 (enterprise) → L6 (object detail).
+// Only L1–L4 have dedicated endpoints; L5/L6 are derived client-side.
 
 export async function getL1Data(tierData: TierMapResult): Promise<L1Data> {
   const res = await fetch(`${BASE}/layers/L1`, {
@@ -289,6 +326,7 @@ export async function getL1Data(tierData: TierMapResult): Promise<L1Data> {
   return res.json();
 }
 
+// L2: drills into a single cluster/group from the L1 overview
 export async function getL2Data(tierData: TierMapResult, groupId: string): Promise<Record<string, unknown>> {
   const res = await fetch(`${BASE}/layers/L2/${groupId}`, {
     method: 'POST',
@@ -319,7 +357,9 @@ export async function getL4Data(tierData: TierMapResult, sessionId: string): Pro
   return res.json();
 }
 
-// ── Active Tags ──────────────────────────────────────────────────────────
+// ── Active Tags ───────────────────────────────────────────────────────────
+// User-defined labels attached to sessions, tables, or clusters.
+// Stored in the active_tags SQLite table; retrieved per-object or listed globally.
 
 export async function createActiveTag(data: {
   object_id: string;
@@ -359,7 +399,8 @@ export async function listAllActiveTags(params?: { object_type?: string; tag_typ
   return res.json();
 }
 
-// ── User Profile & Activity ─────────────────────────────────────────────
+// ── User Profile & Activity ──────────────────────────────────────────────
+// User records are keyed by the localStorage UUID; activity events are fire-and-forget.
 
 export async function upsertUser(displayName?: string): Promise<Record<string, unknown>> {
   const res = await fetch(`${BASE}/users`, {
@@ -390,6 +431,7 @@ export async function getUserActivity(limit = 50): Promise<Record<string, unknow
   return res.json();
 }
 
+// Fire-and-forget activity event; failures are silently swallowed
 export async function logActivity(
   action: string,
   targetFilename?: string,
@@ -399,10 +441,11 @@ export async function logActivity(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action, target_filename: targetFilename, details }),
-  }).catch(() => {}); // fire-and-forget
+  }).catch(() => {}); // intentionally fire-and-forget
 }
 
-// ── Health / Logs ────────────────────────────────────────────────────────
+// ── Health / Logs ─────────────────────────────────────────────────────────
+// Reads from the in-memory ring buffer log handler (last N entries by level)
 
 export interface LogEntry {
   timestamp: string;
@@ -420,7 +463,9 @@ export async function getHealthLogs(limit = 50, level?: string): Promise<LogEntr
   return res.json();
 }
 
-// ── Flow Walker ──────────────────────────────────────────────────────────
+// ── Flow Walker ───────────────────────────────────────────────────────────
+// Returns upstream/downstream chains, mapping detail (instances + connectors + fields),
+// tables touched, complexity score, wave info, and SCC membership for a session.
 
 export async function getFlowData(
   tierData: TierMapResult,
@@ -435,7 +480,8 @@ export async function getFlowData(
   return res.json();
 }
 
-// ── Lineage API ──────────────────────────────────────────────────────────
+// ── Lineage API ───────────────────────────────────────────────────────────
+// Graph-level and hop-limited forward/backward tracing; also per-table and per-column.
 
 export async function getLineageGraph(
   tierData: TierMapResult,
@@ -449,6 +495,7 @@ export async function getLineageGraph(
   return res.json();
 }
 
+// Traces downstream from nodeId up to maxHops edges
 export async function traceLineageForward(
   tierData: TierMapResult,
   nodeId: string,
@@ -463,6 +510,7 @@ export async function traceLineageForward(
   return res.json();
 }
 
+// Traces upstream from nodeId up to maxHops edges
 export async function traceLineageBackward(
   tierData: TierMapResult,
   nodeId: string,
@@ -490,7 +538,8 @@ export async function getTableLineage(
   return res.json();
 }
 
-// ── Column Lineage ──────────────────────────────────────────────────────
+// ── Column Lineage ────────────────────────────────────────────────────────
+// Field-level lineage derived from the deep Informatica connector parse
 
 export async function getColumnLineage(
   tierData: TierMapResult,
@@ -505,7 +554,8 @@ export async function getColumnLineage(
   return res.json();
 }
 
-// ── Impact Analysis ─────────────────────────────────────────────────────
+// ── Impact Analysis ───────────────────────────────────────────────────────
+// Returns all downstream sessions/tables affected if sessionId were to change
 
 export async function getImpactAnalysis(
   tierData: TierMapResult,
@@ -521,7 +571,8 @@ export async function getImpactAnalysis(
   return res.json();
 }
 
-// ── Vector Sweep ────────────────────────────────────────────────────────
+// ── Vector Sweep ──────────────────────────────────────────────────────────
+// Runs all vector engines at multiple resolution levels and returns a comparison matrix
 
 export async function sweepResolution(
   tierData: TierMapResult,
@@ -535,7 +586,8 @@ export async function sweepResolution(
   return res.json();
 }
 
-// ── Incremental Vector Analysis ─────────────────────────────────────────
+// ── Incremental Vector Analysis ───────────────────────────────────────────
+// Runs only the specified vector engines (by id, e.g. ["V1","V4"]) instead of all 11
 
 export async function analyzeVectorsIncremental(
   tierData: TierMapResult,
@@ -554,7 +606,8 @@ export async function analyzeVectorsIncremental(
   return res.json();
 }
 
-// ── Tag Color Presets ───────────────────────────────────────────────────
+// ── Tag Color Presets ─────────────────────────────────────────────────────
+// PATCHes only the color field of an existing tag without touching other properties
 
 export async function updateTagColor(
   tagId: string,
@@ -568,7 +621,8 @@ export async function updateTagColor(
   if (!res.ok) throw new Error(res.statusText);
 }
 
-// ── Batch Tag Operations ────────────────────────────────────────────────
+// ── Batch Tag Operations ──────────────────────────────────────────────────
+// Applies the same tag to multiple object IDs in parallel via Promise.all
 
 export async function batchCreateTags(
   objectIds: string[],
@@ -579,7 +633,8 @@ export async function batchCreateTags(
   ));
 }
 
-// ── Export Downloads ────────────────────────────────────────────────────
+// ── Export Downloads ──────────────────────────────────────────────────────
+// All export functions return either a Blob (binary) or string (text) for the caller to save
 
 export async function exportExcel(
   tierData: TierMapResult,
@@ -660,7 +715,9 @@ export async function mergeUploads(uploadIds: number[]): Promise<Record<string, 
   return res.json();
 }
 
-// ── AI Chat API ──────────────────────────────────────────────────────────
+// ── AI Chat API ───────────────────────────────────────────────────────────
+// Requires the upload to be indexed first (chatIndexUpload); then supports
+// conversational Q&A (chatQuery) and semantic search (chatSearch) over the ETL graph.
 
 export async function chatIndexUpload(uploadId: number): Promise<Record<string, unknown>> {
   const res = await fetch(`${BASE}/chat/index/${uploadId}`, {
@@ -706,7 +763,9 @@ export async function chatIndexStatus(uploadId: number): Promise<{ indexed: bool
   return res.json();
 }
 
-// ── Frontend Error Reporting (Item 30) ───────────────────────────────────
+// ── Frontend Error Reporting ──────────────────────────────────────────────
+// reportError sends client-side errors to the backend for centralized logging.
+// installGlobalErrorHandler should be called once at app startup.
 
 export async function reportError(error: {
   type?: string;
@@ -757,7 +816,9 @@ export function installGlobalErrorHandler(): void {
   });
 }
 
-// ── Extended Health Check ────────────────────────────────────────────────
+// ── Extended Health Check ─────────────────────────────────────────────────
+// getHealth returns runtime stats (db, disk, memory, lib versions, error counts)
+// getErrorAggregation returns grouped error summaries from the ring buffer
 
 export interface HealthStatus {
   status: string;
@@ -792,7 +853,9 @@ export async function getErrorAggregation(params?: {
   return res.json();
 }
 
-// ── Paginated Sessions ──────────────────────────────────────────────────
+// ── Paginated Sessions ────────────────────────────────────────────────────
+// Server-side pagination for uploads with thousands of sessions; supports
+// offset/limit, tier filter, and full-text search query parameters.
 
 export async function getPaginatedSessions(
   uploadId: number,

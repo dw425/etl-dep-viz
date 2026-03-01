@@ -2,6 +2,12 @@
 
 Supports uploading individual .xml files OR .zip archives containing XML files.
 Auto-detects platform (Informatica vs NiFi) from XML content.
+
+Upload pipeline (for all analyze endpoints):
+  1. _extract_xml_from_uploads  — read files/ZIPs, dedup via SHA-256, re-encode if needed
+  2. _detect_platform / _split_by_platform — classify each XML as Informatica or NiFi
+  3. _analyze_mixed              — run the correct engine(s) in a thread, merge results
+  4. Persist Upload row to SQLite for later retrieval without re-parsing
 """
 
 import asyncio
@@ -91,17 +97,19 @@ def _merge_tier_results(a: dict, b: dict) -> dict:
     """Merge two tier_data results (from different platforms) into one.
 
     Re-numbers session IDs and table IDs in `b` to avoid collisions with `a`.
+    Strategy: find the max numeric suffix used in `a`, then shift all IDs in `b`
+    upward by that amount so neither set overlaps.
     """
     if not a.get('sessions'):
         return b
     if not b.get('sessions'):
         return a
 
-    # Offset for b's IDs to avoid collisions
+    # ── Compute ID offsets so b's IDs don't collide with a's ──
     a_max_s = max((_extract_id_num(s['id'], 'S') for s in a['sessions']), default=0)
     a_max_t = max((_extract_id_num(t['id'], 'T_') for t in a['tables']), default=0)
 
-    # Build ID remap for b
+    # ── Remap session IDs in b: S5 → S{5 + a_max_s} ──
     s_remap: dict[str, str] = {}
     for s in b['sessions']:
         old_id = s['id']
@@ -110,6 +118,7 @@ def _merge_tier_results(a: dict, b: dict) -> dict:
         s_remap[old_id] = new_id
         s['id'] = new_id
 
+    # ── Remap table IDs in b: T_3 → T_{3 + a_max_t} ──
     t_remap: dict[str, str] = {}
     for t in b['tables']:
         old_id = t['id']
@@ -118,13 +127,13 @@ def _merge_tier_results(a: dict, b: dict) -> dict:
         t_remap[old_id] = new_id
         t['id'] = new_id
 
-    # Remap connection endpoints
+    # ── Apply remapped IDs to connection from/to endpoints in b ──
     remap_all = {**s_remap, **t_remap}
     for conn in b.get('connections', []):
         conn['from'] = remap_all.get(conn['from'], conn['from'])
         conn['to'] = remap_all.get(conn['to'], conn['to'])
 
-    # Merge
+    # ── Concatenate the two result sets ──
     sessions = a['sessions'] + b['sessions']
     tables = a['tables'] + b['tables']
     connections = a.get('connections', []) + b.get('connections', [])
@@ -138,10 +147,12 @@ def _merge_tier_results(a: dict, b: dict) -> dict:
         'connections': connections,
         'stats': {
             'session_count': len(sessions),
+            # Additive stats: sum both platforms' counts
             'write_conflicts': a_stats.get('write_conflicts', 0) + b_stats.get('write_conflicts', 0),
             'dep_chains': a_stats.get('dep_chains', 0) + b_stats.get('dep_chains', 0),
             'staleness_risks': a_stats.get('staleness_risks', 0) + b_stats.get('staleness_risks', 0),
             'source_tables': a_stats.get('source_tables', 0) + b_stats.get('source_tables', 0),
+            # max_tier: take the deeper of the two tier graphs
             'max_tier': max(a_stats.get('max_tier', 0), b_stats.get('max_tier', 0)),
         },
         'warnings': (a.get('warnings') or []) + (b.get('warnings') or []),
@@ -153,16 +164,23 @@ async def _analyze_mixed(
     names: list[str],
     progress_fn=None,
 ) -> dict:
-    """Classify files per-platform, run both engines if needed, merge results."""
+    """Classify files per-platform, run both engines if needed, merge results.
+
+    Each engine runs in a thread pool via asyncio.to_thread so the event loop
+    is not blocked by CPU-intensive XML parsing.  Results from both engines are
+    then merged with _merge_tier_results to produce a single unified graph.
+    """
     infa_raw, infa_names, nifi_raw, nifi_names = _split_by_platform(raw, names)
 
     results = []
 
+    # Run Informatica engine if any Infa files were detected
     if infa_raw:
         from app.engines.infa_engine import analyze as infa_analyze
         r = await asyncio.to_thread(infa_analyze, infa_raw, infa_names, progress_fn)
         results.append(r)
 
+    # Run NiFi engine if any NiFi files were detected
     if nifi_raw:
         from app.engines.nifi_tier_engine import analyze as nifi_analyze
         r = await asyncio.to_thread(nifi_analyze, nifi_raw, nifi_names, progress_fn)
@@ -174,6 +192,7 @@ async def _analyze_mixed(
                           'staleness_risks': 0, 'source_tables': 0, 'max_tier': 0},
                 'warnings': ['No XML files found.']}
 
+    # Fold all platform results together with ID-collision-safe merge
     merged = results[0]
     for r in results[1:]:
         merged = _merge_tier_results(merged, r)
@@ -185,12 +204,15 @@ async def _extract_xml_from_uploads(files: List[UploadFile]) -> tuple[list[bytes
 
     Returns (raw_bytes_list, filename_list).
 
-    Hardened: streams ZIP entries one at a time (not all into RAM),
-    validates zip integrity, enforces size limits, detects duplicates via SHA-256.
+    Hardened against:
+      - Zip bombs: total uncompressed size capped at 10 GB, entries streamed one at a time
+      - Duplicate files: SHA-256 fingerprint checked before adding each file
+      - Encoding issues: chardet-based re-encoding to UTF-8, falls back to Latin-1
+      - Corrupt ZIPs: BadZipFile caught and treated as raw XML
     """
     raw: list[bytes] = []
     names: list[str] = []
-    seen_hashes: set[str] = set()  # SHA-256 dedup within extraction
+    seen_hashes: set[str] = set()  # SHA-256 fingerprints of files already accepted
 
     for f in files:
         content = await f.read()
@@ -199,7 +221,7 @@ async def _extract_xml_from_uploads(files: List[UploadFile]) -> tuple[list[bytes
 
         fname = (f.filename or 'unknown').lower()
 
-        # ZIP archive — stream-extract .xml files one at a time
+        # Detect ZIP by extension OR by PK magic bytes (handles mis-named archives)
         if fname.endswith('.zip') or (content[:4] == b'PK\x03\x04'):
             # Validate before opening
             if not zipfile.is_zipfile(io.BytesIO(content)):
@@ -256,7 +278,9 @@ async def _extract_xml_from_uploads(files: List[UploadFile]) -> tuple[list[bytes
                 raw.append(content)
                 names.append(f.filename or 'unknown.xml')
         else:
-            # Encoding detection (Item 7): try chardet, fall back to Latin-1
+            # ── Encoding normalisation for raw XML files ──
+            # Fast path: already valid UTF-8, nothing to do.
+            # Slow path: probe encoding with chardet (confidence > 50%) or fall back to Latin-1.
             try:
                 content.decode('utf-8')
             except UnicodeDecodeError:
@@ -275,11 +299,12 @@ async def _extract_xml_from_uploads(files: List[UploadFile]) -> tuple[list[bytes
                         raise ValueError("Low confidence")
                 except Exception:
                     try:
+                        # Latin-1 covers all single-byte values, so it never raises
                         text = content.decode('latin-1')
                         content = text.encode('utf-8')
                         logger.info("Re-encoded %s from Latin-1 to UTF-8 (chardet unavailable or low confidence)", fname)
                     except Exception:
-                        pass  # leave as-is
+                        pass  # leave as-is, engine will handle or skip
 
             # SHA-256 duplicate detection for loose files
             content_hash = hashlib.sha256(content).hexdigest()
@@ -292,6 +317,9 @@ async def _extract_xml_from_uploads(files: List[UploadFile]) -> tuple[list[bytes
             names.append(f.filename or 'unknown.xml')
 
     return raw, names
+
+
+# ── Upload pipeline endpoints ─────────────────────────────────────────────
 
 
 @router.post('/tier-map/analyze')
@@ -320,9 +348,10 @@ async def analyze_tier_map(
 
     duration_ms = int((time.monotonic() - t0) * 1000)
 
-    # Persist to DB
+    # ── Persist to DB so the result can be reloaded without re-parsing ──
     platform = _detect_platform(raw)
     upload = Upload(
+        # Truncate long filename lists to first 5, append overflow count
         filename=', '.join(names[:5]) + (f' (+{len(names)-5})' if len(names) > 5 else ''),
         platform=platform,
         session_count=len(result.get('sessions', [])),
@@ -336,6 +365,9 @@ async def analyze_tier_map(
 
     result['upload_id'] = upload.id
     return result
+
+
+# ── Constellation endpoints (synchronous + streaming) ─────────────────────
 
 
 @router.post('/tier-map/constellation')
@@ -414,25 +446,28 @@ async def analyze_constellation_stream(
     user_id = x_user_id
 
     async def _process() -> None:
-        """Run parsing → clustering, pushing progress events to the queue."""
+        """Run parsing → clustering, pushing SSE progress events to the shared queue."""
         t0 = time.monotonic()
         try:
             total = len(raw)
             logger.info("step=extract files=%d", total)
+            # Signal client that extraction is done (5% progress marker)
             await queue.put({'phase': 'extracting', 'current': total, 'total': total, 'percent': 5.0,
                              'elapsed_ms': int((time.monotonic() - t0) * 1000)})
 
             # ── Phase: parsing ──
             loop = asyncio.get_running_loop()
+            # Mutable single-element lists allow mutation from inside the sync progress_fn closure
             sessions_so_far = [0]
             files_parsed = [0]
             file_statuses: list[dict] = []
 
             def progress_fn(current: int, total_files: int, filename: str) -> None:
+                """Called by the engine after each file is parsed; maps to SSE percent 5–95."""
                 files_parsed[0] = current
-                pct = round((current / total_files) * 90.0, 1)  # parsing = 5%–95%
+                pct = round((current / total_files) * 90.0, 1)  # parsing occupies 5%–95% of the range
                 elapsed_ms = int((time.monotonic() - t0) * 1000)
-                # ETA estimation based on average file parse time
+                # ETA: linear extrapolation based on average ms-per-file so far
                 if current > 0 and current < total_files:
                     avg_ms = elapsed_ms / current
                     eta_ms = int(avg_ms * (total_files - current))
@@ -440,6 +475,7 @@ async def analyze_constellation_stream(
                     eta_ms = 0
                 logger.info("step=parse current=%d/%d file=%s sessions_so_far=%d elapsed_ms=%d",
                             current, total_files, filename, sessions_so_far[0], elapsed_ms)
+                # Bridge from sync thread back to the async event loop
                 asyncio.run_coroutine_threadsafe(
                     queue.put({
                         'phase': 'parsing',
@@ -458,7 +494,7 @@ async def analyze_constellation_stream(
             platform = _detect_platform(raw)
             logger.info("step=classify platform=%s files=%d", platform, total)
 
-            # Apply timeout
+            # Wrap parse in a timeout so oversized inputs don't hang the server
             try:
                 tier_data = await asyncio.wait_for(
                     _analyze_mixed(raw, names, progress_fn),
@@ -509,8 +545,9 @@ async def analyze_constellation_stream(
 
             logger.info("step=persist upload_id=%d duration_ms=%d", upload.id, duration_ms)
 
-            # ── Phase: complete ──
-            # Include parse audit in the result
+            # ── Phase: complete — attach optional parse audit metadata ──
+            # _parse_audit is a per-file stats dict injected by the engine; pop it
+            # so it doesn't pollute the main tier_data structure stored in the DB.
             parse_audit = tier_data.pop('_parse_audit', None)
             complete_event = {
                 'phase': 'complete',
@@ -529,14 +566,16 @@ async def analyze_constellation_stream(
             await queue.put({'phase': 'error', 'message': str(exc), 'elapsed_ms': elapsed_ms})
 
     async def _event_generator():
-        """Yield SSE events from the queue until 'complete' or 'error'."""
+        """Pull events from the queue and yield as SSE-formatted lines until terminal phase."""
         while True:
             event = await queue.get()
             yield f"data: {json.dumps(event)}\n\n"
+            # 'complete' and 'error' are terminal events — stop the stream
             if event.get('phase') in ('complete', 'error'):
                 break
 
-    # Launch processing as a background task so the SSE generator can yield immediately
+    # Start the heavy processing in the background so the SSE response can be
+    # returned immediately (the event loop stays free to service other requests).
     asyncio.ensure_future(_process())
 
     return StreamingResponse(
@@ -652,21 +691,22 @@ def list_sessions(
     count = q.count()
 
     if count == 0:
-        # Fall back to JSON blob for backwards compatibility
+        # ── Legacy path: no normalized SessionRecord rows, fall back to the JSON blob ──
+        # Older uploads were stored only as a JSON blob; filter/paginate in Python.
         tier_data = row.get_tier_data()
         sessions = tier_data.get('sessions', [])
-        # Apply filters
         if tier is not None:
             sessions = [s for s in sessions if int(s.get('tier', 0)) == tier]
         if search:
             search_lower = search.lower()
+            # Match against both short name and fully-qualified workflow path
             sessions = [s for s in sessions if search_lower in s.get('name', '').lower()
                         or search_lower in s.get('full', '').lower()]
         total = len(sessions)
         page = sessions[offset:offset + limit]
         return {'sessions': page, 'total': total, 'offset': offset, 'limit': limit}
 
-    # Use normalized records
+    # ── Fast path: use normalized SessionRecord rows for DB-level filtering ──
     if tier is not None:
         q = q.filter(SessionRecord.tier == float(tier))
     if search:
@@ -686,6 +726,7 @@ def list_sessions(
             'workflow': r.workflow,
             'transforms': r.transforms,
             'critical': bool(r.critical),
+            # sources/targets/lookups are stored as JSON strings in the DB column
             'sources': json.loads(r.sources_json) if r.sources_json else [],
             'targets': json.loads(r.targets_json) if r.targets_json else [],
             'lookups': json.loads(r.lookups_json) if r.lookups_json else [],
