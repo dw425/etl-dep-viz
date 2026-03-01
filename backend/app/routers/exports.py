@@ -109,6 +109,7 @@ async def export_jira_csv(
             vector_results = upload.get_vector_results()
 
     csv_content = generate_jira_csv(tier_data, vector_results)
+    logger.info("jira_csv export sessions=%d", len(tier_data.get('sessions', [])))
     return Response(
         content=csv_content,
         media_type="text/csv",
@@ -132,6 +133,7 @@ async def export_jira_json(
             vector_results = upload.get_vector_results()
 
     tickets = generate_jira_json(tier_data, vector_results)
+    logger.info("jira_json export tickets=%d", len(tickets))
     return {"tickets": tickets, "count": len(tickets)}
 
 

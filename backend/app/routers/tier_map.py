@@ -75,6 +75,18 @@ def _get_analyzer(platform: str):
         return analyze
 
 
+def _extract_id_num(id_str: str, prefix: str) -> int:
+    """Extract numeric suffix from an ID like 'S12' or 'T_5', safely handling bad formats."""
+    if id_str.startswith(prefix):
+        suffix = id_str[len(prefix):]
+    else:
+        suffix = id_str
+    try:
+        return int(suffix)
+    except ValueError:
+        return 0
+
+
 def _merge_tier_results(a: dict, b: dict) -> dict:
     """Merge two tier_data results (from different platforms) into one.
 
@@ -86,14 +98,14 @@ def _merge_tier_results(a: dict, b: dict) -> dict:
         return a
 
     # Offset for b's IDs to avoid collisions
-    a_max_s = max((int(s['id'].lstrip('S')) for s in a['sessions']), default=0)
-    a_max_t = max((int(t['id'].lstrip('T_')) for t in a['tables']), default=0)
+    a_max_s = max((_extract_id_num(s['id'], 'S') for s in a['sessions']), default=0)
+    a_max_t = max((_extract_id_num(t['id'], 'T_') for t in a['tables']), default=0)
 
     # Build ID remap for b
     s_remap: dict[str, str] = {}
     for s in b['sessions']:
         old_id = s['id']
-        num = int(old_id.lstrip('S'))
+        num = _extract_id_num(old_id, 'S')
         new_id = f'S{num + a_max_s}'
         s_remap[old_id] = new_id
         s['id'] = new_id
@@ -101,7 +113,7 @@ def _merge_tier_results(a: dict, b: dict) -> dict:
     t_remap: dict[str, str] = {}
     for t in b['tables']:
         old_id = t['id']
-        num = int(old_id.lstrip('T_'))
+        num = _extract_id_num(old_id, 'T_')
         new_id = f'T_{num + a_max_t}'
         t_remap[old_id] = new_id
         t['id'] = new_id

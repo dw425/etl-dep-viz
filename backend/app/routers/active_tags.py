@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
@@ -29,7 +29,7 @@ def create_tag(
         label=data.get("label", ""),
         color=data.get("color", "#3B82F6"),
         note=data.get("note", ""),
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
         created_by=data.get("created_by", ""),
     )
     db.add(tag)

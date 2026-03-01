@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import Column, DateTime, String, Text
 
@@ -22,5 +22,5 @@ class ActiveTag(Base):
     label = Column(String(200), nullable=False)
     color = Column(String(20), default="#3B82F6")
     note = Column(Text, default="")
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     created_by = Column(String(200), default="")

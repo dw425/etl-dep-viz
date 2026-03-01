@@ -161,6 +161,7 @@ async def get_lineage_graph(tier_data: dict = Body(...)):
     if not tier_data.get('sessions'):
         raise HTTPException(status_code=422, detail='tier_data must contain sessions.')
     graph = _build_lineage_graph(tier_data)
+    logger.info("lineage_graph built nodes=%d edges=%d", len(graph['nodes']), len(graph['edges']))
     return graph
 
 
@@ -173,6 +174,7 @@ async def trace_forward(
     """Trace data flow forward from a node (impact analysis)."""
     graph = _build_lineage_graph(tier_data)
     result = _trace_forward(graph, node_id, max_hops)
+    logger.info("trace_forward node=%s hops=%d reached=%d", node_id, max_hops, len(result['nodes']))
     return result
 
 
@@ -185,6 +187,7 @@ async def trace_backward(
     """Trace data flow backward from a node (dependency analysis)."""
     graph = _build_lineage_graph(tier_data)
     result = _trace_backward(graph, node_id, max_hops)
+    logger.info("trace_backward node=%s hops=%d reached=%d", node_id, max_hops, len(result['nodes']))
     return result
 
 
@@ -222,7 +225,7 @@ def _build_column_lineage(tier_data: dict, session_id: str) -> dict:
             session = s
             break
     if not session:
-        return {'error': f'Session {session_id} not found'}
+        raise HTTPException(404, f'Session {session_id} not found')
 
     # Get mapping detail with CONNECTOR data
     detail = session.get('mapping_detail', {})

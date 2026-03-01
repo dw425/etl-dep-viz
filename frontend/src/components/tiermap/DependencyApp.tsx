@@ -777,24 +777,38 @@ export function DependencyApp() {
           <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, color: '#64748b' }}>Loading view...</div>}>
             <div style={{ flex: 1, overflow: 'hidden', padding: (['tier', 'matrix', 'galaxy', 'constellation', 'tables', 'duplicates'].includes(view)) ? 0 : 20 }}>
               {/* Core views */}
-              {view === 'tier' && scopedTierData && <TierDiagram data={scopedTierData} />}
+              {view === 'tier' && scopedTierData && (
+                <ErrorBoundary><TierDiagram data={scopedTierData} /></ErrorBoundary>
+              )}
               {view === 'galaxy' && scopedTierData && (
-                <GalaxyMapCanvas data={scopedTierData} onClose={() => setView('tier')} />
+                <ErrorBoundary>
+                  <GalaxyMapCanvas data={scopedTierData} onClose={() => setView('tier')} />
+                </ErrorBoundary>
               )}
               {view === 'constellation' && tierData && constellation && (
-                <ConstellationCanvas
-                  points={constellation.points}
-                  chunks={constellation.chunks}
-                  crossChunkEdges={constellation.cross_chunk_edges}
-                  onChunkSelect={(chunkId: string) => setSelectedChunkId(prev => prev === chunkId ? null : chunkId)}
-                  algorithm={algorithm}
-                  onAlgorithmChange={handleRecluster}
-                />
+                <ErrorBoundary>
+                  <ConstellationCanvas
+                    points={constellation.points}
+                    chunks={constellation.chunks}
+                    crossChunkEdges={constellation.cross_chunk_edges}
+                    onChunkSelect={(chunkId: string) => setSelectedChunkId(prev => prev === chunkId ? null : chunkId)}
+                    algorithm={algorithm}
+                    onAlgorithmChange={handleRecluster}
+                  />
+                </ErrorBoundary>
               )}
-              {view === 'explorer' && scopedTierData && <ExplorerView data={scopedTierData} />}
-              {view === 'conflicts' && scopedTierData && <ConflictsView data={scopedTierData} />}
-              {view === 'order' && scopedTierData && <ExecOrderView data={scopedTierData} />}
-              {view === 'matrix' && scopedTierData && <MatrixView data={scopedTierData} />}
+              {view === 'explorer' && scopedTierData && (
+                <ErrorBoundary><ExplorerView data={scopedTierData} /></ErrorBoundary>
+              )}
+              {view === 'conflicts' && scopedTierData && (
+                <ErrorBoundary><ConflictsView data={scopedTierData} /></ErrorBoundary>
+              )}
+              {view === 'order' && scopedTierData && (
+                <ErrorBoundary><ExecOrderView data={scopedTierData} /></ErrorBoundary>
+              )}
+              {view === 'matrix' && scopedTierData && (
+                <ErrorBoundary><MatrixView data={scopedTierData} /></ErrorBoundary>
+              )}
 
               {/* Data harmonization views */}
               {view === 'tables' && scopedTierData && (

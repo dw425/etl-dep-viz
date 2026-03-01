@@ -40,15 +40,7 @@ interface LineData {
   type: TierConn['type'];
 }
 
-const TierDiagram: React.FC<Props> = ({ data }) => {
-  // For very large datasets, use Canvas renderer instead of SVG
-  if (data.sessions.length >= CANVAS_SESSION_THRESHOLD) {
-    return (
-      <Suspense fallback={<div style={{ padding: 24, color: '#94a3b8' }}>Loading canvas renderer...</div>}>
-        <WebGLCanvas data={data} />
-      </Suspense>
-    );
-  }
+const TierDiagramInner: React.FC<Props> = ({ data }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const nodeRefs = useRef<Record<string, HTMLDivElement>>({});
   const [lines, setLines] = useState<LineData[]>([]);
@@ -1007,6 +999,17 @@ const TierDiagram: React.FC<Props> = ({ data }) => {
       </div>
     </div>
   );
+};
+
+const TierDiagram: React.FC<Props> = ({ data }) => {
+  if (data.sessions.length >= CANVAS_SESSION_THRESHOLD) {
+    return (
+      <Suspense fallback={<div style={{ padding: 24, color: '#94a3b8' }}>Loading canvas renderer...</div>}>
+        <WebGLCanvas data={data} />
+      </Suspense>
+    );
+  }
+  return <TierDiagramInner data={data} />;
 };
 
 export default TierDiagram;

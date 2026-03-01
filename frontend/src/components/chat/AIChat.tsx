@@ -7,6 +7,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import type { TierMapResult } from '../../types/tiermap';
+import { chatIndexStatus, chatIndexUpload, chatQuery } from '../../api/client';
 
 /* ── Types ──────────────────────────────────────────────────────────────── */
 
@@ -55,9 +56,9 @@ export default function AIChat({ uploadId, tierData, onNavigate }: AIChatProps) 
   }, [uploadId]);
 
   async function checkIndexStatus() {
+    if (!uploadId) return;
     try {
-      const res = await fetch(`/api/chat/${uploadId}/status`);
-      const data = await res.json();
+      const data = await chatIndexStatus(uploadId);
       setIndexed(data.indexed);
       setDocCount(data.document_count);
     } catch {
@@ -69,8 +70,7 @@ export default function AIChat({ uploadId, tierData, onNavigate }: AIChatProps) 
     if (!uploadId) return;
     setIndexing(true);
     try {
-      const res = await fetch(`/api/chat/index/${uploadId}`, { method: 'POST' });
-      const data = await res.json();
+      const data = await chatIndexUpload(uploadId) as { documents_indexed?: number; by_type?: Record<string, number> };
       setIndexed(true);
       setDocCount(data.documents_indexed || 0);
       const byType = data.by_type || {};
@@ -103,23 +103,16 @@ export default function AIChat({ uploadId, tierData, onNavigate }: AIChatProps) 
     setLoading(true);
 
     try {
-      const res = await fetch(`/api/chat/${uploadId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          question: userMsg.content,
-          conversation_history: messages.slice(-10).map(m => ({
-            role: m.role,
-            content: m.content,
-          })),
-        }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.detail || res.statusText);
-      }
+      const data = await chatQuery(uploadId, userMsg.content, messages.slice(-10).map(m => ({
+        role: m.role,
+        content: m.content,
+      }))) as {
+        answer: string;
+        intent?: string;
+        referenced_sessions?: SessionRef[];
+        referenced_tables?: TableRef[];
+        suggested_questions?: string[];
+      };
 
       const aiMsg: ChatMessage = {
         role: 'assistant',

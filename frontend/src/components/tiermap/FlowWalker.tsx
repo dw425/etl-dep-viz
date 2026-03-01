@@ -61,7 +61,7 @@ export default function FlowWalkerView({ tierData, vectorResults }: Props) {
       const body = vectorResults
         ? { ...tierData, __vector_results: vectorResults }
         : tierData;
-      const data = await getFlowData(tierData, sessionId);
+      const data = await getFlowData(body, sessionId);
       setFlowData(data as unknown as FlowData);
       setSelectedSessionId(sessionId);
     } catch (e) {

@@ -10,6 +10,7 @@ Endpoints:
 from __future__ import annotations
 
 import logging
+import threading
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -22,8 +23,9 @@ logger = logging.getLogger("edv.chat")
 
 router = APIRouter(prefix="/chat", tags=["AI Chat"])
 
-# Shared engine instances (lazy-initialized)
+# Shared engine instances (lazy-initialized, thread-safe)
 _engines: dict | None = None
+_engines_lock = threading.Lock()
 
 
 def _get_engines() -> dict:
@@ -31,6 +33,9 @@ def _get_engines() -> dict:
     global _engines
     if _engines is not None:
         return _engines
+    with _engines_lock:
+        if _engines is not None:
+            return _engines
 
     from app.engines.embedding_engine import EmbeddingEngine
     from app.engines.vector_store import VectorStore
