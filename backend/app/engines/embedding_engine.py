@@ -30,6 +30,7 @@ class EmbeddingEngine:
         self.mode = mode
         self._model: Any = None
         self.dimension: int = 384  # default for MiniLM; updated after model loads
+        self.using_zero_vectors: bool = False
 
         # ── Local mode (sentence-transformers) ──────────────────────────────
         if mode == "local":
@@ -66,6 +67,7 @@ class EmbeddingEngine:
                 # Graceful degradation: ChromaDB still indexes, but search quality
                 # is zero because all vectors are identical (zero-norm).
                 logger.warning("Embedding model not available, returning zero vectors")
+                self.using_zero_vectors = True
                 return [[0.0] * self.dimension for _ in texts]
             embeddings = self._model.encode(
                 texts,

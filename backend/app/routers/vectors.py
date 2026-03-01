@@ -91,6 +91,14 @@ async def analyze_vectors(
         if upload:
             upload.set_vector_results(result)
             db.commit()
+            # Populate per-view vector tables
+            from app.engines.data_populator import populate_vector_tables
+            try:
+                populate_vector_tables(db, upload_id, result)
+                db.commit()
+            except Exception as exc:
+                logger.warning("Failed to populate vector tables: %s", exc)
+                db.rollback()
 
     return result
 
@@ -146,6 +154,12 @@ async def analyze_vectors_stream(
                 if upload:
                     upload.set_vector_results(p3)
                     db.commit()
+                    from app.engines.data_populator import populate_vector_tables
+                    try:
+                        populate_vector_tables(db, upload_id, p3)
+                        db.commit()
+                    except Exception as exc:
+                        logger.warning("Failed to populate vector tables (stream): %s", exc)
 
             await queue.put({"phase": "complete", "percent": 100, "result": p3})
         except Exception as exc:
@@ -323,6 +337,12 @@ async def analyze_selective(
         if upload:
             upload.set_vector_results(result)
             db.commit()
+            from app.engines.data_populator import populate_vector_tables
+            try:
+                populate_vector_tables(db, upload_id, result)
+                db.commit()
+            except Exception as exc:
+                logger.warning("Failed to populate vector tables (selective): %s", exc)
 
     return result
 
@@ -382,5 +402,11 @@ async def analyze_incremental(
         if upload:
             upload.set_vector_results(result)
             db.commit()
+            from app.engines.data_populator import populate_vector_tables
+            try:
+                populate_vector_tables(db, upload_id, result)
+                db.commit()
+            except Exception as exc:
+                logger.warning("Failed to populate vector tables (incremental): %s", exc)
 
     return result

@@ -46,10 +46,11 @@ export function userHeaders(): Record<string, string> {
 // ── Upload & analyze ──────────────────────────────────────────────────────
 
 // Parses files and returns a tier-map result synchronously (non-streaming)
-export async function analyzeTierMap(files: File[]): Promise<TierMapResult & { upload_id?: number }> {
+export async function analyzeTierMap(files: File[], projectId?: number): Promise<TierMapResult & { upload_id?: number }> {
   const form = new FormData();
   files.forEach(f => form.append('files', f));
-  const res = await fetch(`${BASE}/tier-map/analyze`, { method: 'POST', body: form, headers: userHeaders() });
+  const params = projectId ? `?project_id=${projectId}` : '';
+  const res = await fetch(`${BASE}/tier-map/analyze${params}`, { method: 'POST', body: form, headers: userHeaders() });
   if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.json();
 }
@@ -58,10 +59,13 @@ export async function analyzeTierMap(files: File[]): Promise<TierMapResult & { u
 export async function analyzeConstellation(
   files: File[],
   algorithm: AlgorithmKey = 'louvain',
+  projectId?: number,
 ): Promise<{ upload_id?: number; tier_data: TierMapResult; constellation: ConstellationResult }> {
   const form = new FormData();
   files.forEach(f => form.append('files', f));
-  const res = await fetch(`${BASE}/tier-map/constellation?algorithm=${algorithm}`, {
+  const params = new URLSearchParams({ algorithm });
+  if (projectId) params.set('project_id', String(projectId));
+  const res = await fetch(`${BASE}/tier-map/constellation?${params}`, {
     method: 'POST',
     body: form,
     headers: userHeaders(),
@@ -94,12 +98,15 @@ export function analyzeConstellationStream(
   files: File[],
   algorithm: AlgorithmKey = 'louvain',
   onEvent: (event: StreamEvent) => void,
+  projectId?: number,
 ): AbortController {
   const ctrl = new AbortController();
   const form = new FormData();
   files.forEach(f => form.append('files', f));
 
-  fetch(`${BASE}/tier-map/constellation-stream?algorithm=${algorithm}`, {
+  const params = new URLSearchParams({ algorithm });
+  if (projectId) params.set('project_id', String(projectId));
+  fetch(`${BASE}/tier-map/constellation-stream?${params}`, {
     method: 'POST',
     body: form,
     signal: ctrl.signal,
@@ -190,6 +197,7 @@ export async function getUpload(uploadId: number): Promise<{
   upload_id: number;
   tier_data: TierMapResult;
   constellation?: ConstellationResult;
+  vector_results?: VectorResults;
   filename: string;
   platform: string;
   session_count: number;
@@ -884,4 +892,91 @@ export async function getPaginatedSessions(
   });
   if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.json();
+}
+
+// ── Per-View API Endpoints ────────────────────────────────────────────────
+// Each view can optionally call its dedicated endpoint for server-side filtered data.
+
+async function fetchView(view: string, uploadId: number, params?: Record<string, string>): Promise<any> {
+  const qs = new URLSearchParams({ upload_id: String(uploadId), ...params });
+  const res = await fetch(`${BASE}/views/${view}?${qs}`);
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  return res.json();
+}
+
+export function getViewExplorer(uploadId: number, opts?: { offset?: number; limit?: number; tier?: number; search?: string; sort?: string }) {
+  const params: Record<string, string> = {};
+  if (opts?.offset != null) params.offset = String(opts.offset);
+  if (opts?.limit != null) params.limit = String(opts.limit);
+  if (opts?.tier != null) params.tier = String(opts.tier);
+  if (opts?.search) params.search = opts.search;
+  if (opts?.sort) params.sort = opts.sort;
+  return fetchView('explorer', uploadId, params);
+}
+
+export const getViewConflicts = (uploadId: number) => fetchView('conflicts', uploadId);
+export const getViewExecOrder = (uploadId: number, opts?: { offset?: number; limit?: number }) =>
+  fetchView('exec-order', uploadId, { offset: String(opts?.offset ?? 0), limit: String(opts?.limit ?? 200) });
+export const getViewMatrix = (uploadId: number, opts?: { page?: number; page_size?: number }) =>
+  fetchView('matrix', uploadId, { page: String(opts?.page ?? 0), page_size: String(opts?.page_size ?? 50) });
+export const getViewTables = (uploadId: number, opts?: { sort?: string; limit?: number }) =>
+  fetchView('tables', uploadId, { sort: opts?.sort ?? 'total_refs', limit: String(opts?.limit ?? 100) });
+export const getViewDuplicates = (uploadId: number) => fetchView('duplicates', uploadId);
+export const getViewConstellation = (uploadId: number) => fetchView('constellation', uploadId);
+export const getViewComplexity = (uploadId: number) => fetchView('complexity', uploadId);
+export const getViewWaves = (uploadId: number) => fetchView('waves', uploadId);
+export const getViewUmap = (uploadId: number, scale?: string) =>
+  fetchView('umap', uploadId, { scale: scale ?? 'balanced' });
+export const getViewSimulator = (uploadId: number) => fetchView('simulator', uploadId);
+export const getViewConcentration = (uploadId: number) => fetchView('concentration', uploadId);
+export const getViewConsensus = (uploadId: number) => fetchView('consensus', uploadId);
+
+// ── Projects ─────────────────────────────────────────────────────────────
+
+export interface ProjectSummary {
+  id: number;
+  name: string;
+  description: string | null;
+  user_id: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  upload_count: number;
+}
+
+export async function listProjects(userId?: string): Promise<ProjectSummary[]> {
+  const params = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
+  const res = await fetch(`${BASE}/projects${params}`);
+  if (!res.ok) throw new Error(`listProjects failed: ${res.status}`);
+  return res.json();
+}
+
+export async function createProject(name: string, description?: string): Promise<ProjectSummary> {
+  const res = await fetch(`${BASE}/projects`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, description, user_id: getUserId() }),
+  });
+  if (!res.ok) throw new Error(`createProject failed: ${res.status}`);
+  return res.json();
+}
+
+export async function getProject(projectId: number): Promise<ProjectSummary & { uploads: Array<{ id: number; filename: string; platform: string; session_count: number; created_at: string | null }> }> {
+  const res = await fetch(`${BASE}/projects/${projectId}`);
+  if (!res.ok) throw new Error(`getProject failed: ${res.status}`);
+  return res.json();
+}
+
+export async function updateProject(projectId: number, data: { name?: string; description?: string }): Promise<ProjectSummary> {
+  const res = await fetch(`${BASE}/projects/${projectId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(`updateProject failed: ${res.status}`);
+  return res.json();
+}
+
+export async function deleteProject(projectId: number): Promise<void> {
+  const res = await fetch(`${BASE}/projects/${projectId}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error(`deleteProject failed: ${res.status}`);
 }

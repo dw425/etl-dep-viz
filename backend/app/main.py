@@ -366,6 +366,8 @@ from app.routers.users import router as users_router
 from app.routers.lineage import router as lineage_router
 from app.routers.exports import router as exports_router
 from app.routers.chat import router as chat_router
+from app.routers.views import router as views_router
+from app.routers.projects import router as projects_router
 
 app.include_router(tier_map_router, prefix="/api")
 app.include_router(vectors_router, prefix="/api")
@@ -375,6 +377,8 @@ app.include_router(users_router, prefix="/api")
 app.include_router(lineage_router, prefix="/api")
 app.include_router(exports_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
+app.include_router(views_router, prefix="/api")
+app.include_router(projects_router, prefix="/api")
 
 # Serve frontend static files in production (built by Vite into backend/static/)
 static_dir = os.path.join(os.path.dirname(__file__), "..", "static")

@@ -18,7 +18,8 @@ import asyncio
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Body, HTTPException, Path, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
+from sqlalchemy.orm import Session as DBSession
 
 from app.engines.vectors.feature_extractor import (
     FeatureMatrixBuilder,
@@ -26,17 +27,34 @@ from app.engines.vectors.feature_extractor import (
 )
 from app.engines.vectors.orchestrator import VectorOrchestrator
 from app.engines.vectors.drill_through import DrillThroughEngine
+from app.models.database import Upload, get_db
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/layers", tags=["layers"])
 
 
+def _load_from_upload(upload_id: int, db: DBSession) -> tuple[dict, dict]:
+    """Load tier_data and vector_results from DB by upload_id."""
+    upload = db.query(Upload).filter(Upload.id == upload_id).first()
+    if not upload:
+        raise HTTPException(404, f"Upload {upload_id} not found")
+    tier_data = upload.get_tier_data() or {}
+    vector_results = upload.get_vector_results() or {}
+    return tier_data, vector_results
+
+
 @router.post("/L1")
 async def enterprise_constellation(
-    tier_data: dict[str, Any] = Body(...),
+    tier_data: dict[str, Any] = Body(None),
     vector_results: dict[str, Any] | None = Body(None),
+    upload_id: int | None = Query(None),
+    db: DBSession = Depends(get_db),
 ):
     """L1: Enterprise constellation — supernodes, superedges, environment summary."""
+    if upload_id and not tier_data:
+        tier_data, vector_results = _load_from_upload(upload_id, db)
+    if not tier_data:
+        raise HTTPException(400, "Either tier_data body or upload_id query param required")
     sessions = tier_data.get("sessions", [])
     if not sessions:
         raise HTTPException(400, "tier_data must contain sessions")
@@ -93,10 +111,16 @@ async def enterprise_constellation(
 @router.post("/L2/{group_id}")
 async def domain_cluster(
     group_id: str = Path(...),
-    tier_data: dict[str, Any] = Body(...),
-    vector_results: dict[str, Any] = Body({}),
+    tier_data: dict[str, Any] = Body(None),
+    vector_results: dict[str, Any] = Body(None),
+    upload_id: int | None = Query(None),
+    db: DBSession = Depends(get_db),
 ):
     """L2: Domain cluster — sessions within one gravity/community group."""
+    if upload_id and not tier_data:
+        tier_data, vector_results = _load_from_upload(upload_id, db)
+    tier_data = tier_data or {}
+    vector_results = vector_results or {}
     sessions = tier_data.get("sessions", [])
     session_map = {s["id"]: s for s in sessions}
 
@@ -161,10 +185,16 @@ async def workflow_neighborhood(
     group_id: str = Path(...),
     scope_type: str = Path(...),  # "sub_cluster" or "workflow"
     scope_id: str = Path(...),
-    tier_data: dict[str, Any] = Body(...),
-    vector_results: dict[str, Any] = Body({}),
+    tier_data: dict[str, Any] = Body(None),
+    vector_results: dict[str, Any] = Body(None),
+    upload_id: int | None = Query(None),
+    db: DBSession = Depends(get_db),
 ):
     """L3: Workflow neighborhood — sessions in a sub-cluster or workflow."""
+    if upload_id and not tier_data:
+        tier_data, vector_results = _load_from_upload(upload_id, db)
+    tier_data = tier_data or {}
+    vector_results = vector_results or {}
     sessions = tier_data.get("sessions", [])
     session_map = {s["id"]: s for s in sessions}
 
@@ -216,10 +246,16 @@ async def workflow_neighborhood(
 @router.post("/L4/{session_id}")
 async def session_blueprint(
     session_id: str = Path(...),
-    tier_data: dict[str, Any] = Body(...),
-    vector_results: dict[str, Any] = Body({}),
+    tier_data: dict[str, Any] = Body(None),
+    vector_results: dict[str, Any] = Body(None),
+    upload_id: int | None = Query(None),
+    db: DBSession = Depends(get_db),
 ):
     """L4: Session blueprint — single session exploded view."""
+    if upload_id and not tier_data:
+        tier_data, vector_results = _load_from_upload(upload_id, db)
+    tier_data = tier_data or {}
+    vector_results = vector_results or {}
     sessions = tier_data.get("sessions", [])
     session_map = {s["id"]: s for s in sessions}
 
@@ -263,9 +299,14 @@ async def session_blueprint(
 async def mapping_pipeline(
     session_id: str = Path(...),
     mapping_id: str = Path(...),
-    tier_data: dict[str, Any] = Body(...),
+    tier_data: dict[str, Any] = Body(None),
+    upload_id: int | None = Query(None),
+    db: DBSession = Depends(get_db),
 ):
     """L5: Mapping pipeline — transform pipeline within a session."""
+    if upload_id and not tier_data:
+        tier_data, _ = _load_from_upload(upload_id, db)
+    tier_data = tier_data or {}
     # This endpoint requires deeper XML parsing data than basic tier_data
     # Returns whatever transform-level detail is available
     sessions = tier_data.get("sessions", [])
@@ -286,9 +327,14 @@ async def mapping_pipeline(
 async def object_detail(
     object_type: str = Path(...),
     object_id: str = Path(...),
-    tier_data: dict[str, Any] = Body(...),
+    tier_data: dict[str, Any] = Body(None),
+    upload_id: int | None = Query(None),
+    db: DBSession = Depends(get_db),
 ):
     """L6: Object detail — table, transform, or expression detail."""
+    if upload_id and not tier_data:
+        tier_data, _ = _load_from_upload(upload_id, db)
+    tier_data = tier_data or {}
     if object_type == "table":
         tables = tier_data.get("tables", [])
         table = next((t for t in tables if t["id"] == object_id or t.get("name") == object_id), None)
@@ -319,10 +365,16 @@ async def object_detail(
 @router.post("/flow/{session_id}")
 async def flow_walker(
     session_id: str = Path(...),
-    tier_data: dict[str, Any] = Body(...),
-    vector_results: dict[str, Any] = Body({}),
+    tier_data: dict[str, Any] = Body(None),
+    vector_results: dict[str, Any] = Body(None),
+    upload_id: int | None = Query(None),
+    db: DBSession = Depends(get_db),
 ):
     """End-to-end flow walker — upstream/downstream chains, mapping pipeline, tables touched."""
+    if upload_id and not tier_data:
+        tier_data, vector_results = _load_from_upload(upload_id, db)
+    tier_data = tier_data or {}
+    vector_results = vector_results or {}
     sessions = tier_data.get("sessions", [])
     session_map = {s["id"]: s for s in sessions}
     connections = tier_data.get("connections", [])

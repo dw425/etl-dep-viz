@@ -34,6 +34,10 @@ _MAX_UNCOMPRESSED_TOTAL = 10 * 1024 * 1024 * 1024  # 10GB total uncompressed
 _SPOOL_THRESHOLD = 50 * 1024 * 1024                 # 50MB before spilling to disk
 _ZIP_STREAM_CHUNK = 4 * 1024 * 1024                  # 4MB streaming chunk
 
+# Concurrency control: max 2 simultaneous parses to prevent server overload
+_PARSE_SEMAPHORE = asyncio.Semaphore(2)
+_PARSE_TIMEOUT_CAP = 7200  # hard limit 2 hours
+
 router = APIRouter()
 
 
@@ -326,6 +330,7 @@ async def _extract_xml_from_uploads(files: List[UploadFile]) -> tuple[list[bytes
 async def analyze_tier_map(
     files: List[UploadFile] = File(...),
     x_user_id: str | None = Header(None),
+    project_id: int | None = Query(None, description='Project to associate upload with'),
     db: Session = Depends(get_db),
 ):
     """Upload XML files (Informatica or NiFi, or ZIPs) and receive tier diagram data.
@@ -335,36 +340,65 @@ async def analyze_tier_map(
     if not files:
         raise HTTPException(status_code=422, detail='No files uploaded.')
 
-    t0 = time.monotonic()
-    raw, names = await _extract_xml_from_uploads(files)
+    # Acquire parse semaphore (max 2 concurrent parses)
+    try:
+        await asyncio.wait_for(_PARSE_SEMAPHORE.acquire(), timeout=10)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=429, detail='Server busy — too many concurrent parses. Try again shortly.')
 
-    if not raw:
-        raise HTTPException(status_code=422, detail='No XML files found in upload.')
+    try:
+        t0 = time.monotonic()
+        raw, names = await _extract_xml_from_uploads(files)
 
-    result = await _analyze_mixed(raw, names)
+        if not raw:
+            raise HTTPException(status_code=422, detail='No XML files found in upload.')
 
-    if not result.get('sessions') and result.get('warnings'):
-        raise HTTPException(status_code=422, detail='; '.join(result['warnings']))
+        # Compute scaled timeout: base + 60s/file + 30s/100MB, capped at 2 hours
+        total_size_mb = sum(len(r) for r in raw) / (1024 * 1024)
+        scaled_timeout = min(
+            _PARSE_TIMEOUT_CAP,
+            max(settings.parse_timeout_seconds, int(60 * len(raw) + 30 * (total_size_mb / 100))),
+        )
 
-    duration_ms = int((time.monotonic() - t0) * 1000)
+        try:
+            result = await asyncio.wait_for(_analyze_mixed(raw, names), timeout=scaled_timeout)
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=408, detail=f'Parse timed out after {scaled_timeout}s. Try uploading fewer files.')
 
-    # ── Persist to DB so the result can be reloaded without re-parsing ──
-    platform = _detect_platform(raw)
-    upload = Upload(
-        # Truncate long filename lists to first 5, append overflow count
-        filename=', '.join(names[:5]) + (f' (+{len(names)-5})' if len(names) > 5 else ''),
-        platform=platform,
-        session_count=len(result.get('sessions', [])),
-        parse_duration_ms=duration_ms,
-        user_id=x_user_id,
-    )
-    upload.set_tier_data(result)
-    db.add(upload)
-    db.commit()
-    db.refresh(upload)
+        if not result.get('sessions') and result.get('warnings'):
+            raise HTTPException(status_code=422, detail='; '.join(result['warnings']))
 
-    result['upload_id'] = upload.id
-    return result
+        duration_ms = int((time.monotonic() - t0) * 1000)
+
+        # ── Persist to DB so the result can be reloaded without re-parsing ──
+        platform = _detect_platform(raw)
+        upload = Upload(
+            filename=', '.join(names[:5]) + (f' (+{len(names)-5})' if len(names) > 5 else ''),
+            platform=platform,
+            session_count=len(result.get('sessions', [])),
+            parse_duration_ms=duration_ms,
+            user_id=x_user_id,
+            project_id=project_id,
+        )
+        upload.set_tier_data(result)
+        db.add(upload)
+        db.commit()
+        db.refresh(upload)
+
+        # Populate per-view materialized tables
+        from app.engines.data_populator import populate_core_tables, populate_view_tables
+        try:
+            populate_core_tables(db, upload.id, result, result.get('connection_profiles'))
+            populate_view_tables(db, upload.id)
+            db.commit()
+        except Exception as exc:
+            logger.warning("Failed to populate view tables: %s", exc)
+            db.rollback()
+
+        result['upload_id'] = upload.id
+        return result
+    finally:
+        _PARSE_SEMAPHORE.release()
 
 
 # ── Constellation endpoints (synchronous + streaming) ─────────────────────
@@ -375,45 +409,77 @@ async def analyze_constellation(
     files: List[UploadFile] = File(...),
     algorithm: str = Query('louvain', description='Clustering algorithm'),
     x_user_id: str | None = Header(None),
+    project_id: int | None = Query(None),
     db: Session = Depends(get_db),
 ):
     """Upload XML files (Informatica or NiFi, or ZIPs) and receive tier data + constellation clustering."""
     if not files:
         raise HTTPException(status_code=422, detail='No files uploaded.')
 
-    t0 = time.monotonic()
-    raw, names = await _extract_xml_from_uploads(files)
+    # Acquire parse semaphore
+    try:
+        await asyncio.wait_for(_PARSE_SEMAPHORE.acquire(), timeout=10)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=429, detail='Server busy — too many concurrent parses. Try again shortly.')
 
-    if not raw:
-        raise HTTPException(status_code=422, detail='No XML files found in upload.')
+    try:
+        t0 = time.monotonic()
+        raw, names = await _extract_xml_from_uploads(files)
 
-    tier_data = await _analyze_mixed(raw, names)
+        if not raw:
+            raise HTTPException(status_code=422, detail='No XML files found in upload.')
 
-    if not tier_data.get('sessions') and tier_data.get('warnings'):
-        raise HTTPException(status_code=422, detail='; '.join(tier_data['warnings']))
+        # Compute scaled timeout
+        total_size_mb = sum(len(r) for r in raw) / (1024 * 1024)
+        scaled_timeout = min(
+            _PARSE_TIMEOUT_CAP,
+            max(settings.parse_timeout_seconds, int(60 * len(raw) + 30 * (total_size_mb / 100))),
+        )
 
-    from app.engines.constellation_engine import build_constellation
-    constellation = await asyncio.to_thread(build_constellation, tier_data, algorithm=algorithm)
+        try:
+            tier_data = await asyncio.wait_for(_analyze_mixed(raw, names), timeout=scaled_timeout)
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=408, detail=f'Parse timed out after {scaled_timeout}s.')
 
-    duration_ms = int((time.monotonic() - t0) * 1000)
+        if not tier_data.get('sessions') and tier_data.get('warnings'):
+            raise HTTPException(status_code=422, detail='; '.join(tier_data['warnings']))
 
-    # Persist to DB
-    platform = _detect_platform(raw)
-    upload = Upload(
-        filename=', '.join(names[:5]) + (f' (+{len(names)-5})' if len(names) > 5 else ''),
-        platform=platform,
-        session_count=len(tier_data.get('sessions', [])),
-        algorithm=algorithm,
-        parse_duration_ms=duration_ms,
-        user_id=x_user_id,
-    )
-    upload.set_tier_data(tier_data)
-    upload.set_constellation(constellation)
-    db.add(upload)
-    db.commit()
-    db.refresh(upload)
+        from app.engines.constellation_engine import build_constellation
+        constellation = await asyncio.to_thread(build_constellation, tier_data, algorithm=algorithm)
 
-    return {'upload_id': upload.id, 'tier_data': tier_data, 'constellation': constellation}
+        duration_ms = int((time.monotonic() - t0) * 1000)
+
+        # Persist to DB
+        platform = _detect_platform(raw)
+        upload = Upload(
+            filename=', '.join(names[:5]) + (f' (+{len(names)-5})' if len(names) > 5 else ''),
+            platform=platform,
+            session_count=len(tier_data.get('sessions', [])),
+            algorithm=algorithm,
+            parse_duration_ms=duration_ms,
+            user_id=x_user_id,
+            project_id=project_id,
+        )
+        upload.set_tier_data(tier_data)
+        upload.set_constellation(constellation)
+        db.add(upload)
+        db.commit()
+        db.refresh(upload)
+
+        # Populate per-view materialized tables
+        from app.engines.data_populator import populate_core_tables, populate_view_tables, populate_constellation_tables
+        try:
+            populate_core_tables(db, upload.id, tier_data, tier_data.get('connection_profiles'))
+            populate_view_tables(db, upload.id)
+            populate_constellation_tables(db, upload.id, constellation)
+            db.commit()
+        except Exception as exc:
+            logger.warning("Failed to populate view tables: %s", exc)
+            db.rollback()
+
+        return {'upload_id': upload.id, 'tier_data': tier_data, 'constellation': constellation}
+    finally:
+        _PARSE_SEMAPHORE.release()
 
 
 @router.post('/tier-map/constellation-stream')
@@ -421,6 +487,7 @@ async def analyze_constellation_stream(
     files: List[UploadFile] = File(...),
     algorithm: str = Query('louvain', description='Clustering algorithm'),
     x_user_id: str | None = Header(None),
+    project_id: int | None = Query(None),
     db: Session = Depends(get_db),
 ):
     """Upload XML files (Informatica or NiFi, or ZIPs) and stream progress events via SSE.
@@ -568,12 +635,23 @@ async def analyze_constellation_stream(
                 algorithm=algorithm,
                 parse_duration_ms=duration_ms,
                 user_id=user_id,
+                project_id=project_id,
             )
             upload.set_tier_data(tier_data)
             upload.set_constellation(constellation)
             db.add(upload)
             db.commit()
             db.refresh(upload)
+
+            # Populate per-view materialized tables
+            from app.engines.data_populator import populate_core_tables, populate_view_tables, populate_constellation_tables
+            try:
+                populate_core_tables(db, upload.id, tier_data, tier_data.get('connection_profiles'))
+                populate_view_tables(db, upload.id)
+                populate_constellation_tables(db, upload.id, constellation)
+                db.commit()
+            except Exception as exc:
+                logger.warning("step=populate_views error=%s", exc)
 
             logger.info("step=persist upload_id=%d duration_ms=%d", upload.id, duration_ms)
 
@@ -686,6 +764,9 @@ def get_upload(upload_id: int, db: Session = Depends(get_db)):
     constellation = row.get_constellation()
     if constellation:
         result['constellation'] = constellation
+    vector_results = row.get_vector_results()
+    if vector_results:
+        result['vector_results'] = vector_results
     return result
 
 

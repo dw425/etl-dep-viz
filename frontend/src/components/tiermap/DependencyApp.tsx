@@ -19,16 +19,24 @@ import type {
 import type { VectorResults, DrillFilter } from '../../types/vectors';
 import {
   analyzeConstellationStream,
+  analyzeVectors,
   recluster,
   listUploads,
   getUpload,
+  getCachedVectors,
   getHealthLogs,
   logActivity,
   upsertUser,
+  listProjects,
+  createProject,
+  getProject,
+  deleteProject,
   type StreamEvent,
   type UploadSummary,
   type LogEntry,
+  type ProjectSummary,
 } from '../../api/client';
+import { useUrlState, type UrlState } from '../../navigation/useUrlState';
 import ExplorerView from './ExplorerView';
 import ConflictsView from './ConflictsView';
 import ExecOrderView from './ExecOrderView';
@@ -48,6 +56,7 @@ import ErrorBoundary from '../shared/ErrorBoundary';
 // ── Lazy imports (code-split heavy views to keep initial bundle small) ────────
 const ComplexityOverlay = lazy(() => import('./ComplexityOverlay'));
 const WavePlanView = lazy(() => import('./WavePlanView'));
+const HeatMapView = lazy(() => import('./HeatMapView'));
 const UMAPView = lazy(() => import('./UMAPView'));
 const WaveSimulator = lazy(() => import('./WaveSimulator'));
 const ConcentrationView = lazy(() => import('./ConcentrationView'));
@@ -69,7 +78,7 @@ const AIChat = lazy(() => import('../chat/AIChat'));
 //   1. Adding its id to ViewId  2. Adding it to VIEWS  3. Rendering it below.
 type ViewId = 'tier' | 'galaxy' | 'constellation' | 'explorer' | 'conflicts' | 'order' | 'matrix'
   | 'tables' | 'duplicates' | 'chunking'
-  | 'complexity' | 'waves' | 'umap' | 'simulator' | 'concentration' | 'consensus'
+  | 'complexity' | 'waves' | 'heatmap' | 'umap' | 'simulator' | 'concentration' | 'consensus'
   | 'layers' | 'infra' | 'profile' | 'flowwalker' | 'lineage' | 'impact' | 'chat';
 
 // Group determines tab section: core, harmonize, vector, nav
@@ -86,6 +95,7 @@ const VIEWS: { id: ViewId; label: string; icon: string; group?: 'core' | 'vector
   { id: 'chunking', label: 'Chunking', icon: '\u2699', group: 'harmonize' },
   { id: 'complexity', label: 'Complexity', icon: '\u25A3', group: 'vector' },
   { id: 'waves', label: 'Waves', icon: '\u224B', group: 'vector' },
+  { id: 'heatmap', label: 'Heat Map', icon: '\u2593', group: 'vector' },
   { id: 'umap', label: 'UMAP', icon: '\u25CE', group: 'vector' },
   { id: 'simulator', label: 'Simulator', icon: '\u223F', group: 'vector' },
   { id: 'concentration', label: 'Gravity', icon: '\u2295', group: 'vector' },
@@ -98,30 +108,58 @@ const VIEWS: { id: ViewId; label: string; icon: string; group?: 'core' | 'vector
   { id: 'chat', label: 'AI Chat', icon: '\uD83D\uDCAC', group: 'nav' },
 ];
 
-function VectorFallback({ label, phase = 1, onRun }: { label: string; phase?: number; onRun: () => void }) {
+function VectorFallback({ label, phase = 1, onRun, onRunDirect }: { label: string; phase?: number; onRun: () => void; onRunDirect?: () => void }) {
+  const [running, setRunning] = useState(false);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 16 }}>
       <div style={{ fontSize: 36, opacity: 0.3 }}>&#x25A3;</div>
       <div style={{ fontSize: 14, fontWeight: 600, color: '#64748b' }}>{label} — No Data Yet</div>
       <div style={{ fontSize: 11, color: '#475569', maxWidth: 320, textAlign: 'center' }}>
-        {phase === 1
-          ? 'Run Phase 1 vector analysis from the Chunking view to enable this view.'
-          : `Run Phase ${phase} vector analysis from the Vectors panel to enable this view.`}
+        {running
+          ? `Running Phase ${phase} analysis...`
+          : phase === 1
+            ? 'Run Phase 1 vector analysis to enable this view.'
+            : `Run Phase ${phase} vector analysis to enable this view.`}
       </div>
-      <button
-        onClick={onRun}
-        style={{
-          padding: '8px 20px', borderRadius: 6, border: '1px solid #A855F7',
-          background: 'transparent', color: '#A855F7', fontSize: 12, fontWeight: 600, cursor: 'pointer',
-        }}
-      >
-        {phase === 1 ? 'Go to Chunking' : 'Open Vectors Panel'}
-      </button>
+      <div style={{ display: 'flex', gap: 8 }}>
+        {onRunDirect && !running && (
+          <button
+            onClick={() => { setRunning(true); onRunDirect(); }}
+            style={{
+              padding: '8px 20px', borderRadius: 6, border: '1px solid #10B981',
+              background: '#10B981', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+            }}
+          >
+            Run Now
+          </button>
+        )}
+        {running && (
+          <div style={{ padding: '8px 20px', fontSize: 12, color: '#A855F7' }}>Analyzing...</div>
+        )}
+        <button
+          onClick={onRun}
+          style={{
+            padding: '8px 20px', borderRadius: 6, border: '1px solid #A855F7',
+            background: 'transparent', color: '#A855F7', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+          }}
+        >
+          {phase === 1 ? 'Go to Chunking' : 'Open Vectors Panel'}
+        </button>
+      </div>
     </div>
   );
 }
 
 export function DependencyApp() {
+  // ── Project state ──────────────────────────────────────────────────────────
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [activeProjectId, setActiveProjectId] = useState<number | null>(() => {
+    const saved = localStorage.getItem('edv-project-id');
+    return saved ? Number(saved) : null;
+  });
+  const [showNewProject, setShowNewProject] = useState(false);
+  const [newProjectName, setNewProjectName] = useState('');
+
   // ── Core data state ────────────────────────────────────────────────────────
   const [view, setView] = useState<ViewId>('tier');
   const [tierData, setTierData] = useState<TierMapResult | null>(null);
@@ -219,6 +257,7 @@ export function DependencyApp() {
     viewHistory.current.push(newView);
     viewHistoryIdx.current = viewHistory.current.length - 1;
     setView(newView);
+    localStorage.setItem('edv-last-view', newView);
   }, []);
   const goBack = useCallback(() => {
     if (viewHistoryIdx.current > 0) {
@@ -282,6 +321,17 @@ export function DependencyApp() {
   // Resolve the full chunk object for the currently selected cluster id
   const selectedChunk = constellation?.chunks.find(c => c.id === selectedChunkId) ?? null;
 
+  // Load projects list on mount
+  useEffect(() => {
+    listProjects().then(setProjects).catch(() => {});
+  }, []);
+
+  // Persist active project to localStorage
+  useEffect(() => {
+    if (activeProjectId) localStorage.setItem('edv-project-id', String(activeProjectId));
+    else localStorage.removeItem('edv-project-id');
+  }, [activeProjectId]);
+
   // Populate the Recent Uploads list shown on the dashboard before any data is loaded
   useEffect(() => {
     listUploads(10).then(setRecentUploads).catch(() => {});
@@ -325,10 +375,13 @@ export function DependencyApp() {
       else if (event.phase === 'complete' && event.result) {
         setTierData(event.result.tier_data);
         setConstellation(event.result.constellation);
-        setUploadId(event.result.upload_id ?? null);
+        const newUploadId = event.result.upload_id ?? null;
+        setUploadId(newUploadId);
+        if (newUploadId) localStorage.setItem('edv-last-upload', String(newUploadId));
         setUploading(false);
         setParseStartTime(null);
         setView('chunking');
+        localStorage.setItem('edv-last-view', 'chunking');
         listUploads(10).then(setRecentUploads).catch(() => {});
         const fname = files.map(f => f.name).join(', ');
         logActivity('upload', fname, {
@@ -345,9 +398,9 @@ export function DependencyApp() {
         setUploading(false);
         setParseStartTime(null);
       }
-    });
+    }, activeProjectId ?? undefined);
     abortRef.current = ctrl;
-  }, [algorithm]);
+  }, [algorithm, activeProjectId]);
 
   // ── Cancel upload — aborts the in-flight fetch via AbortController ───────
   const handleCancelUpload = useCallback(() => {
@@ -372,21 +425,63 @@ export function DependencyApp() {
     }
   }, [tierData]);
 
-  // ── Load from persistence — restores tier/constellation data from SQLite ────
-  const handleLoadUpload = useCallback(async (id: number) => {
+  // ── Load from persistence — restores tier/constellation/vector data from SQLite ────
+  const handleLoadUpload = useCallback(async (id: number, restoreView?: string) => {
     try {
       const data = await getUpload(id);
       setTierData(data.tier_data);
       setConstellation(data.constellation ?? null);
       setUploadId(data.upload_id);
       setAlgorithm((data.algorithm as AlgorithmKey) || 'louvain');
-      setView('tier');
+      // Restore vector results if returned from backend
+      if (data.vector_results) {
+        setVectorResults(data.vector_results);
+      }
+      // Persist to localStorage for cross-refresh recovery
+      localStorage.setItem('edv-last-upload', String(data.upload_id));
+      // Navigate to requested view, or last saved view, or default to 'tier'
+      const targetView = restoreView || localStorage.getItem('edv-last-view') || 'tier';
+      const validViews = VIEWS.map(v => v.id);
+      setView(validViews.includes(targetView as ViewId) ? (targetView as ViewId) : 'tier');
       setError(null);
       logActivity('load', data.filename, { upload_id: id, session_count: data.session_count });
     } catch (e: any) {
       setError({ message: e.message, phase: 'load', timestamp: new Date().toISOString() });
     }
   }, []);
+
+  // ── URL state sync + auto-restore ────────────────────────────────────────
+  const { initialState: urlState, updateUrl } = useUrlState(
+    useCallback((state: UrlState) => {
+      // Handle browser back/forward for deep-linked views
+      if (state.view) {
+        const validViews = VIEWS.map(v => v.id);
+        if (validViews.includes(state.view as ViewId)) setView(state.view as ViewId);
+      }
+    }, []),
+  );
+
+  // Sync current state to URL whenever view or uploadId changes
+  useEffect(() => {
+    updateUrl({
+      view: view,
+      upload: uploadId ? String(uploadId) : undefined,
+      chunk: selectedChunkId ?? undefined,
+    });
+  }, [view, uploadId, selectedChunkId, updateUrl]);
+
+  // Auto-restore: on first mount, URL params > localStorage > dashboard
+  const autoRestoreRef = useRef(false);
+  useEffect(() => {
+    if (autoRestoreRef.current) return;
+    autoRestoreRef.current = true;
+    const urlUpload = urlState.upload;
+    const savedUpload = localStorage.getItem('edv-last-upload');
+    const targetUpload = urlUpload || savedUpload;
+    if (targetUpload) {
+      handleLoadUpload(Number(targetUpload), urlState.view);
+    }
+  }, [handleLoadUpload, urlState]);
 
   // ── Export HTML — generates a self-contained static report and triggers download ─
   const handleExport = useCallback(() => {
@@ -538,6 +633,100 @@ export function DependencyApp() {
         <div style={{ fontSize: 13, color: T.textMuted, maxWidth: 500, textAlign: 'center' }}>
           Upload Informatica PowerCenter XML or Apache NiFi flow XML files to visualize session dependencies,
           write conflicts, and execution ordering across 20+ interactive views.
+        </div>
+
+        {/* Project selector */}
+        <div style={{ maxWidth: 480, width: '100%', margin: '8px 0' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: T.textMuted, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+              Project
+            </div>
+            <button
+              onClick={() => setShowNewProject(!showNewProject)}
+              style={{ fontSize: 10, color: T.accent, background: 'transparent', border: 'none', cursor: 'pointer' }}
+            >
+              + New Project
+            </button>
+          </div>
+          {showNewProject && (
+            <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+              <input
+                value={newProjectName}
+                onChange={e => setNewProjectName(e.target.value)}
+                placeholder="Project name..."
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && newProjectName.trim()) {
+                    createProject(newProjectName.trim()).then(p => {
+                      setProjects(prev => [p, ...prev]);
+                      setActiveProjectId(p.id);
+                      setNewProjectName('');
+                      setShowNewProject(false);
+                    }).catch(() => {});
+                  }
+                }}
+                style={{
+                  flex: 1, padding: '6px 10px', borderRadius: 6,
+                  border: `1px solid ${T.border}`, background: T.bgCard,
+                  color: T.text, fontSize: 12, outline: 'none',
+                }}
+              />
+              <button
+                onClick={() => {
+                  if (!newProjectName.trim()) return;
+                  createProject(newProjectName.trim()).then(p => {
+                    setProjects(prev => [p, ...prev]);
+                    setActiveProjectId(p.id);
+                    setNewProjectName('');
+                    setShowNewProject(false);
+                  }).catch(() => {});
+                }}
+                style={{
+                  padding: '6px 14px', borderRadius: 6, border: 'none',
+                  background: T.accent, color: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                }}
+              >
+                Create
+              </button>
+            </div>
+          )}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {projects.map(p => (
+              <button
+                key={p.id}
+                onClick={() => {
+                  setActiveProjectId(p.id);
+                  // Load project's uploads
+                  getProject(p.id).then(proj => {
+                    if (proj.uploads?.length) {
+                      setRecentUploads(proj.uploads.map(u => ({
+                        id: u.id, filename: u.filename, platform: u.platform,
+                        session_count: u.session_count, created_at: u.created_at || '',
+                        algorithm: null, parse_duration_ms: null,
+                      })));
+                    }
+                  }).catch(() => {});
+                }}
+                style={{
+                  padding: '6px 14px', borderRadius: 8,
+                  border: `1px solid ${activeProjectId === p.id ? T.accent : T.border}`,
+                  background: activeProjectId === p.id ? T.accentBg : T.bgCard,
+                  color: activeProjectId === p.id ? T.accent : T.text,
+                  fontSize: 12, fontWeight: activeProjectId === p.id ? 700 : 400,
+                  cursor: 'pointer', transition: 'all 0.15s',
+                }}
+              >
+                {p.name}
+                <span style={{ fontSize: 10, color: T.textMuted, marginLeft: 6 }}>
+                  {p.upload_count} upload{p.upload_count !== 1 ? 's' : ''}
+                </span>
+              </button>
+            ))}
+            {projects.length === 0 && !showNewProject && (
+              <div style={{ fontSize: 11, color: T.textMuted }}>
+                No projects yet. Create one to organize your uploads.
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Upload zone */}
@@ -921,7 +1110,14 @@ export function DependencyApp() {
                     points={constellation.points}
                     chunks={constellation.chunks}
                     crossChunkEdges={constellation.cross_chunk_edges}
-                    onChunkSelect={(chunkId: string) => setSelectedChunkId(prev => prev === chunkId ? null : chunkId)}
+                    onChunkSelect={(chunkId: string) => {
+                      if (selectedChunkId === chunkId) {
+                        setSelectedChunkId(null);
+                      } else {
+                        setSelectedChunkId(chunkId);
+                        navigateView('explorer');
+                      }
+                    }}
                     algorithm={algorithm}
                     onAlgorithmChange={handleRecluster}
                   />
@@ -973,32 +1169,37 @@ export function DependencyApp() {
               {view === 'complexity' && (
                 vectorResults?.v11_complexity ? (
                   <ErrorBoundary><div style={{ overflow: 'auto', height: '100%' }}><ComplexityOverlay complexity={vectorResults.v11_complexity} /></div></ErrorBoundary>
-                ) : <VectorFallback label="Complexity" onRun={() => navigateView('chunking')} />
+                ) : <VectorFallback label="Complexity" onRun={() => navigateView('chunking')} onRunDirect={tierData ? () => analyzeVectors(tierData, 1, uploadId ?? undefined).then(r => setVectorResults(prev => ({ ...prev, ...r }))).catch(e => addToast(e.message)) : undefined} />
               )}
               {view === 'waves' && (
                 vectorResults?.v4_wave_plan ? (
                   <ErrorBoundary><div style={{ overflow: 'auto', height: '100%' }}><WavePlanView wavePlan={vectorResults.v4_wave_plan} /></div></ErrorBoundary>
-                ) : <VectorFallback label="Wave Plan" onRun={() => navigateView('chunking')} />
+                ) : <VectorFallback label="Wave Plan" onRun={() => navigateView('chunking')} onRunDirect={tierData ? () => analyzeVectors(tierData, 1, uploadId ?? undefined).then(r => setVectorResults(prev => ({ ...prev, ...r }))).catch(e => addToast(e.message)) : undefined} />
+              )}
+              {view === 'heatmap' && (
+                vectorResults?.v11_complexity ? (
+                  <ErrorBoundary><div style={{ overflow: 'auto', height: '100%' }}><HeatMapView complexity={vectorResults.v11_complexity} /></div></ErrorBoundary>
+                ) : <VectorFallback label="Heat Map" onRun={() => navigateView('chunking')} onRunDirect={tierData ? () => analyzeVectors(tierData, 1, uploadId ?? undefined).then(r => setVectorResults(prev => ({ ...prev, ...r }))).catch(e => addToast(e.message)) : undefined} />
               )}
               {view === 'umap' && (
                 vectorResults?.v3_dimensionality_reduction ? (
                   <ErrorBoundary><div style={{ overflow: 'auto', height: '100%' }}><UMAPView vectorResults={vectorResults} /></div></ErrorBoundary>
-                ) : <VectorFallback label="UMAP" phase={2} onRun={() => setRightPanel('vectors')} />
+                ) : <VectorFallback label="UMAP" phase={2} onRun={() => setRightPanel('vectors')} onRunDirect={tierData ? () => analyzeVectors(tierData, 2, uploadId ?? undefined).then(r => setVectorResults(prev => ({ ...prev, ...r }))).catch(e => addToast(e.message)) : undefined} />
               )}
               {view === 'simulator' && (
                 vectorResults?.v9_wave_function && tierData ? (
                   <ErrorBoundary><div style={{ overflow: 'auto', height: '100%' }}><WaveSimulator waveFunction={vectorResults.v9_wave_function} tierData={tierData} /></div></ErrorBoundary>
-                ) : <VectorFallback label="Simulator" phase={2} onRun={() => setRightPanel('vectors')} />
+                ) : <VectorFallback label="Simulator" phase={2} onRun={() => setRightPanel('vectors')} onRunDirect={tierData ? () => analyzeVectors(tierData, 2, uploadId ?? undefined).then(r => setVectorResults(prev => ({ ...prev, ...r }))).catch(e => addToast(e.message)) : undefined} />
               )}
               {view === 'concentration' && (
                 vectorResults?.v10_concentration ? (
                   <ErrorBoundary><div style={{ overflow: 'auto', height: '100%' }}><ConcentrationView concentration={vectorResults.v10_concentration} /></div></ErrorBoundary>
-                ) : <VectorFallback label="Gravity" phase={2} onRun={() => setRightPanel('vectors')} />
+                ) : <VectorFallback label="Gravity" phase={2} onRun={() => setRightPanel('vectors')} onRunDirect={tierData ? () => analyzeVectors(tierData, 2, uploadId ?? undefined).then(r => setVectorResults(prev => ({ ...prev, ...r }))).catch(e => addToast(e.message)) : undefined} />
               )}
               {view === 'consensus' && (
                 vectorResults?.v8_ensemble_consensus ? (
                   <ErrorBoundary><div style={{ overflow: 'auto', height: '100%' }}><ConsensusRadar ensemble={vectorResults.v8_ensemble_consensus} /></div></ErrorBoundary>
-                ) : <VectorFallback label="Consensus" phase={3} onRun={() => setRightPanel('vectors')} />
+                ) : <VectorFallback label="Consensus" phase={3} onRun={() => setRightPanel('vectors')} onRunDirect={tierData ? () => analyzeVectors(tierData, 3, uploadId ?? undefined).then(r => setVectorResults(prev => ({ ...prev, ...r }))).catch(e => addToast(e.message)) : undefined} />
               )}
 
               {/* ── Layer / navigation views ── */}

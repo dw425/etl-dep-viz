@@ -70,13 +70,14 @@ export default function AIChat({ uploadId, tierData, onNavigate }: AIChatProps) 
     if (!uploadId) return;
     setIndexing(true);
     try {
-      const data = await chatIndexUpload(uploadId) as { documents_indexed?: number; by_type?: Record<string, number> };
+      const data = await chatIndexUpload(uploadId) as { documents_indexed?: number; by_type?: Record<string, number>; warning?: string };
       setIndexed(true);
       setDocCount(data.documents_indexed || 0);
       const byType = data.by_type || {};
+      const warningText = data.warning ? `\n\nWarning: ${data.warning}` : '';
       setMessages(prev => [...prev, {
         role: 'assistant',
-        content: `Index built! ${data.documents_indexed || 0} documents indexed (${byType.session || 0} sessions, ${byType.table || 0} tables, ${byType.chain || 0} chains, ${byType.group || 0} groups). Ask me anything about your ETL environment.`,
+        content: `Index built! ${data.documents_indexed || 0} documents indexed (${byType.session || 0} sessions, ${byType.table || 0} tables, ${byType.chain || 0} chains, ${byType.group || 0} groups). Ask me anything about your ETL environment.${warningText}`,
         timestamp: new Date().toISOString(),
       }]);
     } catch (err) {

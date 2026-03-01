@@ -130,7 +130,14 @@ async def index_upload(upload_id: int, db: Session = Depends(get_db)):
     )
     stats = pipeline.index_upload(upload_id, tier_data, vector_results)
 
-    return {"status": "indexed", **stats}
+    response = {"status": "indexed", **stats}
+    if pipeline.embedding_engine and pipeline.embedding_engine.using_zero_vectors:
+        response["warning"] = (
+            "Indexed with zero-vectors (sentence-transformers not installed). "
+            "Search will rely on keyword matching only. Install with: "
+            "pip install sentence-transformers"
+        )
+    return response
 
 
 # ── Re-index with vectors ────────────────────────────────────────────────

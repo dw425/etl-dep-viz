@@ -42,3 +42,8 @@ backend/static/
 .coverage
 htmlcov/
 .pytest_cache/
+
+# Data files
+backend/chroma_data/
+backend/etl_dep_viz.db
+*.db
