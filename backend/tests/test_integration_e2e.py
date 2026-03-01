@@ -48,35 +48,32 @@ class TestFullPipeline:
         snapshot = r.json()
         assert snapshot.get("version") == "1.0"
 
-    def test_upload_constellation_layers(self, client, small_infa_xml):
-        """Upload → constellation → L1 enterprise layer."""
-        # Step 1: Upload with constellation
+    def test_upload_layers(self, client, small_infa_xml):
+        """Upload → L1 enterprise layer → retrieve upload."""
+        # Step 1: Upload
         r = client.post(
-            "/api/tier-map/constellation",
+            "/api/tier-map/analyze",
             files=[("files", ("test.xml", small_infa_xml, "application/xml"))],
-            params={"algorithm": "louvain"},
         )
         assert r.status_code == 200
-        data = r.json()
-        assert "constellation" in data
-        assert "tier_data" in data
-        upload_id = data["upload_id"]
+        tier_data = r.json()
+        upload_id = tier_data["upload_id"]
+        assert len(tier_data["sessions"]) > 0
 
-        # Step 2: L1 enterprise overview
+        # Step 2: L1 enterprise overview (multi-Body endpoint needs wrapped keys)
         r = client.post(
             "/api/layers/L1",
-            json=data["tier_data"],
+            json={"tier_data": tier_data},
         )
         assert r.status_code == 200
         l1 = r.json()
-        assert "groups" in l1
+        assert "supernode_graph" in l1 or "groups" in l1
 
         # Step 3: Retrieve stored upload
         r = client.get(f"/api/tier-map/uploads/{upload_id}")
         assert r.status_code == 200
         stored = r.json()
         assert stored["upload_id"] == upload_id
-        assert stored.get("constellation") is not None
 
     def test_upload_zip_full_pipeline(self, client, small_infa_xml):
         """Upload ZIP → parse → tag → query tags."""

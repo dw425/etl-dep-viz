@@ -56,11 +56,12 @@ const FlowWalkerView = lazy(() => import('./FlowWalker'));
 const LineageBuilder = lazy(() => import('./LineageBuilder'));
 const ImpactAnalysisView = lazy(() => import('./ImpactAnalysis'));
 const HelpOverlay = lazy(() => import('../shared/HelpOverlay'));
+const AIChat = lazy(() => import('../chat/AIChat'));
 
 type ViewId = 'tier' | 'galaxy' | 'constellation' | 'explorer' | 'conflicts' | 'order' | 'matrix'
   | 'tables' | 'duplicates' | 'chunking'
   | 'complexity' | 'waves' | 'umap' | 'simulator' | 'concentration' | 'consensus'
-  | 'layers' | 'infra' | 'profile' | 'flowwalker' | 'lineage' | 'impact';
+  | 'layers' | 'infra' | 'profile' | 'flowwalker' | 'lineage' | 'impact' | 'chat';
 
 const VIEWS: { id: ViewId; label: string; icon: string; group?: 'core' | 'vector' | 'nav' | 'harmonize' }[] = [
   { id: 'tier', label: 'Tier Diagram', icon: '\u25A4', group: 'core' },
@@ -84,6 +85,7 @@ const VIEWS: { id: ViewId; label: string; icon: string; group?: 'core' | 'vector
   { id: 'flowwalker', label: 'Flow', icon: '\u21C4', group: 'nav' },
   { id: 'lineage', label: 'Lineage', icon: '\u2192', group: 'nav' },
   { id: 'impact', label: 'Impact', icon: '\u26A1', group: 'nav' },
+  { id: 'chat', label: 'AI Chat', icon: '\uD83D\uDCAC', group: 'nav' },
 ];
 
 export function DependencyApp() {
@@ -906,6 +908,15 @@ export function DependencyApp() {
                 <ErrorBoundary>
                   <div style={{ overflow: 'hidden', height: '100%' }}>
                     <ImpactAnalysisView tierData={tierData} />
+                  </div>
+                </ErrorBoundary>
+              )}
+
+              {/* AI Chat */}
+              {view === 'chat' && (
+                <ErrorBoundary>
+                  <div style={{ overflow: 'hidden', height: '100%' }}>
+                    <AIChat uploadId={uploadId} tierData={tierData} />
                   </div>
                 </ErrorBoundary>
               )}

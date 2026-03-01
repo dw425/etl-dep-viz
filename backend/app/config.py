@@ -13,6 +13,15 @@ class Settings(BaseSettings):
     parse_timeout_seconds: int = 600
     log_buffer_size: int = 500
 
+    # AI Chat / Vector DB settings
+    embedding_mode: str = "local"               # "local" or "openai"
+    embedding_model: str = "all-MiniLM-L6-v2"   # sentence-transformers model
+    chroma_persist_dir: str = "./chroma_data"
+    llm_provider: str = "anthropic"             # "anthropic" or "openai"
+    llm_api_key: str = ""                       # User-provided API key
+    llm_model: str = "claude-sonnet-4-20250514"
+    auto_index_on_parse: bool = True
+
     class Config:
         env_prefix = "EDV_"
 

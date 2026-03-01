@@ -660,6 +660,52 @@ export async function mergeUploads(uploadIds: number[]): Promise<Record<string, 
   return res.json();
 }
 
+// ── AI Chat API ──────────────────────────────────────────────────────────
+
+export async function chatIndexUpload(uploadId: number): Promise<Record<string, unknown>> {
+  const res = await fetch(`${BASE}/chat/index/${uploadId}`, {
+    method: 'POST',
+    headers: userHeaders(),
+  });
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  return res.json();
+}
+
+export async function chatQuery(
+  uploadId: number,
+  question: string,
+  conversationHistory: { role: string; content: string }[] = [],
+): Promise<Record<string, unknown>> {
+  const res = await fetch(`${BASE}/chat/${uploadId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...userHeaders() },
+    body: JSON.stringify({ question, conversation_history: conversationHistory }),
+  });
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  return res.json();
+}
+
+export async function chatSearch(
+  uploadId: number,
+  query: string,
+  docType?: string,
+  nResults: number = 10,
+): Promise<Record<string, unknown>> {
+  const res = await fetch(`${BASE}/chat/${uploadId}/search`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...userHeaders() },
+    body: JSON.stringify({ query, doc_type: docType, n_results: nResults }),
+  });
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  return res.json();
+}
+
+export async function chatIndexStatus(uploadId: number): Promise<{ indexed: boolean; document_count: number }> {
+  const res = await fetch(`${BASE}/chat/${uploadId}/status`);
+  if (!res.ok) throw new Error(res.statusText);
+  return res.json();
+}
+
 // ── Frontend Error Reporting (Item 30) ───────────────────────────────────
 
 export async function reportError(error: {

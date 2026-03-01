@@ -174,7 +174,7 @@ async def export_snapshot(
             vr = upload.get_vector_results()
             if vr:
                 snapshot['vector_results'] = vr
-            cd = upload.get_constellation_data()
+            cd = upload.get_constellation()
             if cd:
                 snapshot['constellation'] = cd
 
