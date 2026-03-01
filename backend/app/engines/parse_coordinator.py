@@ -131,23 +131,33 @@ def parse_files_parallel(
     # Phase 2: Parse files (parallel if >1 file, sequential if 1)
     all_sessions: Dict[str, Any] = {}
 
+    # Map index → file size for logging
+    size_map = {fname: len(content) for _, content, fname in work_items}
+    completed_count = len(contents) - len(work_items)  # skipped/errored in Phase 1
+
     if len(work_items) <= 1 or max_workers <= 1:
         # Sequential parsing
         for idx, content, fname in work_items:
             fr = _parse_single_file(content, fname, parse_fn)
             audit.file_results.append(fr)
+            completed_count += 1
             if fr.status == 'ok':
                 audit.parsed_ok += 1
                 audit.total_sessions += fr.session_count
                 _merge_sessions(all_sessions, fr.sessions)
+                logger.info("Parsed %s: %d sessions in %dms (%.1fMB) [%d/%d done, %d total sessions]",
+                            fname, fr.session_count, fr.elapsed_ms,
+                            len(content) / (1024*1024), completed_count, len(contents), audit.total_sessions)
             else:
                 audit.parse_errors += 1
+                logger.warning("Parse failed %s: %s (%dms)", fname, fr.error, fr.elapsed_ms)
             if progress_fn:
                 progress_fn(idx + 1, len(contents), fname, fr.status, audit.total_sessions)
     else:
         # Parallel parsing with ThreadPoolExecutor
         futures = {}
         effective_workers = min(max_workers, len(work_items))
+        logger.info("Starting parallel parse: %d files across %d workers", len(work_items), effective_workers)
         with ThreadPoolExecutor(max_workers=effective_workers) as executor:
             for idx, content, fname in work_items:
                 future = executor.submit(_parse_single_file, content, fname, parse_fn)
@@ -163,12 +173,17 @@ def parse_files_parallel(
                         error=f'Executor error: {exc}',
                     )
                 audit.file_results.append(fr)
+                completed_count += 1
                 if fr.status == 'ok':
                     audit.parsed_ok += 1
                     audit.total_sessions += fr.session_count
                     _merge_sessions(all_sessions, fr.sessions)
+                    logger.info("Parsed %s: %d sessions in %dms (%.1fMB) [%d/%d done, %d total sessions]",
+                                fname, fr.session_count, fr.elapsed_ms,
+                                size_map.get(fname, 0) / (1024*1024), completed_count, len(contents), audit.total_sessions)
                 else:
                     audit.parse_errors += 1
+                    logger.warning("Parse failed %s: %s (%dms)", fname, fr.error, fr.elapsed_ms)
                 if progress_fn:
                     progress_fn(idx + 1, len(contents), fname, fr.status, audit.total_sessions)
 

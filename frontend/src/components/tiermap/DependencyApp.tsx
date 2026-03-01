@@ -263,8 +263,15 @@ export function DependencyApp() {
       lastEventTime.current = Date.now();
       setStaleDetected(false);
       setProgress(event.percent ?? 0);
-      if (event.phase === 'extracting') setProgressPhase(`Extracted ${event.current} files`);
-      else if (event.phase === 'parsing') setProgressPhase(`Parsing ${event.filename || ''} (${event.current}/${event.total})`);
+      if (event.phase === 'extracting') {
+        const sizePart = event.total_size_mb ? ` (${event.total_size_mb}MB total)` : '';
+        setProgressPhase(`Extracted ${event.current} files${sizePart}`);
+      } else if (event.phase === 'parsing') {
+        const fsize = event.file_size_mb ? ` (${event.file_size_mb}MB)` : '';
+        const sessions = event.sessions_found ? ` — ${event.sessions_found.toLocaleString()} sessions found` : '';
+        const eta = event.eta_ms && event.eta_ms > 5000 ? ` — ETA ${Math.ceil(event.eta_ms / 1000)}s` : '';
+        setProgressPhase(`Parsing ${event.filename || ''}${fsize} (${event.current}/${event.total})${sessions}${eta}`);
+      }
       else if (event.phase === 'clustering') setProgressPhase('Clustering...');
       else if (event.phase === 'complete' && event.result) {
         setTierData(event.result.tier_data);

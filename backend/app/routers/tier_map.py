@@ -450,10 +450,13 @@ async def analyze_constellation_stream(
         t0 = time.monotonic()
         try:
             total = len(raw)
-            logger.info("step=extract files=%d", total)
+            total_size_mb = sum(len(r) for r in raw) / (1024 * 1024)
+            file_sizes = {n: len(r) / (1024 * 1024) for n, r in zip(names, raw)}
+            logger.info("step=extract files=%d total_size=%.0fMB", total, total_size_mb)
             # Signal client that extraction is done (5% progress marker)
             await queue.put({'phase': 'extracting', 'current': total, 'total': total, 'percent': 5.0,
-                             'elapsed_ms': int((time.monotonic() - t0) * 1000)})
+                             'elapsed_ms': int((time.monotonic() - t0) * 1000),
+                             'total_size_mb': round(total_size_mb, 1)})
 
             # ── Phase: parsing ──
             loop = asyncio.get_running_loop()
@@ -466,7 +469,14 @@ async def analyze_constellation_stream(
                 """Called by the engine after each file is parsed; maps to SSE percent 5–95."""
                 files_parsed[0] = current
                 sessions_so_far[0] = cumulative_sessions
-                pct = round((current / total_files) * 90.0, 1)  # parsing occupies 5%–95% of the range
+                # Use sessions-based progress if available (more meaningful), else file count
+                if cumulative_sessions > 0 and files_parsed[0] > 2:
+                    # Estimate total sessions: extrapolate from average sessions/file so far
+                    avg_per_file = cumulative_sessions / files_parsed[0]
+                    est_total = avg_per_file * total_files
+                    pct = min(90.0, round((cumulative_sessions / est_total) * 90.0, 1))
+                else:
+                    pct = round((current / total_files) * 90.0, 1)
                 elapsed_ms = int((time.monotonic() - t0) * 1000)
                 # ETA: linear extrapolation based on average ms-per-file so far
                 if current > 0 and current < total_files:
@@ -474,15 +484,16 @@ async def analyze_constellation_stream(
                     eta_ms = int(avg_ms * (total_files - current))
                 else:
                     eta_ms = 0
-                logger.info("step=parse current=%d/%d file=%s sessions_so_far=%d elapsed_ms=%d",
-                            current, total_files, filename, sessions_so_far[0], elapsed_ms)
-                # Bridge from sync thread back to the async event loop
+                fsize_mb = file_sizes.get(filename, 0)
+                logger.info("step=parse current=%d/%d file=%s (%.1fMB) sessions_so_far=%d elapsed_ms=%d eta=%ds",
+                            current, total_files, filename, fsize_mb, sessions_so_far[0], elapsed_ms, eta_ms // 1000)
                 asyncio.run_coroutine_threadsafe(
                     queue.put({
                         'phase': 'parsing',
                         'current': current,
                         'total': total_files,
                         'filename': filename,
+                        'file_size_mb': round(fsize_mb, 1),
                         'percent': 5.0 + pct,
                         'elapsed_ms': elapsed_ms,
                         'eta_ms': eta_ms,

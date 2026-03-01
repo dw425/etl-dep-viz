@@ -83,6 +83,10 @@ export interface StreamEvent {
   percent?: number;
   message?: string;
   elapsed_ms?: number;
+  eta_ms?: number;
+  sessions_found?: number;
+  file_size_mb?: number;
+  total_size_mb?: number;
   result?: { upload_id?: number; tier_data: TierMapResult; constellation: ConstellationResult };
 }
 
