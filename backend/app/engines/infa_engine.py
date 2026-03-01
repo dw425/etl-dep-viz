@@ -304,14 +304,11 @@ def _parse_file(content: bytes, fname: str) -> Dict[str, Any]:
     if len(content) > _ITERPARSE_THRESHOLD:
         logger.info("Using iterparse for large file %s (%.1fMB)", fname, size_mb)
         folder_count = 0
-        # Skip deep extraction for very large files (>100MB) during iterparse
-        # to avoid 3-5x overhead; deep metadata can be loaded on-demand via L5/L6 endpoints
-        iter_deep = size_mb < 100
         try:
             for folder in _parse_xml_iterparse(content):
                 folder_count += 1
                 before = len(sessions)
-                _process_folder(folder, fname, sessions, deep=iter_deep)
+                _process_folder(folder, fname, sessions, deep=True)
                 after = len(sessions)
                 logger.info("  %s folder %d: +%d sessions (total %d)",
                             fname, folder_count, after - before, after)
@@ -336,13 +333,11 @@ def _parse_file(content: bytes, fname: str) -> Dict[str, Any]:
             return {'_error': f'No FOLDER or SESSION elements found in {fname}', '_file': fname}
         folders = [root]
 
-    # Skip deep extraction for very large files (>100MB) in fallback path too
-    use_deep = size_mb < 100
     for i, folder in enumerate(folders, 1):
         before = len(sessions)
-        _process_folder(folder, fname, sessions, deep=use_deep)
-        logger.info("  %s folder %d/%d: +%d sessions (total %d) deep=%s",
-                     fname, i, len(folders), len(sessions) - before, len(sessions), use_deep)
+        _process_folder(folder, fname, sessions, deep=True)
+        logger.info("  %s folder %d/%d: +%d sessions (total %d)",
+                     fname, i, len(folders), len(sessions) - before, len(sessions))
 
     return sessions
 
