@@ -10,8 +10,8 @@ class Settings(BaseSettings):
     vector_timeout_seconds: int = 120
     log_level: str = "INFO"
     max_sessions_for_phase3: int = 5000
-    parse_timeout_seconds: int = 600
-    log_buffer_size: int = 500
+    parse_timeout_seconds: int = 1800
+    log_buffer_size: int = 2000
 
     # AI Chat / Vector DB settings
     embedding_mode: str = "local"               # "local" or "openai"

@@ -134,7 +134,7 @@ export function DependencyApp() {
   // parseStartTime drives the elapsed mm:ss counter in the upload UI
   const [parseStartTime, setParseStartTime] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  // staleDetected becomes true when no SSE progress event arrives for 60 s
+  // staleDetected becomes true when no SSE progress event arrives for 120s
   const [staleDetected, setStaleDetected] = useState(false);
   const [showLogModal, setShowLogModal] = useState(false);
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
@@ -149,9 +149,14 @@ export function DependencyApp() {
     const interval = setInterval(() => {
       const elapsed = Math.floor((Date.now() - parseStartTime) / 1000);
       setElapsedSeconds(elapsed);
-      // Stale detection: no progress event for 60s
-      if (lastEventTime.current && Date.now() - lastEventTime.current > 60000) {
-        setStaleDetected(true);
+      // Stale detection: no progress event for 120s → auto-show server logs
+      if (lastEventTime.current && Date.now() - lastEventTime.current > 120000) {
+        if (!staleDetected) {
+          setStaleDetected(true);
+          // Auto-fetch and show logs so user can see if there's an error
+          getHealthLogs(100).then(setLogEntries).catch(() => {});
+          setShowLogModal(true);
+        }
       }
     }, 1000);
     return () => clearInterval(interval);
@@ -518,14 +523,20 @@ export function DependencyApp() {
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
                 <div style={{ fontSize: 11, color: T.textMuted }}>{Math.round(progress)}%</div>
-                <button onClick={(e) => { e.stopPropagation(); handleCancelUpload(); }}
-                  style={{ fontSize: 11, color: '#ef4444', background: 'transparent', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
-                  Cancel
-                </button>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                  <button onClick={async (e) => { e.stopPropagation(); setLogLoading(true); setShowLogModal(true); try { setLogEntries(await getHealthLogs(100)); } catch { /* */ } finally { setLogLoading(false); } }}
+                    style={{ fontSize: 11, color: '#F59E0B', background: 'transparent', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
+                    View Logs
+                  </button>
+                  <button onClick={(e) => { e.stopPropagation(); handleCancelUpload(); }}
+                    style={{ fontSize: 11, color: '#ef4444', background: 'transparent', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
+                    Cancel
+                  </button>
+                </div>
               </div>
               {staleDetected && (
                 <div style={{ fontSize: 11, color: '#F59E0B', marginTop: 8, padding: '6px 10px', background: 'rgba(245,158,11,0.1)', borderRadius: 6 }}>
-                  No progress for 60s — the server may be processing a large file
+                  No progress for 120s — server logs opened automatically. Check for errors above.
                 </div>
               )}
             </div>

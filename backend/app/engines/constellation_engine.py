@@ -11,7 +11,12 @@ import random
 from collections import defaultdict
 from typing import Any
 
+import logging
+import time as _time
+
 import networkx as nx
+
+logger = logging.getLogger(__name__)
 
 
 # 12-color palette for chunk coloring (visually distinct on dark background)
@@ -51,22 +56,33 @@ def build_constellation(
         return _empty_result()
 
     algo = algorithm if algorithm in ALGORITHMS else 'louvain'
+    logger.info("Constellation: %d sessions, algorithm=%s", len(sessions), algo)
+    _ct0 = _time.monotonic()
 
     # Phase A: build table fingerprints per session
     fingerprints = _build_fingerprints(sessions)
+    logger.info("Constellation Phase A (fingerprints): %dms", int((_time.monotonic() - _ct0) * 1000))
 
     # Phase B: build similarity graph via inverted index
+    _ct1 = _time.monotonic()
     G = _build_similarity_graph(fingerprints)
+    logger.info("Constellation Phase B (similarity graph): %dms, %d nodes, %d edges",
+                int((_time.monotonic() - _ct1) * 1000), G.number_of_nodes(), G.number_of_edges())
 
     # Phase C: clustering (algorithm-dependent)
+    _ct1 = _time.monotonic()
     communities = _cluster(algo, G, sessions, fingerprints)
+    logger.info("Constellation Phase C (clustering): %dms, %d communities",
+                int((_time.monotonic() - _ct1) * 1000), len(communities))
 
     # Assign orphans (nodes not in any community)
     all_session_ids = [s['id'] for s in sessions]
     communities = _assign_orphans(all_session_ids, communities, fingerprints)
 
     # Phase D: layout → 2D coordinates
+    _ct1 = _time.monotonic()
     coords = _compute_layout(G, communities, all_session_ids)
+    logger.info("Constellation Phase D (layout): %dms", int((_time.monotonic() - _ct1) * 1000))
 
     # Build lookup maps
     session_map = {s['id']: s for s in sessions}
@@ -74,13 +90,18 @@ def build_constellation(
     connections = tier_data.get('connections', [])
 
     # Phase E: assemble chunk metadata
+    _ct1 = _time.monotonic()
     chunks = _build_chunk_metadata(communities, session_map, fingerprints, tables)
+    logger.info("Constellation Phase E (chunks): %dms", int((_time.monotonic() - _ct1) * 1000))
 
     # Phase F: cross-chunk edges
+    _ct1 = _time.monotonic()
     cross_chunk_edges = _find_cross_chunk_edges(connections, communities, session_map, tables)
+    logger.info("Constellation Phase F (cross-edges): %dms", int((_time.monotonic() - _ct1) * 1000))
 
     # Assemble points
     points = _build_points(all_session_ids, coords, communities, session_map)
+    logger.info("Constellation total: %dms", int((_time.monotonic() - _ct0) * 1000))
 
     result = {
         'algorithm': algo,

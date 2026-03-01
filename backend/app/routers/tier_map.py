@@ -534,12 +534,24 @@ async def analyze_constellation_stream(
                 return
 
             sessions_so_far[0] = len(tier_data.get('sessions', []))
+            tables_count = len(tier_data.get('tables', []))
+            conns_count = len(tier_data.get('connections', []))
+
+            # ── Phase: tier assignment complete, report ──
+            elapsed_ms = int((time.monotonic() - t0) * 1000)
+            logger.info("step=tier_complete sessions=%d tables=%d connections=%d elapsed_ms=%d",
+                        sessions_so_far[0], tables_count, conns_count, elapsed_ms)
+            await queue.put({
+                'phase': 'parsing', 'current': total, 'total': total,
+                'percent': 95.0, 'elapsed_ms': elapsed_ms,
+                'sessions_found': sessions_so_far[0],
+                'filename': f'Tier assignment done: {sessions_so_far[0]} sessions, {tables_count} tables',
+            })
 
             # ── Phase: clustering ──
-            elapsed_ms = int((time.monotonic() - t0) * 1000)
             logger.info("step=cluster algorithm=%s sessions=%d elapsed_ms=%d",
                         algorithm, sessions_so_far[0], elapsed_ms)
-            await queue.put({'phase': 'clustering', 'current': 0, 'total': 0, 'percent': 95.0,
+            await queue.put({'phase': 'clustering', 'current': 0, 'total': 0, 'percent': 96.0,
                              'elapsed_ms': elapsed_ms,
                              'sessions_found': sessions_so_far[0]})
 
@@ -548,6 +560,7 @@ async def analyze_constellation_stream(
 
             # ── Phase: persist ──
             duration_ms = int((time.monotonic() - t0) * 1000)
+            logger.info("step=persist sessions=%d elapsed_ms=%d", sessions_so_far[0], duration_ms)
             upload = Upload(
                 filename=', '.join(names[:5]) + (f' (+{len(names)-5})' if len(names) > 5 else ''),
                 platform=platform,

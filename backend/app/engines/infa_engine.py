@@ -294,7 +294,7 @@ def _parse_file(content: bytes, fname: str) -> Dict[str, Any]:
             for folder in _parse_xml_iterparse(content):
                 folder_count += 1
                 before = len(sessions)
-                _process_folder(folder, fname, sessions, deep=False)
+                _process_folder(folder, fname, sessions, deep=True)
                 after = len(sessions)
                 logger.info("  %s folder %d: +%d sessions (total %d)",
                             fname, folder_count, after - before, after)
@@ -318,8 +318,8 @@ def _parse_file(content: bytes, fname: str) -> Dict[str, Any]:
             return {'_error': f'No FOLDER or SESSION elements found in {fname}', '_file': fname}
         folders = [root]
 
-    # Small files (<20MB) get full deep extraction; large files already went through iterparse above
-    use_deep = size_mb < 20
+    # All files get full deep extraction (TABLEATTRIBUTE dict cache keeps it efficient)
+    use_deep = True
     for i, folder in enumerate(folders, 1):
         before = len(sessions)
         _process_folder(folder, fname, sessions, deep=use_deep)
@@ -886,6 +886,9 @@ def analyze(
         }
 
     # ── Phase 2: normalise all table refs to canonical uppercase table names ─
+    logger.info("Phase 2: normalizing table refs for %d sessions", len(all_sessions))
+    import time as _time
+    _phase_t0 = _time.monotonic()
     for sdata in all_sessions.values():
         sdata['sources'] = list(dict.fromkeys(
             _norm(x) for x in sdata['sources'] if x.strip() and len(x.strip()) > 1
@@ -897,7 +900,11 @@ def analyze(
             _norm_lkp(x) for x in sdata['lookups'] if x.strip() and len(x.strip()) > 1
         ))
 
+    logger.info("Phase 2 done in %dms", int((_time.monotonic() - _phase_t0) * 1000))
+
     # ── Phase 3: build table usage maps ────────────────────────────────────
+    logger.info("Phase 3: building table usage maps")
+    _phase_t0 = _time.monotonic()
     all_targets: Dict[str, List[str]] = defaultdict(list)   # table → [session_names that WRITE]
     all_sources: Dict[str, List[str]] = defaultdict(list)   # table → [session_names that READ]
     all_lookups: Dict[str, List[str]] = defaultdict(list)   # table → [session_names that LOOKUP]
@@ -928,8 +935,14 @@ def analyze(
         if t and t not in all_targets:
             source_only_tables.add(t)
 
+    logger.info("Phase 3 done in %dms: %d target tables, %d source tables, %d lookup tables, %d conflicts",
+                int((_time.monotonic() - _phase_t0) * 1000),
+                len(all_targets), len(all_sources), len(all_lookups), len(conflict_tables))
+
     # ── Phase 4: assign session tiers via NetworkX DAG ─────────────────────
     # NO TIER CAP — unlimited depth
+    logger.info("Phase 4: building DAG and assigning tiers for %d sessions", len(all_sessions))
+    _phase_t0 = _time.monotonic()
     session_names = list(all_sessions.keys())
 
     if _NX:
@@ -949,13 +962,26 @@ def analyze(
                 for u in users:
                     if w != u:
                         G.add_edge(w, u)
-        # Remove cycles to make it a proper DAG
-        try:
-            while True:
-                cycle = _nx.find_cycle(G)
-                G.remove_edge(cycle[0][0], cycle[0][1])
-        except _nx.NetworkXNoCycle:
-            pass
+        # Remove cycles efficiently: collapse each SCC into one representative node.
+        # The old approach (find_cycle in a loop) was O(V+E) per cycle and hung on 14K+ sessions.
+        edges_before = G.number_of_edges()
+        sccs = list(_nx.strongly_connected_components(G))
+        cycles_broken = 0
+        for scc in sccs:
+            if len(scc) <= 1:
+                continue
+            # For each SCC, remove back-edges to break cycles
+            scc_set = set(scc)
+            for u, v in list(G.edges(scc_set)):
+                if v in scc_set and u in scc_set:
+                    # Keep edges that follow topological order within the SCC (by name sort)
+                    # Remove the rest to break cycles
+                    if u > v:
+                        G.remove_edge(u, v)
+                        cycles_broken += 1
+        if cycles_broken:
+            logger.info("Cycle removal: %d back-edges removed from %d SCCs (edges %d→%d)",
+                        cycles_broken, sum(1 for s in sccs if len(s) > 1), edges_before, G.number_of_edges())
         # Longest-path depth (= tier - 1)
         order = list(_nx.topological_sort(G))
         dist: Dict[str, int] = {n: 0 for n in G.nodes()}
@@ -993,7 +1019,13 @@ def analyze(
             if s not in session_tier:
                 session_tier[s] = tier
 
+    logger.info("Phase 4 done in %dms: max_tier=%d, nodes=%d",
+                int((_time.monotonic() - _phase_t0) * 1000),
+                max(session_tier.values()) if session_tier else 0, len(session_names))
+
     # ── Phase 5: sort sessions by (tier, workflow_step) ────────────────────
+    logger.info("Phase 5-8: building output structures")
+    _phase_t0 = _time.monotonic()
     def _sort_key(sn: str) -> Tuple[int, int, str]:
         return (session_tier.get(sn, 1), all_sessions[sn].get('step', 999), sn)
 
@@ -1153,6 +1185,10 @@ def analyze(
         'source_tables':   len(source_only_tables),
         'max_tier':        max_tier,
     }
+
+    logger.info("Phase 5-8 done in %dms: %d sessions, %d tables, %d connections",
+                int((_time.monotonic() - _phase_t0) * 1000),
+                len(sessions_out), len(tables_out), len(conns_out))
 
     return {
         'sessions':    sessions_out,
