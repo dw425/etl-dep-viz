@@ -259,6 +259,20 @@ export default function FlowWalkerView({ tierData, vectorResults }: Props) {
                 Mapping Pipeline: {(session?.full as string) || ''}
               </div>
 
+              {/* No mapping detail available */}
+              {!md && instances.length === 0 && (
+                <div style={{
+                  padding: 24, textAlign: 'center', borderRadius: 10,
+                  background: 'rgba(100,116,139,0.08)', border: '1px dashed #334155',
+                }}>
+                  <div style={{ fontSize: 13, color: '#64748b', marginBottom: 8 }}>No mapping detail available</div>
+                  <div style={{ fontSize: 11, color: '#475569' }}>
+                    Upstream/downstream chain and tables are shown in the side panels.
+                    {flowData.tables_touched?.length > 0 && ` This session touches ${flowData.tables_touched.length} tables.`}
+                  </div>
+                </div>
+              )}
+
               {/* Source instances */}
               {sourceInsts.length > 0 && (
                 <div style={{ marginBottom: 16 }}>

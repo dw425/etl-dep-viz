@@ -23,14 +23,14 @@ export default function L2_DomainCluster() {
   const groupId = currentParams.groupId || '';
 
   useEffect(() => {
-    if (tierData && vectorResults && groupId) {
+    if (tierData && groupId) {
       setLoading(true);
       getL2Data(tierData, groupId)
         .then(d => setL2Data(d))
         .catch(err => console.error('L2 load failed:', err))
         .finally(() => setLoading(false));
     }
-  }, [tierData, vectorResults, groupId]);
+  }, [tierData, groupId]);
 
   const sessions = (l2Data?.sessions ?? []) as TierSession[];
   const subClusters = (l2Data?.sub_clusters ?? {}) as Record<string, string[]>;

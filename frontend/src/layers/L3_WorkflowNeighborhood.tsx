@@ -19,14 +19,14 @@ export default function L3_WorkflowNeighborhood() {
   const { groupId = '', scopeType = '', scopeId = '' } = currentParams;
 
   useEffect(() => {
-    if (tierData && vectorResults && groupId) {
+    if (tierData && groupId) {
       setLoading(true);
       getL3Data(tierData, groupId, scopeType, scopeId)
         .then(d => setL3Data(d))
         .catch(err => console.error('L3 load failed:', err))
         .finally(() => setLoading(false));
     }
-  }, [tierData, vectorResults, groupId, scopeType, scopeId]);
+  }, [tierData, groupId, scopeType, scopeId]);
 
   const sessions = (l3Data?.sessions ?? []) as TierSession[];
   const connections = (l3Data?.connections ?? []) as TierConn[];

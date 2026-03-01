@@ -40,12 +40,14 @@ interface Props {
 }
 
 const DEPTH_COLORS = ['#3B82F6', '#A855F7', '#F59E0B', '#EF4444', '#10B981', '#EC4899', '#F97316', '#06B6D4'];
+const ITEMS_PER_GROUP = 50;
 
 export default function ImpactAnalysis({ tierData, selectedSession, onSessionSelect }: Props) {
   const [sessionId, setSessionId] = useState(selectedSession || '');
   const [impactData, setImpactData] = useState<ImpactData | null>(null);
   const [loading, setLoading] = useState(false);
   const [maxHops, setMaxHops] = useState(10);
+  const [expandedDepths, setExpandedDepths] = useState<Set<number>>(new Set());
 
   const loadImpact = useCallback(async (sid: string) => {
     if (!sid) return;
@@ -182,33 +184,51 @@ export default function ImpactAnalysis({ tierData, selectedSession, onSessionSel
                     Depth {group.depth} — {group.sessions.length} sessions, {group.tables.length} tables
                   </div>
 
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, paddingLeft: 28 }}>
-                    {group.sessions.map(s => (
-                      <div
-                        key={s.id}
-                        onClick={() => onSessionSelect?.(s.id)}
-                        style={{
-                          padding: '4px 10px', fontSize: 10, borderRadius: 4,
-                          background: '#1e293b', border: `1px solid ${color}44`,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        <span style={{ color }}>{s.name}</span>
-                        <span style={{ color: '#475569', marginLeft: 6 }}>T{s.tier}</span>
+                  {(() => {
+                    const allItems = [...group.sessions.map(s => ({ ...s, _kind: 'session' as const })), ...group.tables.map(t => ({ ...t, _kind: 'table' as const }))];
+                    const expanded = expandedDepths.has(group.depth);
+                    const shown = expanded ? allItems : allItems.slice(0, ITEMS_PER_GROUP);
+                    return (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, paddingLeft: 28 }}>
+                        {shown.map(item => item._kind === 'session' ? (
+                          <div
+                            key={item.id}
+                            onClick={() => onSessionSelect?.(item.id)}
+                            style={{
+                              padding: '4px 10px', fontSize: 10, borderRadius: 4,
+                              background: '#1e293b', border: `1px solid ${color}44`,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            <span style={{ color }}>{item.name}</span>
+                            <span style={{ color: '#475569', marginLeft: 6 }}>T{item.tier}</span>
+                          </div>
+                        ) : (
+                          <div
+                            key={item.id}
+                            style={{
+                              padding: '4px 10px', fontSize: 10, borderRadius: 4,
+                              background: '#0f172a', border: '1px solid #334155',
+                            }}
+                          >
+                            <span style={{ color: '#10B981' }}>{item.name}</span>
+                          </div>
+                        ))}
+                        {allItems.length > ITEMS_PER_GROUP && !expanded && (
+                          <button
+                            onClick={() => setExpandedDepths(prev => { const n = new Set(prev); n.add(group.depth); return n; })}
+                            style={{
+                              padding: '4px 10px', fontSize: 10, borderRadius: 4,
+                              background: '#1e293b', border: '1px solid #334155', color: '#60a5fa',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            +{allItems.length - ITEMS_PER_GROUP} more
+                          </button>
+                        )}
                       </div>
-                    ))}
-                    {group.tables.map(t => (
-                      <div
-                        key={t.id}
-                        style={{
-                          padding: '4px 10px', fontSize: 10, borderRadius: 4,
-                          background: '#0f172a', border: '1px solid #334155',
-                        }}
-                      >
-                        <span style={{ color: '#10B981' }}>{t.name}</span>
-                      </div>
-                    ))}
-                  </div>
+                    );
+                  })()}
                 </div>
               );
             })}

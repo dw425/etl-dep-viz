@@ -84,6 +84,7 @@ export default function GalaxyMapCanvas({
   const [galaxyFilters, setGalaxyFilters] = useState<GalaxyFilters>(() => getDefaultFilters(data));
   const [filterVisible, setFilterVisible] = useState(false);
   const [zoomScale, setZoomScale] = useState(1);
+  const [zoomTransform, setZoomTransform] = useState({ x: 0, y: 0, k: 1 });
 
   // Filters are applied once here; all layout memos below operate on filteredData
   const filteredData = useMemo(() => applyGalaxyFilters(data, galaxyFilters), [data, galaxyFilters]);
@@ -133,6 +134,7 @@ export default function GalaxyMapCanvas({
       .on('zoom', (event) => {
         g.attr('transform', event.transform.toString());
         setZoomScale(event.transform.k);
+        setZoomTransform({ x: event.transform.x, y: event.transform.y, k: event.transform.k });
       });
 
     zoomRef.current = zoom;
@@ -916,26 +918,37 @@ export default function GalaxyMapCanvas({
       {/* ── Minimap — visible when sessions > 20; uses the same sessPos coords as
                the main SVG, scaled down via viewBox to 160×120. The focused
                session is highlighted with a white stroke ring.               ── */}
-      {sessions.length > 20 && (
-        <div style={{
-          position: 'absolute', bottom: 64, right: 16, width: 160, height: 120,
-          background: 'rgba(4,8,18,0.9)', border: '1px solid rgba(255,255,255,0.08)',
-          borderRadius: 8, overflow: 'hidden', zIndex: 10,
-        }}>
-          <svg width={160} height={120} viewBox={`0 0 ${dims.w} ${dims.h}`} preserveAspectRatio="xMidYMid meet">
-            {sessions.map(s => {
-              const p = sessPos.get(s.id);
-              if (!p) return null;
-              return (
-                <circle key={s.id} cx={p.x} cy={p.y} r={6}
-                  fill={p.color} opacity={focusId === s.id ? 1 : 0.5}
-                  stroke={focusId === s.id ? '#fff' : 'none'} strokeWidth={2}
-                />
-              );
-            })}
-          </svg>
-        </div>
-      )}
+      {sessions.length > 20 && (() => {
+        // Compute viewport rect in world coords (inverse of zoom transform)
+        const vx = -zoomTransform.x / zoomTransform.k;
+        const vy = -zoomTransform.y / zoomTransform.k;
+        const vw = dims.w / zoomTransform.k;
+        const vh = dims.h / zoomTransform.k;
+        return (
+          <div style={{
+            position: 'absolute', bottom: 64, right: 16, width: 160, height: 120,
+            background: 'rgba(4,8,18,0.9)', border: '1px solid rgba(255,255,255,0.08)',
+            borderRadius: 8, overflow: 'hidden', zIndex: 10,
+          }}>
+            <svg width={160} height={120} viewBox={`0 0 ${dims.w} ${dims.h}`} preserveAspectRatio="xMidYMid meet">
+              {sessions.map(s => {
+                const p = sessPos.get(s.id);
+                if (!p) return null;
+                return (
+                  <circle key={s.id} cx={p.x} cy={p.y} r={6}
+                    fill={p.color} opacity={focusId === s.id ? 1 : 0.5}
+                    stroke={focusId === s.id ? '#fff' : 'none'} strokeWidth={2}
+                  />
+                );
+              })}
+              {/* Viewport rectangle */}
+              <rect x={vx} y={vy} width={vw} height={vh}
+                fill="none" stroke="rgba(255,255,255,0.4)" strokeWidth={Math.max(4, 2 / (160 / dims.w))}
+              />
+            </svg>
+          </div>
+        );
+      })()}
 
       {/* ── Legend ─────────────────────────────────────────────────────────── */}
       <div style={{

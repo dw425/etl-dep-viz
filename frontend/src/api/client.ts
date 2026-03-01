@@ -767,6 +767,15 @@ export async function chatIndexStatus(uploadId: number): Promise<{ indexed: bool
   return res.json();
 }
 
+export async function chatReindex(uploadId: number): Promise<Record<string, unknown>> {
+  const res = await fetch(`${BASE}/chat/reindex/${uploadId}`, {
+    method: 'POST',
+    headers: userHeaders(),
+  });
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  return res.json();
+}
+
 // ── Frontend Error Reporting ──────────────────────────────────────────────
 // reportError sends client-side errors to the backend for centralized logging.
 // installGlobalErrorHandler should be called once at app startup.

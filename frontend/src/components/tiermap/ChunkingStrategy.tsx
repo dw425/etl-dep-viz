@@ -9,16 +9,19 @@
  *  - Custom: Select from multiple algorithm options
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import type { TierMapResult, ConstellationResult, AlgorithmKey } from '../../types/tiermap';
 import type { VectorResults } from '../../types/vectors';
+import { analyzeVectors, chatIndexUpload, chatIndexStatus } from '../../api/client';
 
 interface Props {
   tierData: TierMapResult;
   constellation: ConstellationResult | null;
   vectorResults: VectorResults | null;
+  uploadId?: number | null;
   onRecluster: (algorithm: AlgorithmKey) => Promise<void>;
   onProceed: (view: string) => void;
+  onVectorResults?: (results: VectorResults) => void;
 }
 
 interface StrategyOption {
@@ -47,9 +50,24 @@ const CATEGORY_LABELS: Record<string, { label: string; color: string }> = {
   custom: { label: 'Custom', color: '#F59E0B' },
 };
 
-export default function ChunkingStrategy({ tierData, constellation, vectorResults, onRecluster, onProceed }: Props) {
+export default function ChunkingStrategy({ tierData, constellation, vectorResults, uploadId, onRecluster, onProceed, onVectorResults }: Props) {
   const [selected, setSelected] = useState<AlgorithmKey>('louvain');
   const [loading, setLoading] = useState(false);
+
+  // Vector analysis state
+  const [vectorLoading, setVectorLoading] = useState(false);
+  const [vectorPhase, setVectorPhase] = useState('');
+
+  // AI index state
+  const [indexLoading, setIndexLoading] = useState(false);
+  const [indexStatus, setIndexStatus] = useState<{ indexed: boolean; document_count: number } | null>(null);
+
+  // Check AI index status on mount
+  useEffect(() => {
+    if (uploadId) {
+      chatIndexStatus(uploadId).then(setIndexStatus).catch(() => {});
+    }
+  }, [uploadId]);
 
   const handleApply = useCallback(async () => {
     setLoading(true);
@@ -59,6 +77,35 @@ export default function ChunkingStrategy({ tierData, constellation, vectorResult
       setLoading(false);
     }
   }, [selected, onRecluster]);
+
+  const handleRunVectors = useCallback(async () => {
+    if (!tierData || vectorLoading) return;
+    setVectorLoading(true);
+    setVectorPhase('Running Phase 1 (Core)...');
+    try {
+      const result = await analyzeVectors(tierData, 1, uploadId ?? undefined);
+      onVectorResults?.(result);
+      setVectorPhase('Phase 1 complete');
+    } catch (e: any) {
+      setVectorPhase(`Error: ${e.message}`);
+    } finally {
+      setVectorLoading(false);
+    }
+  }, [tierData, uploadId, onVectorResults, vectorLoading]);
+
+  const handleBuildIndex = useCallback(async () => {
+    if (!uploadId || indexLoading) return;
+    setIndexLoading(true);
+    try {
+      await chatIndexUpload(uploadId);
+      const status = await chatIndexStatus(uploadId);
+      setIndexStatus(status);
+    } catch (e: any) {
+      setIndexStatus(null);
+    } finally {
+      setIndexLoading(false);
+    }
+  }, [uploadId, indexLoading]);
 
   const sessionCount = tierData.sessions.length;
   const tableCount = tierData.tables.length;
@@ -127,8 +174,50 @@ export default function ChunkingStrategy({ tierData, constellation, vectorResult
         })}
       </div>
 
-      {/* Action buttons */}
-      <div style={{ display: 'flex', gap: 12, marginTop: 24, justifyContent: 'flex-end' }}>
+      {/* Analysis actions — Vector Analysis + AI Index */}
+      <div style={{ display: 'flex', gap: 12, marginTop: 24, padding: 16, borderRadius: 10, background: '#111827', border: '1px solid #1e293b' }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#A855F7', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8 }}>
+            Analysis Tools
+          </div>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            <button
+              onClick={handleRunVectors}
+              disabled={vectorLoading || !!vectorResults}
+              style={{
+                padding: '8px 16px', borderRadius: 6, border: `1px solid ${vectorResults ? '#22C55E' : '#A855F7'}`,
+                background: vectorResults ? 'rgba(34,197,94,0.1)' : vectorLoading ? 'rgba(168,85,247,0.1)' : 'transparent',
+                color: vectorResults ? '#22C55E' : '#A855F7', fontSize: 11, fontWeight: 600, cursor: vectorLoading || vectorResults ? 'default' : 'pointer',
+                opacity: vectorLoading ? 0.7 : 1,
+              }}
+            >
+              {vectorResults ? 'Vectors Ready' : vectorLoading ? vectorPhase : 'Run Vector Analysis'}
+            </button>
+            {uploadId && (
+              <button
+                onClick={handleBuildIndex}
+                disabled={indexLoading}
+                style={{
+                  padding: '8px 16px', borderRadius: 6,
+                  border: `1px solid ${indexStatus?.indexed ? '#22C55E' : '#3B82F6'}`,
+                  background: indexStatus?.indexed ? 'rgba(34,197,94,0.1)' : indexLoading ? 'rgba(59,130,246,0.1)' : 'transparent',
+                  color: indexStatus?.indexed ? '#22C55E' : '#3B82F6', fontSize: 11, fontWeight: 600,
+                  cursor: indexLoading ? 'wait' : 'pointer',
+                  opacity: indexLoading ? 0.7 : 1,
+                }}
+              >
+                {indexStatus?.indexed ? `AI Index (${indexStatus.document_count} docs)` : indexLoading ? 'Indexing...' : 'Build AI Index'}
+              </button>
+            )}
+          </div>
+          {vectorPhase && !vectorLoading && vectorPhase.startsWith('Error') && (
+            <div style={{ fontSize: 10, color: '#ef4444', marginTop: 6 }}>{vectorPhase}</div>
+          )}
+        </div>
+      </div>
+
+      {/* Navigation buttons */}
+      <div style={{ display: 'flex', gap: 12, marginTop: 12, justifyContent: 'flex-end' }}>
         <button
           onClick={handleApply}
           disabled={loading}

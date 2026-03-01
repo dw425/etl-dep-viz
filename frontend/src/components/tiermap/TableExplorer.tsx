@@ -7,6 +7,7 @@
 
 import React, { useState, useMemo, useCallback } from 'react';
 import type { TierMapResult } from '../../types/tiermap';
+import TierFilterSidebar, { type TierFilters, getDefaultTierFilters, applyTierFilters } from '../shared/TierFilterSidebar';
 
 interface Props {
   data: TierMapResult;
@@ -33,13 +34,15 @@ const TYPE_COLORS: Record<string, string> = {
 export default function TableExplorer({ data }: Props) {
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [tierFilters, setTierFilters] = useState<TierFilters>(getDefaultTierFilters);
+  const filteredData = useMemo(() => applyTierFilters(data, tierFilters), [data, tierFilters]);
 
   // Build table profiles with all session references
   const tableProfiles = useMemo(() => {
     const profiles: Record<string, TableProfile> = {};
 
     // Initialize from table nodes
-    for (const t of data.tables) {
+    for (const t of filteredData.tables) {
       profiles[t.name] = {
         name: t.name,
         id: t.id,
@@ -53,7 +56,7 @@ export default function TableExplorer({ data }: Props) {
     }
 
     // Count session references
-    for (const s of data.sessions) {
+    for (const s of filteredData.sessions) {
       for (const tbl of (s as any).sources || []) {
         if (!profiles[tbl]) profiles[tbl] = { name: tbl, id: '', type: 'source', tier: 0, writers: [], readers: [], lookupUsers: [], totalRefs: 0 };
         if (!profiles[tbl].readers.includes(s.full || s.name)) {
@@ -80,7 +83,7 @@ export default function TableExplorer({ data }: Props) {
     }
 
     return profiles;
-  }, [data]);
+  }, [filteredData]);
 
   // Top 100 tables sorted by reference count
   const sortedTables = useMemo(() => {
@@ -180,6 +183,7 @@ export default function TableExplorer({ data }: Props) {
           </div>
         )}
       </div>
+      <TierFilterSidebar data={data} filters={tierFilters} onChange={setTierFilters} compact />
     </div>
   );
 }

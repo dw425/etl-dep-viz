@@ -3,7 +3,7 @@
  * conflict/chain badges.
  */
 
-import React, { useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import type { TierMapResult } from '../../types/tiermap';
 import {
   C,
@@ -12,27 +12,59 @@ import {
   deriveWriteConflicts,
   deriveReadAfterWrite,
 } from './constants';
+import TierFilterSidebar, { type TierFilters, getDefaultTierFilters, applyTierFilters } from '../shared/TierFilterSidebar';
 
 interface Props {
   data: TierMapResult;
 }
 
 const ExecOrderView: React.FC<Props> = ({ data }) => {
-  const sessionData = useMemo(() => buildSessionData(data), [data]);
-  const executionOrder = useMemo(() => buildExecutionOrder(data), [data]);
+  const [tierFilters, setTierFilters] = useState<TierFilters>(getDefaultTierFilters);
+  const filteredData = useMemo(() => applyTierFilters(data, tierFilters), [data, tierFilters]);
+  const sessionData = useMemo(() => buildSessionData(filteredData), [filteredData]);
+  const executionOrder = useMemo(() => buildExecutionOrder(filteredData), [filteredData]);
   const writeConflicts = useMemo(() => deriveWriteConflicts(sessionData), [sessionData]);
   const readAfterWrite = useMemo(() => deriveReadAfterWrite(sessionData), [sessionData]);
 
+  // Virtual scrolling for large lists
+  const ITEM_HEIGHT = 64;
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [containerHeight, setContainerHeight] = useState(600);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(entries => {
+      for (const e of entries) setContainerHeight(e.contentRect.height);
+    });
+    ro.observe(el);
+    setContainerHeight(el.clientHeight);
+    return () => ro.disconnect();
+  }, []);
+
+  const handleScroll = useCallback(() => {
+    if (scrollRef.current) setScrollTop(scrollRef.current.scrollTop);
+  }, []);
+
+  const useVirtual = executionOrder.length > 200;
+  const startIdx = useVirtual ? Math.max(0, Math.floor(scrollTop / ITEM_HEIGHT) - 3) : 0;
+  const endIdx = useVirtual ? Math.min(executionOrder.length, Math.ceil((scrollTop + containerHeight) / ITEM_HEIGHT) + 3) : executionOrder.length;
+  const visibleItems = executionOrder.slice(startIdx, endIdx);
+
   return (
-    <div style={{ overflowY: 'auto', height: '100%' }}>
+    <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
+    <div ref={scrollRef} onScroll={handleScroll} style={{ overflowY: 'auto', flex: 1 }}>
       <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 4 }}>
         Recommended Execution Order
       </div>
       <div style={{ fontSize: 10, color: C.textDim, marginBottom: 16 }}>
-        Respects all read-after-write chains and write conflicts
+        Respects all read-after-write chains and write conflicts ({executionOrder.length} sessions)
       </div>
 
-      {executionOrder.map((name, i) => {
+      {useVirtual && <div style={{ height: startIdx * ITEM_HEIGHT }} />}
+      {visibleItems.map((name, vi) => {
+        const i = startIdx + vi;
         const s = sessionData[name];
         if (!s) return null;
 
@@ -167,6 +199,9 @@ const ExecOrderView: React.FC<Props> = ({ data }) => {
           </div>
         );
       })}
+      {useVirtual && <div style={{ height: (executionOrder.length - endIdx) * ITEM_HEIGHT }} />}
+    </div>
+    <TierFilterSidebar data={data} filters={tierFilters} onChange={setTierFilters} compact />
     </div>
   );
 };

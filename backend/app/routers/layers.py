@@ -444,11 +444,25 @@ async def flow_walker(
             scc = g
             break
 
+    # Build mapping_detail — use parsed detail if available, else build minimal from session data
+    mapping_detail = session.get("mapping_detail")
+    if not mapping_detail:
+        # Build minimal mapping detail from session's sources/targets/lookups
+        instances = []
+        for src in session.get("sources", []):
+            instances.append({"name": src, "transformation_name": src, "type": "Source", "transformation_type": "Source Definition"})
+        for tgt in session.get("targets", []):
+            instances.append({"name": tgt, "transformation_name": tgt, "type": "Target", "transformation_type": "Target Definition"})
+        for lkp in session.get("lookups", []):
+            instances.append({"name": lkp, "transformation_name": lkp, "type": "Lookup", "transformation_type": "Lookup Procedure"})
+        if instances:
+            mapping_detail = {"instances": instances, "connectors": [], "fields": []}
+
     return {
         "session": session,
         "upstream": upstream,
         "downstream": downstream,
-        "mapping_detail": session.get("mapping_detail"),
+        "mapping_detail": mapping_detail,
         "tables_touched": tables_touched,
         "complexity": complexity,
         "wave_info": wave_info,

@@ -201,6 +201,12 @@ export default function LineageBuilder({ tierData, selectedSession, onSessionSel
           <div style={{ textAlign: 'center', padding: 32, color: '#64748b' }}>Loading lineage...</div>
         )}
 
+        {!loading && !lineageData && !sessionId && (
+          <div style={{ textAlign: 'center', padding: 32, color: '#64748b' }}>
+            Select a session above to view column-level lineage.
+          </div>
+        )}
+
         {!loading && lineageData?.message && (
           <div style={{ textAlign: 'center', padding: 32, color: '#64748b' }}>{lineageData.message}</div>
         )}

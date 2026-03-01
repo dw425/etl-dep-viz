@@ -4,7 +4,7 @@
  * writers).
  */
 
-import React, { useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import type { TierMapResult } from '../../types/tiermap';
 import {
   C,
@@ -12,13 +12,18 @@ import {
   deriveWriteConflicts,
   deriveReadAfterWrite,
 } from './constants';
+import TierFilterSidebar, { type TierFilters, getDefaultTierFilters, applyTierFilters } from '../shared/TierFilterSidebar';
+
+const PAGE_SIZE = 100;
 
 interface Props {
   data: TierMapResult;
 }
 
 const ConflictsView: React.FC<Props> = ({ data }) => {
-  const sessionData = useMemo(() => buildSessionData(data), [data]);
+  const [tierFilters, setTierFilters] = useState<TierFilters>(getDefaultTierFilters);
+  const filteredData = useMemo(() => applyTierFilters(data, tierFilters), [data, tierFilters]);
+  const sessionData = useMemo(() => buildSessionData(filteredData), [filteredData]);
   const writeConflicts = useMemo(() => deriveWriteConflicts(sessionData), [sessionData]);
   const readAfterWrite = useMemo(() => deriveReadAfterWrite(sessionData), [sessionData]);
 
@@ -31,8 +36,14 @@ const ConflictsView: React.FC<Props> = ({ data }) => {
     [readAfterWrite],
   );
 
+  const [conflictPage, setConflictPage] = useState(1);
+  const [chainPage, setChainPage] = useState(1);
+  const visibleConflicts = conflictEntries.slice(0, conflictPage * PAGE_SIZE);
+  const visibleChains = rawEntries.slice(0, chainPage * PAGE_SIZE);
+
   return (
-    <div style={{ overflowY: 'auto', height: '100%' }}>
+    <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
+    <div style={{ overflowY: 'auto', flex: 1 }}>
       {/* ── Write-Write Conflicts ──────────────────────────────────────────── */}
       <div style={{ marginBottom: 24 }}>
         <div
@@ -70,7 +81,7 @@ const ConflictsView: React.FC<Props> = ({ data }) => {
           </div>
         )}
 
-        {conflictEntries.map(([table, writers]) => (
+        {visibleConflicts.map(([table, writers]) => (
           <div
             key={table}
             style={{
@@ -111,6 +122,17 @@ const ConflictsView: React.FC<Props> = ({ data }) => {
             </div>
           </div>
         ))}
+        {visibleConflicts.length < conflictEntries.length && (
+          <button
+            onClick={() => setConflictPage(p => p + 1)}
+            style={{
+              fontSize: 11, padding: '8px 16px', borderRadius: 6, border: '1px solid ' + C.border,
+              background: C.surface, color: C.text, cursor: 'pointer', width: '100%', marginTop: 4,
+            }}
+          >
+            Show more ({conflictEntries.length - visibleConflicts.length} remaining)
+          </button>
+        )}
       </div>
 
       {/* ── Read-After-Write Chains ────────────────────────────────────────── */}
@@ -149,7 +171,7 @@ const ConflictsView: React.FC<Props> = ({ data }) => {
           </div>
         )}
 
-        {rawEntries.map(([table, { writers, readers }]) => (
+        {visibleChains.map(([table, { writers, readers }]) => (
           <div
             key={table}
             style={{
@@ -247,7 +269,20 @@ const ConflictsView: React.FC<Props> = ({ data }) => {
             </div>
           </div>
         ))}
+        {visibleChains.length < rawEntries.length && (
+          <button
+            onClick={() => setChainPage(p => p + 1)}
+            style={{
+              fontSize: 11, padding: '8px 16px', borderRadius: 6, border: '1px solid ' + C.border,
+              background: C.surface, color: C.text, cursor: 'pointer', width: '100%', marginTop: 4,
+            }}
+          >
+            Show more ({rawEntries.length - visibleChains.length} remaining)
+          </button>
+        )}
       </div>
+    </div>
+    <TierFilterSidebar data={data} filters={tierFilters} onChange={setTierFilters} compact />
     </div>
   );
 };

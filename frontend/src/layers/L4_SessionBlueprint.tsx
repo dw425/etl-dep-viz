@@ -35,14 +35,14 @@ export default function L4_SessionBlueprint() {
   const sessionId = currentParams.sessionId || '';
 
   useEffect(() => {
-    if (tierData && vectorResults && sessionId) {
+    if (tierData && sessionId) {
       setLoading(true);
       getL4Data(tierData, sessionId)
         .then(d => setL4Data(d))
         .catch(err => console.error('L4 load failed:', err))
         .finally(() => setLoading(false));
     }
-  }, [tierData, vectorResults, sessionId]);
+  }, [tierData, sessionId]);
 
   const session = l4Data?.session as TierSession | undefined;
   const complexity = l4Data?.complexity as SessionComplexityScore | undefined;

@@ -147,11 +147,35 @@ async def limit_body_size(request: Request, call_next):
     return await call_next(request)
 
 
+# Timeout handler — return 408 for processing timeouts
+@app.exception_handler(TimeoutError)
+async def timeout_exception_handler(request: Request, exc: TimeoutError):
+    cid = correlation_id.get('-')
+    logger.warning("cid=%s Timeout on %s %s: %s", cid, request.method, request.url.path, exc)
+    record_error(error_type="TimeoutError", message=str(exc)[:500], severity="warning")
+    return JSONResponse(
+        status_code=408,
+        content={"detail": "Request timed out", "type": "TimeoutError", "correlation_id": cid},
+    )
+
+
 # Global exception handler — return JSON instead of stack traces
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     from app.utils.errors import ETLMigrationError
     cid = correlation_id.get('-')
+    # Import errors for optional AI deps → 503 Service Unavailable
+    if isinstance(exc, (ImportError, ModuleNotFoundError)):
+        logger.warning("cid=%s Missing dependency on %s %s: %s", cid, request.method, request.url.path, exc)
+        record_error(error_type="ImportError", message=str(exc)[:500], severity="warning")
+        return JSONResponse(
+            status_code=503,
+            content={
+                "detail": f"Missing dependency: {exc}",
+                "type": "ServiceUnavailable",
+                "correlation_id": cid,
+            },
+        )
     logger.exception("cid=%s Unhandled error on %s %s", cid, request.method, request.url.path)
     if isinstance(exc, ETLMigrationError):
         record_error(

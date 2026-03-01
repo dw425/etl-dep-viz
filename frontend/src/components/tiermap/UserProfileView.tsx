@@ -30,15 +30,19 @@ export default function UserProfileView({ onLoadUpload }: Props) {
   const userId = getUserId();
 
   const loadData = useCallback(async () => {
-    const [u, up, act] = await Promise.all([
-      getUser(),
-      getUserUploads(),
-      getUserActivity(),
-    ]);
-    setProfile(u);
-    setDisplayName((u.display_name as string) || '');
-    setUploads(up);
-    setActivity(act);
+    try {
+      const [u, up, act] = await Promise.all([
+        getUser(),
+        getUserUploads(),
+        getUserActivity(),
+      ]);
+      setProfile(u);
+      setDisplayName((u.display_name as string) || '');
+      setUploads(up);
+      setActivity(act);
+    } catch {
+      // Graceful fallback — profile view still renders with empty data
+    }
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);

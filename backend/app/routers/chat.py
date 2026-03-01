@@ -133,6 +133,30 @@ async def index_upload(upload_id: int, db: Session = Depends(get_db)):
     return {"status": "indexed", **stats}
 
 
+# ── Re-index with vectors ────────────────────────────────────────────────
+
+@router.post("/reindex/{upload_id}")
+async def reindex_upload(upload_id: int, db: Session = Depends(get_db)):
+    """Re-index after vector analysis to enrich documents with V1-V11 data."""
+    upload = db.query(Upload).filter(Upload.id == upload_id).first()
+    if not upload:
+        raise HTTPException(404, "Upload not found")
+
+    tier_data = upload.get_tier_data()
+    vector_results = upload.get_vector_results()
+    if not vector_results:
+        raise HTTPException(400, "No vector results available. Run vector analysis first.")
+
+    from app.engines.indexing_pipeline import IndexingPipeline
+    pipeline = IndexingPipeline(
+        embedding_mode=settings.embedding_mode,
+        embedding_model=settings.embedding_model,
+        chroma_persist_dir=settings.chroma_persist_dir,
+    )
+    stats = pipeline.reindex_with_vectors(upload_id, tier_data, vector_results)
+    return {"status": "reindexed", **stats}
+
+
 # ── Chat endpoint ─────────────────────────────────────────────────────────
 
 @router.post("/{upload_id}", response_model=ChatResponse)

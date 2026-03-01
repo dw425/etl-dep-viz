@@ -3,13 +3,20 @@
  * Click a card to switch the tier diagram to that chunk's sessions.
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import type { ConstellationChunk, TableReferenceEntry } from '../../types/tiermap';
 
 const C = {
   bg: '#080C14', surface: '#111827', border: '#1e293b',
   text: '#e2e8f0', muted: '#64748b', dim: '#475569',
 };
+
+const TIER_COLORS = ['#3B82F6','#EAB308','#A855F7','#10B981','#F97316','#06B6D4','#EC4899','#84CC16'];
+function tierColor(t: number): string {
+  return TIER_COLORS[Math.max(0, Math.floor(t) - 1) % TIER_COLORS.length];
+}
+
+type SortKey = 'default' | 'sessions' | 'tiers' | 'conflicts';
 
 interface ChunkSelectorProps {
   chunks: ConstellationChunk[];
@@ -20,17 +27,51 @@ interface ChunkSelectorProps {
   tableRanking?: TableReferenceEntry[];
 }
 
+const VIRTUAL_ITEM_HEIGHT = 120;
+const VIRTUAL_OVERSCAN = 4;
+
 export default function ChunkSelector({ chunks, activeChunkId, onSelect, onBack, algorithm, tableRanking }: ChunkSelectorProps) {
   const [search, setSearch] = useState('');
+  const [sortBy, setSortBy] = useState<SortKey>('default');
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [containerHeight, setContainerHeight] = useState(600);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const obs = new ResizeObserver(entries => {
+      for (const e of entries) setContainerHeight(e.contentRect.height);
+    });
+    obs.observe(el);
+    setContainerHeight(el.clientHeight);
+    return () => obs.disconnect();
+  }, []);
+
+  const handleScroll = useCallback(() => {
+    if (scrollRef.current) setScrollTop(scrollRef.current.scrollTop);
+  }, []);
 
   const filtered = useMemo(() => {
-    if (!search.trim()) return chunks;
-    const q = search.toLowerCase();
-    return chunks.filter((c) =>
-      c.label.toLowerCase().includes(q) ||
-      c.pivot_tables.some((t) => t.toLowerCase().includes(q)),
-    );
-  }, [chunks, search]);
+    let list = chunks;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      list = list.filter((c) =>
+        c.label.toLowerCase().includes(q) ||
+        c.pivot_tables.some((t) => t.toLowerCase().includes(q)),
+      );
+    }
+    if (sortBy === 'sessions') list = [...list].sort((a, b) => b.session_count - a.session_count);
+    else if (sortBy === 'tiers') list = [...list].sort((a, b) => a.tier_range[0] - b.tier_range[0]);
+    else if (sortBy === 'conflicts') list = [...list].sort((a, b) => b.conflict_count - a.conflict_count);
+    return list;
+  }, [chunks, search, sortBy]);
+
+  const useVirtual = filtered.length > 80;
+  const totalHeight = useVirtual ? filtered.length * VIRTUAL_ITEM_HEIGHT : 0;
+  const startIdx = useVirtual ? Math.max(0, Math.floor(scrollTop / VIRTUAL_ITEM_HEIGHT) - VIRTUAL_OVERSCAN) : 0;
+  const endIdx = useVirtual ? Math.min(filtered.length, Math.ceil((scrollTop + containerHeight) / VIRTUAL_ITEM_HEIGHT) + VIRTUAL_OVERSCAN) : filtered.length;
+  const visibleChunks = useVirtual ? filtered.slice(startIdx, endIdx) : filtered;
 
   return (
     <div style={{
@@ -50,7 +91,7 @@ export default function ChunkSelector({ chunks, activeChunkId, onSelect, onBack,
         ← Back to Constellation
       </button>
 
-      {/* Search */}
+      {/* Search + Sort */}
       <div style={{ padding: '8px 10px', borderBottom: `1px solid ${C.border}` }}>
         <input
           type="text"
@@ -64,6 +105,19 @@ export default function ChunkSelector({ chunks, activeChunkId, onSelect, onBack,
             fontFamily: "'JetBrains Mono', monospace",
           }}
         />
+        <div style={{ display: 'flex', gap: 4, marginTop: 6, flexWrap: 'wrap' }}>
+          {([['default', 'Default'], ['sessions', 'Sessions'], ['tiers', 'Tier'], ['conflicts', 'Conflicts']] as const).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setSortBy(key)}
+              style={{
+                padding: '2px 6px', borderRadius: 3, border: 'none', cursor: 'pointer',
+                background: sortBy === key ? 'rgba(59,130,246,0.15)' : 'rgba(255,255,255,0.03)',
+                color: sortBy === key ? '#60A5FA' : C.dim, fontSize: 9, fontWeight: 600,
+              }}
+            >{label}</button>
+          ))}
+        </div>
       </div>
 
       {/* Top Tables summary — table_gravity only */}
@@ -112,10 +166,17 @@ export default function ChunkSelector({ chunks, activeChunkId, onSelect, onBack,
       )}
 
       {/* Chunk cards */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '6px 8px' }}>
-        {filtered.map((chunk) => {
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        style={{ flex: 1, overflowY: 'auto', padding: '6px 8px' }}
+      >
+        {useVirtual && <div style={{ height: startIdx * VIRTUAL_ITEM_HEIGHT }} />}
+        {visibleChunks.map((chunk) => {
           const isActive = chunk.id === activeChunkId;
           const isGravity = algorithm === 'table_gravity';
+          // Tier distribution: count sessions per tier within this chunk's range
+          const tierDist = getTierDistribution(chunk);
           return (
             <div
               key={chunk.id}
@@ -128,7 +189,6 @@ export default function ChunkSelector({ chunks, activeChunkId, onSelect, onBack,
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                {/* Color dot */}
                 <div style={{
                   width: 8, height: 8, borderRadius: '50%',
                   background: chunk.color, flexShrink: 0,
@@ -139,7 +199,6 @@ export default function ChunkSelector({ chunks, activeChunkId, onSelect, onBack,
                 }}>
                   {chunk.label}
                 </span>
-                {/* Session count badge */}
                 <span style={{
                   fontSize: 9, fontWeight: 700, fontFamily: 'monospace',
                   padding: '1px 5px', borderRadius: 4,
@@ -149,7 +208,6 @@ export default function ChunkSelector({ chunks, activeChunkId, onSelect, onBack,
                 </span>
               </div>
 
-              {/* Anchor table info — table_gravity only */}
               {isGravity && !!chunk.anchor_table && (
                 <div style={{
                   fontSize: 8, color: '#FBBF24', fontFamily: 'monospace',
@@ -172,12 +230,26 @@ export default function ChunkSelector({ chunks, activeChunkId, onSelect, onBack,
                 </div>
               )}
 
-              {/* Tier range */}
+              {/* Tier distribution bar */}
+              {tierDist.length > 0 && (
+                <div style={{
+                  display: 'flex', height: 4, borderRadius: 2, overflow: 'hidden',
+                  marginBottom: 3, background: 'rgba(255,255,255,0.03)',
+                }}>
+                  {tierDist.map(({ tier, pct }) => (
+                    <div key={tier} style={{
+                      width: `${pct}%`, height: '100%',
+                      background: tierColor(tier),
+                      minWidth: pct > 0 ? 2 : 0,
+                    }} />
+                  ))}
+                </div>
+              )}
+
               <div style={{ fontSize: 9, color: C.muted, marginBottom: 3 }}>
                 Tier {chunk.tier_range[0]}–{chunk.tier_range[1]}
               </div>
 
-              {/* Pivot tables (top 2) */}
               {chunk.pivot_tables.length > 0 && (
                 <div style={{
                   fontSize: 8, color: C.dim, fontFamily: 'monospace',
@@ -187,7 +259,6 @@ export default function ChunkSelector({ chunks, activeChunkId, onSelect, onBack,
                 </div>
               )}
 
-              {/* Conflict/chain badges */}
               {(chunk.conflict_count > 0 || chunk.chain_count > 0) && (
                 <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
                   {chunk.conflict_count > 0 && (
@@ -211,6 +282,7 @@ export default function ChunkSelector({ chunks, activeChunkId, onSelect, onBack,
             </div>
           );
         })}
+        {useVirtual && <div style={{ height: (filtered.length - endIdx) * VIRTUAL_ITEM_HEIGHT }} />}
         {filtered.length === 0 && (
           <div style={{ padding: 20, textAlign: 'center', color: C.dim, fontSize: 11 }}>
             No clusters match
@@ -218,13 +290,24 @@ export default function ChunkSelector({ chunks, activeChunkId, onSelect, onBack,
         )}
       </div>
 
-      {/* Footer: total count */}
+      {/* Footer */}
       <div style={{
         padding: '6px 12px', borderTop: `1px solid ${C.border}`,
         fontSize: 9, color: C.muted, textAlign: 'center',
       }}>
-        {chunks.length} clusters · {chunks.reduce((a, c) => a + c.session_count, 0)} sessions
+        {filtered.length}/{chunks.length} clusters · {filtered.reduce((a, c) => a + c.session_count, 0)} sessions
       </div>
     </div>
   );
+}
+
+function getTierDistribution(chunk: ConstellationChunk): Array<{ tier: number; pct: number }> {
+  const [lo, hi] = chunk.tier_range;
+  if (lo === hi) return [{ tier: lo, pct: 100 }];
+  const tierCount = hi - lo + 1;
+  // Approximate distribution: even split across tier range
+  return Array.from({ length: tierCount }, (_, i) => ({
+    tier: lo + i,
+    pct: 100 / tierCount,
+  }));
 }

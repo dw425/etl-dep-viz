@@ -48,6 +48,8 @@ const TierDiagramInner: React.FC<Props> = ({ data }) => {
   const [hov, setHov] = useState<string | null>(null);
   const [sel, setSel] = useState<string | null>(null);
   const [hiddenTiers, setHiddenTiers] = useState<Set<number>>(() => new Set());
+  const [collapsedTiers, setCollapsedTiers] = useState<Set<number>>(() => new Set());
+  const [hideMinorConns, setHideMinorConns] = useState(false);
 
   const regRef = useCallback((id: string, el: HTMLDivElement | null) => {
     if (el) nodeRefs.current[id] = el;
@@ -56,6 +58,12 @@ const TierDiagramInner: React.FC<Props> = ({ data }) => {
   /* ── Derived data ────────────────────────────────────────────────────── */
 
   const tGroupsData = useMemo(() => buildTierGroups(data), [data]);
+
+  // Auto-collapse tiers with >200 sessions on initial render
+  useEffect(() => {
+    const large = tGroupsData.filter(g => g.sessions.length > 200).map(g => g.tier);
+    if (large.length > 0) setCollapsedTiers(new Set(large));
+  }, [tGroupsData]);
 
   const nodeTierMap = useMemo(() => {
     const m = new Map<string, number>();
@@ -69,9 +77,14 @@ const TierDiagramInner: React.FC<Props> = ({ data }) => {
       data.connections.filter(cn => {
         const fT = nodeTierMap.get(cn.from);
         const tT = nodeTierMap.get(cn.to);
-        return fT !== undefined && !hiddenTiers.has(fT) && tT !== undefined && !hiddenTiers.has(tT);
+        if (fT === undefined || hiddenTiers.has(fT) || tT === undefined || hiddenTiers.has(tT)) return false;
+        // When hiding minor connections and total > 500, drop source_read first
+        if (hideMinorConns && data.connections.length > 500) {
+          if (cn.type === 'source_read') return false;
+        }
+        return true;
       }),
-    [data.connections, hiddenTiers, nodeTierMap],
+    [data.connections, hiddenTiers, nodeTierMap, hideMinorConns],
   );
 
   const visibleGroups = useMemo(
@@ -297,10 +310,20 @@ const TierDiagramInner: React.FC<Props> = ({ data }) => {
                     color: cfg.color,
                     textTransform: 'uppercase' as const,
                     letterSpacing: '0.1em',
-                    marginBottom: 12,
+                    marginBottom: collapsedTiers.has(g.tier) ? 0 : 12,
                     display: 'flex',
                     alignItems: 'center',
                     gap: 8,
+                    cursor: g.sessions.length > 50 ? 'pointer' : 'default',
+                  }}
+                  onClick={() => {
+                    if (g.sessions.length > 50) {
+                      setCollapsedTiers(prev => {
+                        const next = new Set(prev);
+                        if (next.has(g.tier)) next.delete(g.tier); else next.add(g.tier);
+                        return next;
+                      });
+                    }
                   }}
                 >
                   <div
@@ -312,6 +335,9 @@ const TierDiagramInner: React.FC<Props> = ({ data }) => {
                     }}
                   />
                   {cfg.label}
+                  {collapsedTiers.has(g.tier) && (
+                    <span style={{ fontSize: 9, color: cfg.color, opacity: 0.8 }}>(collapsed — click to expand)</span>
+                  )}
                   <span
                     style={{
                       marginLeft: 'auto',
@@ -329,7 +355,8 @@ const TierDiagramInner: React.FC<Props> = ({ data }) => {
                   </span>
                 </div>
 
-                {/* Nodes */}
+                {/* Nodes — hidden when tier is collapsed */}
+                {!collapsedTiers.has(g.tier) && (
                 <div
                   style={{
                     display: 'flex',
@@ -562,6 +589,7 @@ const TierDiagramInner: React.FC<Props> = ({ data }) => {
                     );
                   })}
                 </div>
+                )}
               </div>
             );
           })}
@@ -995,6 +1023,40 @@ const TierDiagramInner: React.FC<Props> = ({ data }) => {
               </div>
             </div>
           ))}
+        </div>
+
+        {/* Connection Legend */}
+        <div
+          style={{
+            padding: '10px 14px',
+            borderTop: '1px solid #1E293B',
+            flexShrink: 0,
+          }}
+        >
+          <div style={{ fontSize: 9, fontWeight: 700, color: '#64748B', textTransform: 'uppercase' as const, letterSpacing: '0.1em', marginBottom: 6 }}>
+            Connection Types
+          </div>
+          {(Object.entries(connTypes) as [TierConn['type'], ConnTypeConfig][]).map(([k, v]) => {
+            const count = activeConns.filter(c => c.type === k).length;
+            if (count === 0) return null;
+            return (
+              <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                <div style={{ width: 16, height: 3, borderRadius: 1, background: v.color, flexShrink: 0 }} />
+                <span style={{ fontSize: 8, color: '#94A3B8', flex: 1 }}>{k.replace(/_/g, ' ')}</span>
+                <span style={{ fontSize: 8, color: '#64748B', fontFamily: 'monospace' }}>{count}</span>
+              </div>
+            );
+          })}
+          {data.connections.length > 500 && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, cursor: 'pointer', fontSize: 9, color: '#64748B' }}>
+              <input
+                type="checkbox"
+                checked={hideMinorConns}
+                onChange={() => setHideMinorConns(h => !h)}
+              />
+              Hide minor connections
+            </label>
+          )}
         </div>
       </div>
     </div>

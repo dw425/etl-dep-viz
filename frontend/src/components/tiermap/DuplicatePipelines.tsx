@@ -6,6 +6,7 @@
 
 import React, { useMemo, useState } from 'react';
 import type { TierMapResult } from '../../types/tiermap';
+import TierFilterSidebar, { type TierFilters, getDefaultTierFilters, applyTierFilters } from '../shared/TierFilterSidebar';
 
 interface Props {
   data: TierMapResult;
@@ -40,9 +41,11 @@ function computeTableSet(s: any): Set<string> {
 export default function DuplicatePipelines({ data }: Props) {
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
   const [filterType, setFilterType] = useState<'all' | 'exact' | 'near' | 'partial'>('all');
+  const [tierFilters, setTierFilters] = useState<TierFilters>(getDefaultTierFilters);
+  const filteredData = useMemo(() => applyTierFilters(data, tierFilters), [data, tierFilters]);
 
   const groups = useMemo(() => {
-    const sessions = data.sessions;
+    const sessions = filteredData.sessions;
     const result: DuplicateGroup[] = [];
     const used = new Set<string>();
 
@@ -69,7 +72,8 @@ export default function DuplicatePipelines({ data }: Props) {
     }
 
     // Phase 2: Near matches (Jaccard >= 0.7) and Partial (>= 0.4)
-    const remaining = sessions.filter(s => !used.has(s.id));
+    // Cap at 2000 sessions to keep O(n²) Jaccard feasible
+    const remaining = sessions.filter(s => !used.has(s.id)).slice(0, 2000);
     const tableSets = remaining.map(s => ({ session: s, tables: computeTableSet(s) }));
 
     for (let i = 0; i < tableSets.length; i++) {
@@ -115,9 +119,11 @@ export default function DuplicatePipelines({ data }: Props) {
     }
 
     return result.sort((a, b) => b.sessions.length - a.sessions.length);
-  }, [data]);
+  }, [filteredData]);
 
-  const filtered = filterType === 'all' ? groups : groups.filter(g => g.matchType === filterType);
+  const [groupPage, setGroupPage] = useState(1);
+  const allFiltered = filterType === 'all' ? groups : groups.filter(g => g.matchType === filterType);
+  const filtered = allFiltered.slice(0, groupPage * 100);
   const selected = selectedGroup ? groups.find(g => g.id === selectedGroup) : null;
 
   const exactCount = groups.filter(g => g.matchType === 'exact').length;
@@ -195,6 +201,17 @@ export default function DuplicatePipelines({ data }: Props) {
               );
             })
           )}
+          {filtered.length < allFiltered.length && (
+            <button
+              onClick={() => setGroupPage(p => p + 1)}
+              style={{
+                fontSize: 10, padding: '6px 12px', borderRadius: 4, border: '1px solid #334155',
+                background: '#1e293b', color: '#94a3b8', cursor: 'pointer', width: '100%', marginTop: 4,
+              }}
+            >
+              Show more ({allFiltered.length - filtered.length} remaining)
+            </button>
+          )}
         </div>
       </div>
 
@@ -249,6 +266,7 @@ export default function DuplicatePipelines({ data }: Props) {
           </div>
         )}
       </div>
+      <TierFilterSidebar data={data} filters={tierFilters} onChange={setTierFilters} compact />
     </div>
   );
 }

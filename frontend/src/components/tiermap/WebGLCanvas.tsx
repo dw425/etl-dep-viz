@@ -141,6 +141,8 @@ interface WebGLCanvasProps {
   onSessionSelect?: (sessionId: string) => void;
   width?: number;
   height?: number;
+  hiddenTiers?: Set<number>;
+  onHiddenTiersChange?: (tiers: Set<number>) => void;
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -150,6 +152,8 @@ export default function WebGLCanvas({
   onSessionSelect,
   width: propWidth,
   height: propHeight,
+  hiddenTiers: externalHiddenTiers,
+  onHiddenTiersChange,
 }: WebGLCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -159,11 +163,59 @@ export default function WebGLCanvas({
   const rafRef = useRef<number>(0);
   const [dims, setDims] = useState({ w: propWidth || 1200, h: propHeight || 800 });
   const [hoverNode, setHoverNode] = useState<LayoutNode | null>(null);
+  const [showSidebar, setShowSidebar] = useState(true);
+  const [internalHiddenTiers, setInternalHiddenTiers] = useState<Set<number>>(new Set());
+  const hiddenTiers = externalHiddenTiers ?? internalHiddenTiers;
+  const setHiddenTiers = onHiddenTiersChange ?? setInternalHiddenTiers;
+
+  // Filter data by hidden tiers
+  const filteredData = useMemo(() => {
+    if (hiddenTiers.size === 0) return data;
+    const sessions = data.sessions.filter(s => !hiddenTiers.has(Math.floor(s.tier)));
+    const sessionIds = new Set(sessions.map(s => s.id));
+    const connections = data.connections.filter(c => sessionIds.has(c.from) || sessionIds.has(c.to));
+    const tableIds = new Set<string>();
+    connections.forEach(c => {
+      if (!sessionIds.has(c.from)) tableIds.add(c.from);
+      if (!sessionIds.has(c.to)) tableIds.add(c.to);
+    });
+    const tables = data.tables.filter(t => tableIds.has(t.id));
+    return { ...data, sessions, tables, connections };
+  }, [data, hiddenTiers]);
+
+  // Tier stats for sidebar
+  const tierStats = useMemo(() => {
+    const stats: Record<number, { count: number; color: string }> = {};
+    for (const s of data.sessions) {
+      const tier = Math.floor(s.tier);
+      if (!stats[tier]) stats[tier] = { count: 0, color: TIER_COLORS[(tier - 1) % TIER_COLORS.length] };
+      stats[tier].count++;
+    }
+    return Object.entries(stats)
+      .map(([t, s]) => ({ tier: Number(t), ...s }))
+      .sort((a, b) => a.tier - b.tier);
+  }, [data.sessions]);
+
+  // Top density nodes
+  const topNodes = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const c of data.connections) {
+      counts[c.from] = (counts[c.from] || 0) + 1;
+      counts[c.to] = (counts[c.to] || 0) + 1;
+    }
+    return Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 12)
+      .map(([id, count]) => {
+        const s = data.sessions.find(s => s.id === id);
+        return { id, name: s?.name || id, count, max: Object.values(counts).reduce((a, b) => Math.max(a, b), 1) };
+      });
+  }, [data]);
 
   // Build layout
   const layout = useMemo(
-    () => buildLayout(data, dims.w, dims.h),
-    [data, dims.w, dims.h],
+    () => buildLayout(filteredData, dims.w, dims.h),
+    [filteredData, dims.w, dims.h],
   );
 
   // Build spatial index
@@ -384,13 +436,79 @@ export default function WebGLCanvas({
   }
 
   return (
-    <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'relative' }}>
-      <canvas
-        ref={canvasRef}
-        style={{ width: '100%', height: '100%', cursor: hoverNode ? 'pointer' : 'grab' }}
-        onMouseMove={handleMouseMove}
-        onClick={handleClick}
-      />
+    <div style={{ display: 'flex', width: '100%', height: '100%' }}>
+      <div ref={containerRef} style={{ flex: 1, position: 'relative' }}>
+        <canvas
+          ref={canvasRef}
+          style={{ width: '100%', height: '100%', cursor: hoverNode ? 'pointer' : 'grab' }}
+          onMouseMove={handleMouseMove}
+          onClick={handleClick}
+        />
+      </div>
+      {showSidebar && (
+        <div style={{
+          width: 260, borderLeft: '1px solid #1e293b', background: '#111827',
+          overflow: 'auto', flexShrink: 0, padding: 12, fontSize: 11,
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <span style={{ fontWeight: 700, color: '#e2e8f0', fontSize: 12 }}>Tier Filter</span>
+            <button onClick={() => setShowSidebar(false)} style={{ background: 'transparent', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: 14 }}>x</button>
+          </div>
+          {tierStats.map(ts => (
+            <label key={ts.tier} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={!hiddenTiers.has(ts.tier)}
+                onChange={() => {
+                  const next = new Set(hiddenTiers);
+                  if (next.has(ts.tier)) next.delete(ts.tier);
+                  else next.add(ts.tier);
+                  setHiddenTiers(next);
+                }}
+                style={{ accentColor: ts.color }}
+              />
+              <div style={{ width: 8, height: 8, borderRadius: '50%', background: ts.color, flexShrink: 0 }} />
+              <span style={{ color: '#e2e8f0', flex: 1 }}>Tier {ts.tier}</span>
+              <span style={{ color: '#64748b' }}>{ts.count}</span>
+            </label>
+          ))}
+
+          {/* Selected node detail */}
+          {hoverNode && (
+            <div style={{ marginTop: 16, padding: 10, borderRadius: 6, background: '#0f172a', border: '1px solid #1e293b' }}>
+              <div style={{ fontWeight: 600, color: '#e2e8f0', marginBottom: 4 }}>{hoverNode.label}</div>
+              <div style={{ color: '#64748b' }}>Type: {hoverNode.type}</div>
+              <div style={{ color: '#64748b' }}>Tier: {hoverNode.tier}</div>
+            </div>
+          )}
+
+          {/* Connection density */}
+          <div style={{ marginTop: 16 }}>
+            <div style={{ fontWeight: 700, color: '#e2e8f0', marginBottom: 8 }}>Top Connections</div>
+            {topNodes.map(n => (
+              <div key={n.id} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                <span style={{ color: '#e2e8f0', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 10 }}>{n.name}</span>
+                <div style={{ width: 60, height: 4, borderRadius: 2, background: '#1e293b', overflow: 'hidden' }}>
+                  <div style={{ width: `${(n.count / n.max) * 100}%`, height: '100%', background: '#3b82f6', borderRadius: 2 }} />
+                </div>
+                <span style={{ color: '#64748b', fontSize: 9, minWidth: 20, textAlign: 'right' }}>{n.count}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {!showSidebar && (
+        <button
+          onClick={() => setShowSidebar(true)}
+          style={{
+            position: 'absolute', right: 8, top: 8, padding: '4px 8px', borderRadius: 4,
+            background: '#111827', border: '1px solid #1e293b', color: '#64748b',
+            fontSize: 10, cursor: 'pointer',
+          }}
+        >
+          Filter
+        </button>
+      )}
     </div>
   );
 }

@@ -265,6 +265,52 @@ def _build_lookup_map(folder: Any) -> Dict[str, str]:
     return lkp
 
 
+# ── Connection profile extraction ─────────────────────────────────────────────
+
+def _extract_connection_profiles(root: Any) -> List[Dict[str, str]]:
+    """Extract DBCONNECTION elements from the XML root into connection profiles.
+
+    Returns a list of dicts with keys: name, dbtype, dbsubtype, connection_string.
+    """
+    profiles: List[Dict[str, str]] = []
+    seen: Set[str] = set()
+    for conn in _iter(root, 'DBCONNECTION'):
+        name = _attr(conn, 'NAME').strip()
+        if not name or name.upper() in seen:
+            continue
+        seen.add(name.upper())
+        dbtype = _attr(conn, 'DBTYPE').strip()
+        dbsubtype = _attr(conn, 'DBSUBTYPE').strip()
+        connstr = _attr(conn, 'CONNECTIONSTRING').strip() or _attr(conn, 'CONNECTSTRING').strip()
+        profiles.append({
+            'name': name,
+            'dbtype': dbtype or 'Unknown',
+            'dbsubtype': dbsubtype,
+            'connection_string': connstr,
+        })
+    return profiles
+
+
+def _extract_session_connections(root: Any) -> Dict[str, List[Dict[str, str]]]:
+    """Map session names to their connection references from SESSIONEXTENSION elements.
+
+    Returns {SESSION_NAME_UPPER: [{connection_name, dbtype}]}.
+    """
+    session_conns: Dict[str, List[Dict[str, str]]] = defaultdict(list)
+    for sess_ext in _iter(root, 'SESSIONEXTENSION'):
+        sess_name = _attr(sess_ext, 'SINSTANCENAME').strip().upper() or _attr(sess_ext, 'TRANSFORMATIONNAME').strip().upper()
+        conn_name = _attr(sess_ext, 'CONNECTIONNAME').strip()
+        dbtype = _attr(sess_ext, 'CONNECTIONSUBTYPE').strip() or _attr(sess_ext, 'CONNECTIONTYPE').strip()
+        if sess_name and conn_name:
+            existing = [c['connection_name'] for c in session_conns[sess_name]]
+            if conn_name not in existing:
+                session_conns[sess_name].append({
+                    'connection_name': conn_name,
+                    'dbtype': dbtype or 'Unknown',
+                })
+    return dict(session_conns)
+
+
 # ── Per-file parsing ───────────────────────────────────────────────────────────
 
 def _parse_file(content: bytes, fname: str) -> Dict[str, Any]:
@@ -898,6 +944,33 @@ def analyze(
             'warnings': warnings or ['No sessions found in uploaded files.'],
         }
 
+    # ── Phase 1b: extract connection profiles from raw XML ─────────────────
+    connection_profiles: List[Dict[str, str]] = []
+    session_connections: Dict[str, List[Dict[str, str]]] = {}
+    try:
+        for content in xml_contents:
+            root = _parse_xml(content)
+            profiles = _extract_connection_profiles(root)
+            for p in profiles:
+                if not any(ep['name'] == p['name'] for ep in connection_profiles):
+                    connection_profiles.append(p)
+            sc = _extract_session_connections(root)
+            for sname, conns in sc.items():
+                if sname not in session_connections:
+                    session_connections[sname] = conns
+                else:
+                    existing_names = {c['connection_name'] for c in session_connections[sname]}
+                    for c in conns:
+                        if c['connection_name'] not in existing_names:
+                            session_connections[sname].append(c)
+            del root  # free memory
+    except Exception as exc:
+        logger.warning("Connection profile extraction failed: %s", exc)
+
+    if connection_profiles:
+        logger.info("Extracted %d connection profiles, %d session-connection mappings",
+                     len(connection_profiles), len(session_connections))
+
     # ── Phase 2: normalise all table refs to canonical uppercase table names ─
     logger.info("Phase 2: normalizing table refs for %d sessions", len(all_sessions))
     import time as _time
@@ -914,6 +987,54 @@ def analyze(
         ))
 
     logger.info("Phase 2 done in %dms", int((_time.monotonic() - _phase_t0) * 1000))
+
+    # ── Phase 2b: session deduplication ────────────────────────────────────
+    # Dedup key: (full_session_name, mapping_name, sorted_targets)
+    # On duplicate: keep the session with richer data (more sources/lookups)
+    _phase_t0 = _time.monotonic()
+    before_dedup = len(all_sessions)
+    dedup_map: Dict[tuple, str] = {}  # dedup_key → session_name to keep
+    dups_to_remove: List[str] = []
+    for sname, sd in all_sessions.items():
+        dedup_key = (
+            sd.get('full', sname),
+            sd.get('mapping', ''),
+            tuple(sorted(sd.get('targets', []))),
+        )
+        if dedup_key in dedup_map:
+            # Keep the one with more data
+            existing_name = dedup_map[dedup_key]
+            existing = all_sessions[existing_name]
+            existing_richness = len(existing.get('sources', [])) + len(existing.get('lookups', []))
+            new_richness = len(sd.get('sources', [])) + len(sd.get('lookups', []))
+            if new_richness > existing_richness:
+                # New one is richer — merge into new, remove old
+                sd['sources'] = list(dict.fromkeys(sd['sources'] + existing.get('sources', [])))
+                sd['targets'] = list(dict.fromkeys(sd['targets'] + existing.get('targets', [])))
+                sd['lookups'] = list(dict.fromkeys(sd['lookups'] + existing.get('lookups', [])))
+                if existing.get('mapping_detail') and not sd.get('mapping_detail'):
+                    sd['mapping_detail'] = existing['mapping_detail']
+                dups_to_remove.append(existing_name)
+                dedup_map[dedup_key] = sname
+            else:
+                # Existing is richer — merge into existing, remove new
+                existing['sources'] = list(dict.fromkeys(existing['sources'] + sd.get('sources', [])))
+                existing['targets'] = list(dict.fromkeys(existing['targets'] + sd.get('targets', [])))
+                existing['lookups'] = list(dict.fromkeys(existing['lookups'] + sd.get('lookups', [])))
+                if sd.get('mapping_detail') and not existing.get('mapping_detail'):
+                    existing['mapping_detail'] = sd['mapping_detail']
+                dups_to_remove.append(sname)
+        else:
+            dedup_map[dedup_key] = sname
+
+    for dup_name in dups_to_remove:
+        all_sessions.pop(dup_name, None)
+
+    after_dedup = len(all_sessions)
+    if before_dedup != after_dedup:
+        logger.info("Deduplication: %d sessions → %d unique (removed %d duplicates) in %dms",
+                     before_dedup, after_dedup, before_dedup - after_dedup,
+                     int((_time.monotonic() - _phase_t0) * 1000))
 
     # ── Phase 3: build table usage maps ────────────────────────────────────
     logger.info("Phase 3: building table usage maps")
@@ -1050,7 +1171,7 @@ def analyze(
         sid = f'S{i}'
         sid_map[sname] = sid
         sd = all_sessions[sname]
-        sessions_out.append({
+        sess_entry: Dict[str, Any] = {
             'id':          sid,
             'step':        sd.get('step') or i,
             'name':        _short(sname),
@@ -1063,7 +1184,12 @@ def analyze(
             'sources':     sd['sources'],
             'targets':     sd['targets'],
             'lookups':     sd['lookups'],
-        })
+        }
+        # Attach connection info if available
+        conn_info = session_connections.get(sname.upper(), [])
+        if conn_info:
+            sess_entry['connections_used'] = conn_info
+        sessions_out.append(sess_entry)
 
     # ── Phase 6: build table nodes ─────────────────────────────────────────
     tid_map: Dict[str, str] = {}
@@ -1203,10 +1329,13 @@ def analyze(
                 int((_time.monotonic() - _phase_t0) * 1000),
                 len(sessions_out), len(tables_out), len(conns_out))
 
-    return {
+    result: Dict[str, Any] = {
         'sessions':    sessions_out,
         'tables':      tables_out,
         'connections': conns_out,
         'stats':       stats,
         'warnings':    warnings,
     }
+    if connection_profiles:
+        result['connection_profiles'] = connection_profiles
+    return result

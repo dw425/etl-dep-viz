@@ -98,6 +98,29 @@ const VIEWS: { id: ViewId; label: string; icon: string; group?: 'core' | 'vector
   { id: 'chat', label: 'AI Chat', icon: '\uD83D\uDCAC', group: 'nav' },
 ];
 
+function VectorFallback({ label, phase = 1, onRun }: { label: string; phase?: number; onRun: () => void }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 16 }}>
+      <div style={{ fontSize: 36, opacity: 0.3 }}>&#x25A3;</div>
+      <div style={{ fontSize: 14, fontWeight: 600, color: '#64748b' }}>{label} — No Data Yet</div>
+      <div style={{ fontSize: 11, color: '#475569', maxWidth: 320, textAlign: 'center' }}>
+        {phase === 1
+          ? 'Run Phase 1 vector analysis from the Chunking view to enable this view.'
+          : `Run Phase ${phase} vector analysis from the Vectors panel to enable this view.`}
+      </div>
+      <button
+        onClick={onRun}
+        style={{
+          padding: '8px 20px', borderRadius: 6, border: '1px solid #A855F7',
+          background: 'transparent', color: '#A855F7', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+        }}
+      >
+        {phase === 1 ? 'Go to Chunking' : 'Open Vectors Panel'}
+      </button>
+    </div>
+  );
+}
+
 export function DependencyApp() {
   // ── Core data state ────────────────────────────────────────────────────────
   const [view, setView] = useState<ViewId>('tier');
@@ -127,6 +150,13 @@ export function DependencyApp() {
   const [progress, setProgress] = useState(0);
   const [progressPhase, setProgressPhase] = useState('');
   const [error, setError] = useState<{ message: string; phase?: string; type?: string; timestamp?: string } | null>(null);
+  const [toasts, setToasts] = useState<Array<{ id: number; message: string; severity: 'error' | 'warning' | 'info' | 'success' }>>([]);
+  const toastIdRef = useRef(0);
+  const addToast = useCallback((message: string, severity: 'error' | 'warning' | 'info' | 'success' = 'error') => {
+    const id = ++toastIdRef.current;
+    setToasts(prev => [...prev.slice(-4), { id, message, severity }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 10000);
+  }, []);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -136,9 +166,11 @@ export function DependencyApp() {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   // staleDetected becomes true when no SSE progress event arrives for 120s
   const [staleDetected, setStaleDetected] = useState(false);
-  const [showLogModal, setShowLogModal] = useState(false);
+  const [showLogPanel, setShowLogPanel] = useState(false);
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
   const [logLoading, setLogLoading] = useState(false);
+  // 5-minute cooldown: after user closes the log panel, suppress auto-reopen until cooldown expires
+  const logDismissedAt = useRef<number>(0);
   // lastEventTime is a ref (not state) so updates don't cause re-renders
   const lastEventTime = useRef<number>(0);
   const abortRef = useRef<AbortController | null>(null);
@@ -150,17 +182,29 @@ export function DependencyApp() {
       const elapsed = Math.floor((Date.now() - parseStartTime) / 1000);
       setElapsedSeconds(elapsed);
       // Stale detection: no progress event for 120s → auto-show server logs
+      // but only if user hasn't dismissed the panel within the last 5 minutes
       if (lastEventTime.current && Date.now() - lastEventTime.current > 120000) {
         if (!staleDetected) {
           setStaleDetected(true);
-          // Auto-fetch and show logs so user can see if there's an error
-          getHealthLogs(100).then(setLogEntries).catch(() => {});
-          setShowLogModal(true);
+          const cooldownExpired = Date.now() - logDismissedAt.current > 5 * 60 * 1000;
+          if (cooldownExpired) {
+            getHealthLogs(100).then(setLogEntries).catch(() => {});
+            setShowLogPanel(true);
+          }
         }
       }
     }, 1000);
     return () => clearInterval(interval);
   }, [parseStartTime]);
+
+  // Auto-refresh logs every 10s while log panel is open and upload is active
+  useEffect(() => {
+    if (!showLogPanel || !uploading) return;
+    const interval = setInterval(() => {
+      getHealthLogs(100).then(setLogEntries).catch(() => {});
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [showLogPanel, uploading]);
 
   // Register/refresh the user profile record on first render
   useEffect(() => { upsertUser().catch(() => {}); }, []);
@@ -204,7 +248,7 @@ export function DependencyApp() {
       if (e.key === '?') { setShowHelp(h => !h); return; }
       if (e.key === 'Escape') {
         if (showHelp) { setShowHelp(false); return; }
-        if (showLogModal) { setShowLogModal(false); return; }
+        if (showLogPanel) { setShowLogPanel(false); return; }
         // Drill up through view history
         goBack();
         return;
@@ -232,7 +276,7 @@ export function DependencyApp() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [showHelp, showLogModal, goBack, goForward, navigateView]);
+  }, [showHelp, showLogPanel, goBack, goForward, navigateView]);
 
   // ── Derived ────────────────────────────────────────────────────────────────
   // Resolve the full chunk object for the currently selected cluster id
@@ -526,7 +570,7 @@ export function DependencyApp() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
                 <div style={{ fontSize: 11, color: T.textMuted }}>{Math.round(progress)}%</div>
                 <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-                  <button onClick={async (e) => { e.stopPropagation(); setLogLoading(true); setShowLogModal(true); try { setLogEntries(await getHealthLogs(100)); } catch { /* */ } finally { setLogLoading(false); } }}
+                  <button onClick={async (e) => { e.stopPropagation(); setLogLoading(true); setShowLogPanel(true); try { setLogEntries(await getHealthLogs(100)); } catch { /* */ } finally { setLogLoading(false); } }}
                     style={{ fontSize: 11, color: '#F59E0B', background: 'transparent', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
                     View Logs
                   </button>
@@ -591,7 +635,7 @@ export function DependencyApp() {
                 style={{ fontSize: 11, color: T.accent, background: 'transparent', border: `1px solid ${T.accent}`, borderRadius: 4, padding: '3px 10px', cursor: 'pointer' }}>
                 Retry
               </button>
-              <button onClick={async () => { setLogLoading(true); setShowLogModal(true); try { setLogEntries(await getHealthLogs(50)); } catch { /* no-op */ } finally { setLogLoading(false); } }}
+              <button onClick={async () => { setLogLoading(true); setShowLogPanel(true); try { setLogEntries(await getHealthLogs(50)); } catch { /* no-op */ } finally { setLogLoading(false); } }}
                 style={{ fontSize: 11, color: '#F59E0B', background: 'transparent', border: `1px solid #F59E0B`, borderRadius: 4, padding: '3px 10px', cursor: 'pointer' }}>
                 View Logs
               </button>
@@ -666,28 +710,18 @@ export function DependencyApp() {
           <div style={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
             {VIEWS.map(v => {
               const isVector = v.group === 'vector';
-              const vectorDisabled = isVector && !vectorResults;
-              // Each vector tab is individually gated on its specific result key
-              const specificDisabled = isVector && (
-                (v.id === 'complexity' && !vectorResults?.v11_complexity) ||
-                (v.id === 'waves' && !vectorResults?.v4_wave_plan) ||
-                (v.id === 'umap' && !vectorResults?.v3_dimensionality_reduction) ||
-                (v.id === 'simulator' && !vectorResults?.v9_wave_function) ||
-                (v.id === 'concentration' && !vectorResults?.v10_concentration) ||
-                (v.id === 'consensus' && !vectorResults?.v8_ensemble_consensus)
-              );
-              const disabled = vectorDisabled || specificDisabled;
+              const hasVectorData = isVector && vectorResults;
               return (
                 <button
                   key={v.id}
-                  onClick={() => !disabled && navigateView(v.id)}
+                  onClick={() => navigateView(v.id)}
                   style={{
                     padding: '5px 10px', borderRadius: 6, border: 'none',
-                    cursor: disabled ? 'not-allowed' : 'pointer',
+                    cursor: 'pointer',
                     fontSize: 11, fontWeight: 600,
                     background: view === v.id ? T.accentBg : 'transparent',
-                    color: view === v.id ? T.accentText : disabled ? T.textDim : T.textMuted,
-                    opacity: disabled ? 0.4 : 1,
+                    color: view === v.id ? T.accentText : (isVector && !hasVectorData) ? T.textDim : T.textMuted,
+                    opacity: (isVector && !hasVectorData) ? 0.6 : 1,
                     transition: 'all 0.15s',
                   }}
                 >
@@ -744,7 +778,7 @@ export function DependencyApp() {
             HTML
           </button>
           <button
-            onClick={async () => { setLogLoading(true); setShowLogModal(true); try { setLogEntries(await getHealthLogs(100)); } catch { /* no-op */ } finally { setLogLoading(false); } }}
+            onClick={async () => { setLogLoading(true); setShowLogPanel(true); try { setLogEntries(await getHealthLogs(100)); } catch { /* no-op */ } finally { setLogLoading(false); } }}
             style={{
               padding: '4px 10px', borderRadius: 5, border: `1px solid ${T.border}`,
               background: 'transparent', color: '#F59E0B', fontSize: 10, cursor: 'pointer',
@@ -816,6 +850,31 @@ export function DependencyApp() {
           {stats.dep_chains > 0 && <span style={{ color: '#F97316' }}><strong>{stats.dep_chains}</strong> Chains</span>}
           {stats.staleness_risks > 0 && <span style={{ color: '#F59E0B' }}><strong>{stats.staleness_risks}</strong> Stale Lookups</span>}
           <span><strong style={{ color: T.text }}>{stats.max_tier}</strong> Tier Depth</span>
+          {/* Platform cards from connection_profiles */}
+          {(() => {
+            const profiles = (tierData as any)?.connection_profiles as Array<{ name: string; dbtype: string }> | undefined;
+            if (!profiles || profiles.length === 0) return null;
+            const platforms = new Map<string, number>();
+            profiles.forEach(p => {
+              const t = p.dbtype || 'Unknown';
+              platforms.set(t, (platforms.get(t) || 0) + 1);
+            });
+            const PLATFORM_COLORS: Record<string, string> = {
+              'Oracle': '#EF4444', 'SQL Server': '#3B82F6', 'Teradata': '#F97316',
+              'DB2': '#10B981', 'Sybase': '#A855F7', 'Informix': '#06B6D4',
+              'ODBC': '#64748b', 'Unknown': '#475569',
+            };
+            return [...platforms.entries()].map(([dbtype, count]) => (
+              <span key={dbtype} style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                <span style={{
+                  width: 6, height: 6, borderRadius: 3,
+                  background: PLATFORM_COLORS[dbtype] || '#64748b',
+                  display: 'inline-block',
+                }} />
+                <strong style={{ color: PLATFORM_COLORS[dbtype] || '#64748b' }}>{count}</strong> {dbtype}
+              </span>
+            ));
+          })()}
         </div>
       )}
 
@@ -902,54 +961,44 @@ export function DependencyApp() {
                     tierData={tierData}
                     constellation={constellation}
                     vectorResults={vectorResults}
+                    uploadId={uploadId}
                     onRecluster={handleRecluster}
                     onProceed={(v) => setView(v as ViewId)}
+                    onVectorResults={setVectorResults}
                   />
                 </ErrorBoundary>
               )}
 
-              {/* ── Vector analysis views (require vectorResults) ── */}
-              {view === 'complexity' && vectorResults?.v11_complexity && (
-                <ErrorBoundary>
-                  <div style={{ overflow: 'auto', height: '100%' }}>
-                    <ComplexityOverlay complexity={vectorResults.v11_complexity} />
-                  </div>
-                </ErrorBoundary>
+              {/* ── Vector analysis views — show fallback when data missing ── */}
+              {view === 'complexity' && (
+                vectorResults?.v11_complexity ? (
+                  <ErrorBoundary><div style={{ overflow: 'auto', height: '100%' }}><ComplexityOverlay complexity={vectorResults.v11_complexity} /></div></ErrorBoundary>
+                ) : <VectorFallback label="Complexity" onRun={() => navigateView('chunking')} />
               )}
-              {view === 'waves' && vectorResults?.v4_wave_plan && (
-                <ErrorBoundary>
-                  <div style={{ overflow: 'auto', height: '100%' }}>
-                    <WavePlanView wavePlan={vectorResults.v4_wave_plan} />
-                  </div>
-                </ErrorBoundary>
+              {view === 'waves' && (
+                vectorResults?.v4_wave_plan ? (
+                  <ErrorBoundary><div style={{ overflow: 'auto', height: '100%' }}><WavePlanView wavePlan={vectorResults.v4_wave_plan} /></div></ErrorBoundary>
+                ) : <VectorFallback label="Wave Plan" onRun={() => navigateView('chunking')} />
               )}
-              {view === 'umap' && vectorResults && (
-                <ErrorBoundary>
-                  <div style={{ overflow: 'auto', height: '100%' }}>
-                    <UMAPView vectorResults={vectorResults} />
-                  </div>
-                </ErrorBoundary>
+              {view === 'umap' && (
+                vectorResults?.v3_dimensionality_reduction ? (
+                  <ErrorBoundary><div style={{ overflow: 'auto', height: '100%' }}><UMAPView vectorResults={vectorResults} /></div></ErrorBoundary>
+                ) : <VectorFallback label="UMAP" phase={2} onRun={() => setRightPanel('vectors')} />
               )}
-              {view === 'simulator' && vectorResults?.v9_wave_function && tierData && (
-                <ErrorBoundary>
-                  <div style={{ overflow: 'auto', height: '100%' }}>
-                    <WaveSimulator waveFunction={vectorResults.v9_wave_function} tierData={tierData} />
-                  </div>
-                </ErrorBoundary>
+              {view === 'simulator' && (
+                vectorResults?.v9_wave_function && tierData ? (
+                  <ErrorBoundary><div style={{ overflow: 'auto', height: '100%' }}><WaveSimulator waveFunction={vectorResults.v9_wave_function} tierData={tierData} /></div></ErrorBoundary>
+                ) : <VectorFallback label="Simulator" phase={2} onRun={() => setRightPanel('vectors')} />
               )}
-              {view === 'concentration' && vectorResults?.v10_concentration && (
-                <ErrorBoundary>
-                  <div style={{ overflow: 'auto', height: '100%' }}>
-                    <ConcentrationView concentration={vectorResults.v10_concentration} />
-                  </div>
-                </ErrorBoundary>
+              {view === 'concentration' && (
+                vectorResults?.v10_concentration ? (
+                  <ErrorBoundary><div style={{ overflow: 'auto', height: '100%' }}><ConcentrationView concentration={vectorResults.v10_concentration} /></div></ErrorBoundary>
+                ) : <VectorFallback label="Gravity" phase={2} onRun={() => setRightPanel('vectors')} />
               )}
-              {view === 'consensus' && vectorResults?.v8_ensemble_consensus && (
-                <ErrorBoundary>
-                  <div style={{ overflow: 'auto', height: '100%' }}>
-                    <ConsensusRadar ensemble={vectorResults.v8_ensemble_consensus} />
-                  </div>
-                </ErrorBoundary>
+              {view === 'consensus' && (
+                vectorResults?.v8_ensemble_consensus ? (
+                  <ErrorBoundary><div style={{ overflow: 'auto', height: '100%' }}><ConsensusRadar ensemble={vectorResults.v8_ensemble_consensus} /></div></ErrorBoundary>
+                ) : <VectorFallback label="Consensus" phase={3} onRun={() => setRightPanel('vectors')} />
               )}
 
               {/* ── Layer / navigation views ── */}
@@ -1050,10 +1099,27 @@ export function DependencyApp() {
             </div>
             <button onClick={() => setError(null)} style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 14, lineHeight: 1, flexShrink: 0 }}>x</button>
           </div>
-          <button onClick={async () => { setLogLoading(true); setShowLogModal(true); try { setLogEntries(await getHealthLogs(50)); } catch { /* no-op */ } finally { setLogLoading(false); } }}
+          <button onClick={async () => { setLogLoading(true); setShowLogPanel(true); try { setLogEntries(await getHealthLogs(50)); } catch { /* no-op */ } finally { setLogLoading(false); } }}
             style={{ fontSize: 10, color: '#F59E0B', background: 'transparent', border: 'none', cursor: 'pointer', marginTop: 4, padding: 0, textDecoration: 'underline' }}>
             View Logs
           </button>
+        </div>
+      )}
+
+      {/* Toast queue */}
+      {toasts.length > 0 && (
+        <div style={{ position: 'fixed', bottom: error ? 80 : 20, right: 20, display: 'flex', flexDirection: 'column', gap: 8, zIndex: 9998 }}>
+          {toasts.map(t => {
+            const bg = t.severity === 'success' ? 'rgba(34,197,94,0.15)' : t.severity === 'warning' ? 'rgba(245,158,11,0.15)' : t.severity === 'info' ? 'rgba(59,130,246,0.15)' : 'rgba(239,68,68,0.15)';
+            const border = t.severity === 'success' ? 'rgba(34,197,94,0.3)' : t.severity === 'warning' ? 'rgba(245,158,11,0.3)' : t.severity === 'info' ? 'rgba(59,130,246,0.3)' : 'rgba(239,68,68,0.3)';
+            const color = t.severity === 'success' ? '#22c55e' : t.severity === 'warning' ? '#f59e0b' : t.severity === 'info' ? '#3b82f6' : '#ef4444';
+            return (
+              <div key={t.id} style={{ padding: '8px 14px', background: bg, border: `1px solid ${border}`, borderRadius: 6, color, fontSize: 11, maxWidth: 360, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                <span>{t.message}</span>
+                <button onClick={() => setToasts(prev => prev.filter(x => x.id !== t.id))} style={{ background: 'transparent', border: 'none', color, cursor: 'pointer', fontSize: 13, lineHeight: 1 }}>x</button>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -1069,40 +1135,38 @@ export function DependencyApp() {
       </Suspense>
     )}
 
-    {/* Log viewer modal */}
-    {showLogModal && (
+    {/* Log viewer — right-side slide-out panel (no backdrop, sits alongside content) */}
+    {showLogPanel && (
       <div style={{
-        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex',
-        alignItems: 'center', justifyContent: 'center', zIndex: 9999,
-      }} onClick={() => setShowLogModal(false)}>
-        <div style={{
-          width: 640, maxHeight: '70vh', background: T.bgCard, borderRadius: 12,
-          border: `1px solid ${T.border}`, overflow: 'hidden',
-        }} onClick={e => e.stopPropagation()}>
-          <div style={{ padding: '12px 16px', borderBottom: `1px solid ${T.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 13, fontWeight: 700, color: T.text }}>Server Logs ({logEntries.length})</span>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <button onClick={async () => { setLogLoading(true); try { setLogEntries(await getHealthLogs(100)); } catch { /* no-op */ } finally { setLogLoading(false); } }}
-                style={{ background: 'transparent', border: `1px solid ${T.border}`, color: T.textMuted, cursor: 'pointer', fontSize: 11, borderRadius: 4, padding: '2px 8px' }}>
-                Refresh
-              </button>
-              <button onClick={() => setShowLogModal(false)} style={{ background: 'transparent', border: 'none', color: T.textMuted, cursor: 'pointer', fontSize: 16 }}>x</button>
+        position: 'fixed', top: 0, right: 0, width: 420, height: '100vh',
+        background: T.bgCard, borderLeft: `1px solid ${T.border}`,
+        boxShadow: '-4px 0 24px rgba(0,0,0,0.15)', zIndex: 9999,
+        display: 'flex', flexDirection: 'column',
+      }}>
+        <div style={{ padding: '12px 16px', borderBottom: `1px solid ${T.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: T.text }}>Server Logs ({logEntries.length})</span>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button onClick={async () => { setLogLoading(true); try { setLogEntries(await getHealthLogs(100)); } catch { /* no-op */ } finally { setLogLoading(false); } }}
+              style={{ background: 'transparent', border: `1px solid ${T.border}`, color: T.textMuted, cursor: 'pointer', fontSize: 11, borderRadius: 4, padding: '2px 8px' }}>
+              Refresh
+            </button>
+            <button onClick={() => { logDismissedAt.current = Date.now(); setShowLogPanel(false); }}
+              style={{ background: 'transparent', border: 'none', color: T.textMuted, cursor: 'pointer', fontSize: 16 }}>x</button>
+          </div>
+        </div>
+        <div style={{ flex: 1, overflow: 'auto', padding: 8, fontFamily: 'monospace', fontSize: 11 }}>
+          {logLoading && <div style={{ color: T.textMuted, padding: 16, textAlign: 'center' }}>Loading logs...</div>}
+          {!logLoading && logEntries.length === 0 && <div style={{ color: T.textMuted, padding: 16, textAlign: 'center' }}>No log entries</div>}
+          {logEntries.map((entry, i) => (
+            <div key={i} style={{ padding: '4px 8px', borderBottom: `1px solid ${T.border}`, display: 'flex', gap: 8 }}>
+              <span style={{
+                color: entry.level === 'ERROR' ? '#ef4444' : entry.level === 'WARNING' ? '#F59E0B' : entry.level === 'INFO' ? '#10B981' : T.textMuted,
+                fontWeight: 600, minWidth: 50,
+              }}>{entry.level}</span>
+              <span style={{ color: T.textMuted, minWidth: 70 }}>{entry.timestamp.split('T')[1]?.slice(0, 8)}</span>
+              <span style={{ color: T.text, wordBreak: 'break-all' }}>{entry.message}</span>
             </div>
-          </div>
-          <div style={{ overflow: 'auto', maxHeight: '60vh', padding: 8, fontFamily: 'monospace', fontSize: 11 }}>
-            {logLoading && <div style={{ color: T.textMuted, padding: 16, textAlign: 'center' }}>Loading logs...</div>}
-            {!logLoading && logEntries.length === 0 && <div style={{ color: T.textMuted, padding: 16, textAlign: 'center' }}>No log entries</div>}
-            {logEntries.map((entry, i) => (
-              <div key={i} style={{ padding: '4px 8px', borderBottom: `1px solid ${T.border}`, display: 'flex', gap: 8 }}>
-                <span style={{
-                  color: entry.level === 'ERROR' ? '#ef4444' : entry.level === 'WARNING' ? '#F59E0B' : entry.level === 'INFO' ? '#10B981' : T.textMuted,
-                  fontWeight: 600, minWidth: 50,
-                }}>{entry.level}</span>
-                <span style={{ color: T.textMuted, minWidth: 70 }}>{entry.timestamp.split('T')[1]?.slice(0, 8)}</span>
-                <span style={{ color: T.text, wordBreak: 'break-all' }}>{entry.message}</span>
-              </div>
-            ))}
-          </div>
+          ))}
         </div>
       </div>
     )}

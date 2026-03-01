@@ -16,6 +16,7 @@ import {
   deriveTableAggregates,
   type SessionDetail,
 } from './constants';
+import TierFilterSidebar, { type TierFilters, getDefaultTierFilters, applyTierFilters } from '../shared/TierFilterSidebar';
 
 interface Props {
   data: TierMapResult;
@@ -80,9 +81,11 @@ const ExplorerView: React.FC<Props> = ({ data }) => {
   const [sortBy, setSortBy] = useState<SortKey>('step');
   const [sortDesc, setSortDesc] = useState(false);
   const [filterText, setFilterText] = useState('');
+  const [tierFilters, setTierFilters] = useState<TierFilters>(getDefaultTierFilters);
 
-  const sessionData = useMemo(() => buildSessionData(data), [data]);
-  const executionOrder = useMemo(() => buildExecutionOrder(data), [data]);
+  const filteredData = useMemo(() => applyTierFilters(data, tierFilters), [data, tierFilters]);
+  const sessionData = useMemo(() => buildSessionData(filteredData), [filteredData]);
+  const executionOrder = useMemo(() => buildExecutionOrder(filteredData), [filteredData]);
   const writeConflicts = useMemo(() => deriveWriteConflicts(sessionData), [sessionData]);
   const readAfterWrite = useMemo(() => deriveReadAfterWrite(sessionData), [sessionData]);
   const allTables = useMemo(() => deriveTableAggregates(sessionData), [sessionData]);
@@ -645,6 +648,9 @@ const ExplorerView: React.FC<Props> = ({ data }) => {
           </div>
         )}
       </div>
+
+      {/* Right: tier filter */}
+      <TierFilterSidebar data={data} filters={tierFilters} onChange={setTierFilters} compact />
     </div>
   );
 };

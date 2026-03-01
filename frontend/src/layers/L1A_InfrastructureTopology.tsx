@@ -56,78 +56,87 @@ export default function L1A_InfrastructureTopology({ tierData, vectorResults }: 
   const [selectedSystem, setSelectedSystem] = useState<SystemNode | null>(null);
   const [hoveredSystem, setHoveredSystem] = useState<string | null>(null);
 
-  // Build infrastructure graph from tier data connections
+  // Build infrastructure graph — prefer connection_profiles when available, fallback to regex
+  const connectionProfiles = (tierData as any).connection_profiles as { name: string; dbtype: string; dbsubtype?: string; connection_string?: string }[] | undefined;
+
   const { nodes, edges } = useMemo(() => {
     const systemMap = new Map<string, SystemNode>();
     const edgeMap = new Map<string, SystemEdge>();
 
-    // Infer systems from table names
+    // Primary source: connection_profiles from parsed DBCONNECTION elements
+    if (connectionProfiles && connectionProfiles.length > 0) {
+      // Build systems from real connection profiles
+      for (const cp of connectionProfiles) {
+        const sysType = mapDbTypeToSystem(cp.dbtype);
+        const env = mapDbTypeToEnv(cp.dbtype);
+        const sysId = `${sysType}_${cp.name}`;
+        if (!systemMap.has(sysId)) {
+          systemMap.set(sysId, {
+            system_id: sysId,
+            system_type: sysType,
+            environment: env,
+            session_count: 0,
+            table_count: 0,
+            connections: [cp.name],
+          });
+        }
+      }
+
+      // Count sessions per system using connections_used on sessions
+      for (const session of tierData.sessions) {
+        const sessConns = (session as any).connections_used as { connection_name: string; dbtype: string }[] | undefined;
+        if (sessConns) {
+          for (const sc of sessConns) {
+            const sysType = mapDbTypeToSystem(sc.dbtype);
+            const matchId = Array.from(systemMap.keys()).find(k => k.startsWith(sysType) && systemMap.get(k)?.connections.includes(sc.connection_name));
+            if (matchId && systemMap.has(matchId)) {
+              systemMap.get(matchId)!.session_count++;
+            }
+          }
+        }
+      }
+    }
+
+    // Fallback: infer systems from table names (regex-based)
+    if (systemMap.size === 0) {
+      for (const table of tierData.tables) {
+        const sys = inferSystem(table.name);
+        if (!systemMap.has(sys.system_id)) {
+          systemMap.set(sys.system_id, {
+            ...sys,
+            session_count: 0,
+            table_count: 0,
+            connections: [],
+          });
+        }
+        systemMap.get(sys.system_id)!.table_count++;
+      }
+
+      // Count sessions per system via connection graph
+      const sessionIdSet = new Set(tierData.sessions.map(s => s.id));
+      const tableIdSet = new Set(tierData.tables.map(t => t.id));
+      for (const session of tierData.sessions) {
+        const touchedTableIds = new Set<string>();
+        for (const c of tierData.connections) {
+          if (c.from === session.id && tableIdSet.has(c.to)) touchedTableIds.add(c.to);
+          if (c.to === session.id && tableIdSet.has(c.from)) touchedTableIds.add(c.from);
+        }
+        const touchedSystems = new Set<string>();
+        for (const tid of touchedTableIds) {
+          const tbl = tierData.tables.find(t => t.id === tid);
+          if (tbl) touchedSystems.add(inferSystem(tbl.name).system_id);
+        }
+        for (const sysId of touchedSystems) {
+          if (systemMap.has(sysId)) systemMap.get(sysId)!.session_count++;
+        }
+      }
+    }
+
+    // Count tables per system
     for (const table of tierData.tables) {
       const sys = inferSystem(table.name);
-      if (!systemMap.has(sys.system_id)) {
-        systemMap.set(sys.system_id, {
-          ...sys,
-          session_count: 0,
-          table_count: 0,
-          connections: [],
-        });
-      }
-      const node = systemMap.get(sys.system_id)!;
-      node.table_count++;
-    }
-
-    // Build edges from connections
-    for (const conn of tierData.connections) {
-      const srcSession = tierData.sessions.find(s => s.id === conn.from);
-      const tgtSession = tierData.sessions.find(s => s.id === conn.to);
-      if (!srcSession || !tgtSession) continue;
-
-      // Get systems involved
-      const srcTables = tierData.tables.filter(t =>
-        tierData.connections.some(c => c.from === srcSession.id && c.to === t.name) ||
-        tierData.connections.some(c => c.to === srcSession.id && c.from === t.name)
-      );
-      const tgtTables = tierData.tables.filter(t =>
-        tierData.connections.some(c => c.from === tgtSession.id && c.to === t.name) ||
-        tierData.connections.some(c => c.to === tgtSession.id && c.from === t.name)
-      );
-
-      for (const st of srcTables) {
-        for (const tt of tgtTables) {
-          const srcSys = inferSystem(st.name).system_id;
-          const tgtSys = inferSystem(tt.name).system_id;
-          if (srcSys === tgtSys) continue;
-
-          const key = [srcSys, tgtSys].sort().join('::');
-          if (!edgeMap.has(key)) {
-            edgeMap.set(key, {
-              source: srcSys,
-              target: tgtSys,
-              session_count: 0,
-              direction: 'bidirectional',
-            });
-          }
-          edgeMap.get(key)!.session_count++;
-        }
-      }
-    }
-
-    // Count sessions per system
-    for (const session of tierData.sessions) {
-      const sessionConns = tierData.connections.filter(
-        c => c.from === session.id || c.to === session.id
-      );
-      const touchedTables = new Set(sessionConns.map(c =>
-        c.from === session.id ? c.to : c.from
-      ));
-      const touchedSystems = new Set<string>();
-      for (const tName of touchedTables) {
-        touchedSystems.add(inferSystem(tName).system_id);
-      }
-      for (const sysId of touchedSystems) {
-        if (systemMap.has(sysId)) {
-          systemMap.get(sysId)!.session_count++;
-        }
+      if (systemMap.has(sys.system_id)) {
+        systemMap.get(sys.system_id)!.table_count++;
       }
     }
 
@@ -135,7 +144,7 @@ export default function L1A_InfrastructureTopology({ tierData, vectorResults }: 
       nodes: Array.from(systemMap.values()).filter(n => n.session_count > 0 || n.table_count > 0),
       edges: Array.from(edgeMap.values()).filter(e => e.session_count > 0),
     };
-  }, [tierData]);
+  }, [tierData, connectionProfiles]);
 
   // Layout: circular placement
   const nodePositions = useMemo(() => {
@@ -372,6 +381,28 @@ export default function L1A_InfrastructureTopology({ tierData, vectorResults }: 
       </div>
     </div>
   );
+}
+
+function mapDbTypeToSystem(dbtype: string): string {
+  const lower = (dbtype || '').toLowerCase();
+  if (lower.includes('oracle')) return 'oracle';
+  if (lower.includes('teradata')) return 'teradata';
+  if (lower.includes('sql server') || lower.includes('mssql') || lower.includes('sqlserver')) return 'sqlserver';
+  if (lower.includes('db2')) return 'db2';
+  if (lower.includes('mysql')) return 'mysql';
+  if (lower.includes('postgres')) return 'postgres';
+  if (lower.includes('sybase')) return 'sybase';
+  if (lower.includes('informix')) return 'informix';
+  if (lower.includes('odbc')) return 'odbc';
+  return lower || 'unknown';
+}
+
+function mapDbTypeToEnv(dbtype: string): string {
+  const lower = (dbtype || '').toLowerCase();
+  if (lower.includes('s3') || lower.includes('redshift') || lower.includes('aws')) return 'aws';
+  if (lower.includes('azure') || lower.includes('synapse')) return 'azure';
+  if (lower.includes('bigquery') || lower.includes('gcs')) return 'gcp';
+  return 'on-prem';
 }
 
 function inferSystem(name: string): { system_id: string; system_type: string; environment: string } {

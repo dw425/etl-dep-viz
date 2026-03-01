@@ -7,7 +7,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import type { TierMapResult } from '../../types/tiermap';
-import { chatIndexStatus, chatIndexUpload, chatQuery } from '../../api/client';
+import { chatIndexStatus, chatIndexUpload, chatQuery, chatReindex } from '../../api/client';
 
 /* ── Types ──────────────────────────────────────────────────────────────── */
 
@@ -191,6 +191,41 @@ export default function AIChat({ uploadId, tierData, onNavigate }: AIChatProps) 
             <div className="bg-blue-900/30 border border-blue-500/30 rounded-lg p-4 text-center">
               <div className="animate-spin w-6 h-6 border-2 border-blue-400 border-t-transparent rounded-full mx-auto mb-2" />
               <p className="text-blue-300">Building vector index...</p>
+            </div>
+          )}
+
+          {/* Re-index button — shown when indexed but vectors may have been updated */}
+          {indexed && !indexing && (
+            <div className="flex items-center gap-3 px-4 py-2 bg-gray-800/50 rounded-lg mb-2">
+              <span className="text-xs text-gray-500">
+                {docCount} docs indexed
+              </span>
+              <button
+                onClick={async () => {
+                  if (!uploadId) return;
+                  setIndexing(true);
+                  try {
+                    const data = await chatReindex(uploadId) as { documents_indexed?: number; by_type?: Record<string, number> };
+                    setDocCount(data.documents_indexed || 0);
+                    setMessages(prev => [...prev, {
+                      role: 'assistant' as const,
+                      content: `Re-indexed with vector data! ${data.documents_indexed || 0} documents now include complexity, wave, and community data.`,
+                      timestamp: new Date().toISOString(),
+                    }]);
+                  } catch (err) {
+                    setMessages(prev => [...prev, {
+                      role: 'assistant' as const,
+                      content: `Re-index failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
+                      timestamp: new Date().toISOString(),
+                    }]);
+                  } finally {
+                    setIndexing(false);
+                  }
+                }}
+                className="text-xs px-2 py-1 bg-purple-900/30 text-purple-300 rounded border border-purple-500/30 hover:bg-purple-900/50 transition-colors"
+              >
+                Re-index with Vectors
+              </button>
             </div>
           )}
 

@@ -486,6 +486,29 @@ def generate_environment_document(tier_data: dict, vectors: dict | None) -> str:
         for s in scores:
             top_complex += f"  {s.get('session_id', '?')}: {s.get('overall_score', 0):.1f} ({s.get('bucket', '?')})\n"
 
+    # Connection profiles from Informatica DBCONNECTION elements
+    conn_profiles = ""
+    profiles = tier_data.get("connection_profiles", [])
+    if profiles:
+        platform_counts: dict[str, int] = defaultdict(int)
+        for p in profiles:
+            platform_counts[p.get("dbtype", "Unknown")] += 1
+        conn_profiles = "\n".join(
+            f"  {dbtype}: {count} connections" for dbtype, count in sorted(platform_counts.items())
+        )
+
+    # Community summary from V1
+    community_summary = ""
+    if vectors and "v1_community" in vectors:
+        assignments = vectors["v1_community"].get("assignments", {})
+        community_counts: dict[int, int] = defaultdict(int)
+        for c in assignments.values():
+            community_counts[c] += 1
+        if community_counts:
+            community_summary = f"  {len(community_counts)} communities detected\n"
+            for cid, count in sorted(community_counts.items(), key=lambda x: -x[1])[:10]:
+                community_summary += f"  Community {cid}: {count} sessions\n"
+
     doc = f"""ENVIRONMENT SUMMARY
 Total sessions: {stats.get('session_count', 0)}
 Total tables: {len(tier_data.get('tables', []))}
@@ -496,6 +519,9 @@ Staleness risks: {stats.get('staleness_risks', 0)}
 Maximum tier depth: {stats.get('max_tier', 0)}
 Source-only tables: {stats.get('source_tables', 0)}
 
+DATABASE PLATFORMS:
+{conn_profiles or '  No connection profiles detected'}
+
 COMPLEXITY DISTRIBUTION:
 {complexity_dist or '  Not yet analyzed'}
 
@@ -504,6 +530,9 @@ WAVE PLAN:
 
 TOP MOST COMPLEX SESSIONS:
 {top_complex or '  Not yet analyzed'}
+
+COMMUNITY STRUCTURE:
+{community_summary or '  Not yet analyzed'}
 """
     return doc
 

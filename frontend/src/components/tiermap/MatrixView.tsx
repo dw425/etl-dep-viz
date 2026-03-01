@@ -11,6 +11,7 @@
 import React, { useState, useMemo } from 'react';
 import type { TierMapResult } from '../../types/tiermap';
 import { connTypes, connShortLabel, getTierCfg } from './constants';
+import TierFilterSidebar, { type TierFilters, getDefaultTierFilters, applyTierFilters } from '../shared/TierFilterSidebar';
 
 interface Props {
   data: TierMapResult;
@@ -24,14 +25,17 @@ const MatrixView: React.FC<Props> = ({ data }) => {
   const [rowPage, setRowPage] = useState(0);
   const [colPage, setColPage] = useState(0);
   const [search, setSearch] = useState('');
+  const [tierFilters, setTierFilters] = useState<TierFilters>(getDefaultTierFilters);
+
+  const filteredData = useMemo(() => applyTierFilters(data, tierFilters), [data, tierFilters]);
 
   /* ── Connection lookup + connected node tracking ──────────────────── */
 
   const { connLookup, connectedSessions, connectedTables } = useMemo(() => {
-    const map = new Map<string, typeof data.connections>();
+    const map = new Map<string, typeof filteredData.connections>();
     const sessSet = new Set<string>();
     const tblSet = new Set<string>();
-    data.connections.forEach(c => {
+    filteredData.connections.forEach(c => {
       const keyA = c.from + '|' + c.to;
       const keyB = c.to + '|' + c.from;
       if (!map.has(keyA)) map.set(keyA, []);
@@ -45,14 +49,14 @@ const MatrixView: React.FC<Props> = ({ data }) => {
       tblSet.add(c.to);
     });
     return { connLookup: map, connectedSessions: sessSet, connectedTables: tblSet };
-  }, [data.connections]);
+  }, [filteredData.connections]);
 
   /* ── Filtered rows & columns ──────────────────────────────────────── */
 
   const lowerSearch = search.toLowerCase();
 
   const filteredSessions = useMemo(() => {
-    let sessions = data.sessions;
+    let sessions = filteredData.sessions;
     if (sparseMode) {
       sessions = sessions.filter(s => connectedSessions.has(s.id));
     }
@@ -60,10 +64,10 @@ const MatrixView: React.FC<Props> = ({ data }) => {
       sessions = sessions.filter(s => s.name.toLowerCase().includes(lowerSearch));
     }
     return sessions;
-  }, [data.sessions, sparseMode, connectedSessions, lowerSearch]);
+  }, [filteredData.sessions, sparseMode, connectedSessions, lowerSearch]);
 
   const filteredTables = useMemo(() => {
-    let tables = data.tables;
+    let tables = filteredData.tables;
     if (sparseMode) {
       tables = tables.filter(t => connectedTables.has(t.id));
     }
@@ -71,7 +75,7 @@ const MatrixView: React.FC<Props> = ({ data }) => {
       tables = tables.filter(t => t.name.toLowerCase().includes(lowerSearch));
     }
     return tables;
-  }, [data.tables, sparseMode, connectedTables, lowerSearch]);
+  }, [filteredData.tables, sparseMode, connectedTables, lowerSearch]);
 
   /* ── Pagination ───────────────────────────────────────────────────── */
 
@@ -120,7 +124,8 @@ const MatrixView: React.FC<Props> = ({ data }) => {
   );
 
   return (
-    <div style={{ height: '100%', overflow: 'auto', padding: 24 }}>
+    <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
+    <div style={{ flex: 1, overflow: 'auto', padding: 24 }}>
       <div style={{ fontSize: 18, fontWeight: 700, color: '#E2E8F0', marginBottom: 6 }}>
         Many-to-Many Relationship Matrix
       </div>
@@ -311,6 +316,8 @@ const MatrixView: React.FC<Props> = ({ data }) => {
           </tbody>
         </table>
       </div>
+    </div>
+    <TierFilterSidebar data={data} filters={tierFilters} onChange={setTierFilters} compact />
     </div>
   );
 };
