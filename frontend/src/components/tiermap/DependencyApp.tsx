@@ -1405,7 +1405,7 @@ export function DependencyApp() {
               {view === 'infra' && tierData && (
                 <ErrorBoundary>
                   <div style={{ overflow: 'auto', height: '100%' }}>
-                    <L1AInfra tierData={tierData} vectorResults={vectorResults} />
+                    <L1AInfra tierData={tierData} vectorResults={vectorResults} onNavigateView={v => navigateView(v as ViewId)} />
                   </div>
                 </ErrorBoundary>
               )}

@@ -978,6 +978,10 @@ def analyze(
     import time as _time
     _phase_t0 = _time.monotonic()
     for sdata in all_sessions.values():
+        # Preserve raw (pre-normalization) table names for schema-level grouping
+        sdata['raw_sources'] = list(sdata['sources'])
+        sdata['raw_targets'] = list(sdata['targets'])
+        sdata['raw_lookups'] = list(sdata['lookups'])
         sdata['sources'] = list(dict.fromkeys(
             _norm(x) for x in sdata['sources'] if x.strip() and len(x.strip()) > 1
         ))
@@ -1186,6 +1190,9 @@ def analyze(
             'sources':     sd['sources'],
             'targets':     sd['targets'],
             'lookups':     sd['lookups'],
+            'raw_sources': sd.get('raw_sources', sd['sources']),
+            'raw_targets': sd.get('raw_targets', sd['targets']),
+            'raw_lookups': sd.get('raw_lookups', sd['lookups']),
         }
         # Attach connection info if available
         conn_info = session_connections.get(sname.upper(), [])
