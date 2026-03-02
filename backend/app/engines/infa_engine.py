@@ -912,9 +912,11 @@ def analyze(
         def coord_progress(current: int, total: int, fname: str, status: str, sessions_so_far: int = 0) -> None:
             progress_fn(current, total, fname, sessions_so_far)
 
-    # Scale workers: 4 for small batches, 2 for large (>1GB) to reduce memory pressure
+    # Scale workers: up to 6 for large batches, 4 for medium, capped by CPU count
+    import os
     total_size = sum(len(c) for c in xml_contents)
-    workers = 2 if total_size > 1_000_000_000 else min(4, len(xml_contents))
+    cpu_count = os.cpu_count() or 4
+    workers = min(max(4, cpu_count - 1), 6, len(xml_contents))
     logger.info("Parse plan: %d files, %.0fMB total, %d workers, fast mode (no deep extraction)",
                 len(xml_contents), total_size / (1024 * 1024), workers)
 

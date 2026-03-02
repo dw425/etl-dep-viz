@@ -105,7 +105,7 @@ export interface AlgorithmInfo {
   desc: string;
 }
 
-export type AlgorithmKey = 'louvain' | 'tier' | 'components' | 'label_prop' | 'greedy_mod' | 'process_group' | 'table_gravity';
+export type AlgorithmKey = 'louvain' | 'tier' | 'components' | 'label_prop' | 'greedy_mod' | 'process_group' | 'table_gravity' | 'gradient_scale';
 
 export interface ConstellationResponse {
   tier_data: TierMapResult;

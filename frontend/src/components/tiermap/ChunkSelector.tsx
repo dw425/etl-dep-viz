@@ -1,10 +1,10 @@
 /**
  * Chunk Selector — left sidebar listing all chunks as filterable cards.
- * Click a card to switch the tier diagram to that chunk's sessions.
+ * Supports multi-select with select all/deselect all and session search.
  */
 
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import type { ConstellationChunk, TableReferenceEntry } from '../../types/tiermap';
+import type { ConstellationChunk, ConstellationPoint, TableReferenceEntry } from '../../types/tiermap';
 
 const C = {
   bg: '#080C14', surface: '#111827', border: '#1e293b',
@@ -20,22 +20,39 @@ type SortKey = 'default' | 'sessions' | 'tiers' | 'conflicts';
 
 interface ChunkSelectorProps {
   chunks: ConstellationChunk[];
-  activeChunkId: string | null;
-  onSelect: (chunkId: string) => void;
+  activeChunkIds: Set<string>;
+  onToggle: (chunkId: string) => void;
+  onSelectAll: () => void;
+  onDeselectAll: () => void;
   onBack: () => void;
   algorithm?: string;
   tableRanking?: TableReferenceEntry[];
+  // Session search props
+  points?: ConstellationPoint[];
+  tierData?: any;
+  highlightedSessionIds?: Set<string>;
+  onHighlightSession?: (sessionId: string) => void;
+  onFindLinked?: (sessionId: string) => void;
+  onClearHighlight?: () => void;
 }
 
 const VIRTUAL_ITEM_HEIGHT = 120;
 const VIRTUAL_OVERSCAN = 4;
 
-export default function ChunkSelector({ chunks, activeChunkId, onSelect, onBack, algorithm, tableRanking }: ChunkSelectorProps) {
+export default function ChunkSelector({
+  chunks, activeChunkIds, onToggle, onSelectAll, onDeselectAll, onBack, algorithm, tableRanking,
+  points, highlightedSessionIds, onHighlightSession, onFindLinked, onClearHighlight,
+}: ChunkSelectorProps) {
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState<SortKey>('default');
   const scrollRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [containerHeight, setContainerHeight] = useState(600);
+
+  // Session search state
+  const [sessionSearch, setSessionSearch] = useState('');
+  const [showSessionSearch, setShowSessionSearch] = useState(false);
+  const [focusedSessionId, setFocusedSessionId] = useState<string | null>(null);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -67,20 +84,34 @@ export default function ChunkSelector({ chunks, activeChunkId, onSelect, onBack,
     return list;
   }, [chunks, search, sortBy]);
 
+  // Session search results
+  const sessionResults = useMemo(() => {
+    if (!sessionSearch.trim() || !points) return [];
+    const q = sessionSearch.toLowerCase();
+    return points
+      .filter(p => p.name.toLowerCase().includes(q))
+      .slice(0, 20);
+  }, [sessionSearch, points]);
+
+  const chunkMap = useMemo(() => new Map(chunks.map(c => [c.id, c])), [chunks]);
+
   const useVirtual = filtered.length > 80;
   const totalHeight = useVirtual ? filtered.length * VIRTUAL_ITEM_HEIGHT : 0;
   const startIdx = useVirtual ? Math.max(0, Math.floor(scrollTop / VIRTUAL_ITEM_HEIGHT) - VIRTUAL_OVERSCAN) : 0;
   const endIdx = useVirtual ? Math.min(filtered.length, Math.ceil((scrollTop + containerHeight) / VIRTUAL_ITEM_HEIGHT) + VIRTUAL_OVERSCAN) : filtered.length;
   const visibleChunks = useVirtual ? filtered.slice(startIdx, endIdx) : filtered;
 
+  const hasSelection = activeChunkIds.size > 0;
+  const allSelected = activeChunkIds.size === chunks.length && chunks.length > 0;
+
   return (
     <div style={{
       width: 260, borderRight: `1px solid ${C.border}`, background: 'rgba(15,23,42,0.6)',
       display: 'flex', flexDirection: 'column', overflow: 'hidden', flexShrink: 0,
     }}>
-      {/* Back button */}
+      {/* Back / Clear button */}
       <button
-        onClick={onBack}
+        onClick={hasSelection ? onDeselectAll : onBack}
         style={{
           padding: '8px 14px', background: 'transparent', border: 'none',
           borderBottom: `1px solid ${C.border}`, cursor: 'pointer',
@@ -88,14 +119,14 @@ export default function ChunkSelector({ chunks, activeChunkId, onSelect, onBack,
           color: '#60A5FA', fontSize: 11, fontWeight: 600,
         }}
       >
-        ← Back to Constellation
+        {hasSelection ? `Clear Selection (${activeChunkIds.size})` : '\u2190 Back to Constellation'}
       </button>
 
       {/* Search + Sort */}
       <div style={{ padding: '8px 10px', borderBottom: `1px solid ${C.border}` }}>
         <input
           type="text"
-          placeholder="Filter clusters…"
+          placeholder="Filter clusters\u2026"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           style={{
@@ -119,6 +150,113 @@ export default function ChunkSelector({ chunks, activeChunkId, onSelect, onBack,
           ))}
         </div>
       </div>
+
+      {/* Session search section */}
+      {points && points.length > 0 && (
+        <div style={{ borderBottom: `1px solid ${C.border}` }}>
+          <button
+            onClick={() => setShowSessionSearch(s => !s)}
+            style={{
+              width: '100%', padding: '6px 10px', background: 'transparent',
+              border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
+              color: showSessionSearch ? '#34D399' : C.muted, fontSize: 10, fontWeight: 600,
+              borderLeft: showSessionSearch ? '2px solid #10B981' : '2px solid transparent',
+            }}
+          >
+            Search Sessions {showSessionSearch ? '\u25B2' : '\u25BC'}
+          </button>
+          {showSessionSearch && (
+            <div style={{ padding: '6px 10px' }}>
+              <input
+                type="text"
+                placeholder="Find session by name\u2026"
+                value={sessionSearch}
+                onChange={(e) => setSessionSearch(e.target.value)}
+                style={{
+                  width: '100%', padding: '5px 10px', borderRadius: 5,
+                  border: `1px solid ${C.border}`, background: 'rgba(0,0,0,0.3)',
+                  color: C.text, fontSize: 10, outline: 'none',
+                  fontFamily: "'JetBrains Mono', monospace",
+                }}
+              />
+              {sessionResults.length > 0 && (
+                <div style={{ maxHeight: 200, overflowY: 'auto', marginTop: 4 }}>
+                  {sessionResults.map(p => {
+                    const chunk = chunkMap.get(p.chunk_id);
+                    const isFocused = focusedSessionId === p.session_id;
+                    return (
+                      <div
+                        key={p.session_id}
+                        onClick={() => {
+                          setFocusedSessionId(p.session_id);
+                          onHighlightSession?.(p.session_id);
+                        }}
+                        style={{
+                          padding: '4px 6px', borderRadius: 4, cursor: 'pointer',
+                          background: isFocused ? 'rgba(16,185,129,0.12)' : 'transparent',
+                          border: isFocused ? '1px solid rgba(16,185,129,0.3)' : '1px solid transparent',
+                          marginBottom: 2,
+                        }}
+                      >
+                        <div style={{
+                          fontSize: 9, fontWeight: 600, color: isFocused ? '#34D399' : C.text,
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                          fontFamily: "'JetBrains Mono', monospace",
+                        }}>
+                          {p.name}
+                        </div>
+                        <div style={{ fontSize: 8, color: C.dim }}>
+                          Tier {p.tier} {chunk ? `\u00B7 ${chunk.label}` : ''}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {sessionSearch.trim() && sessionResults.length === 0 && (
+                <div style={{ fontSize: 9, color: C.dim, padding: '6px 0', textAlign: 'center' }}>
+                  No sessions match
+                </div>
+              )}
+              {focusedSessionId && onFindLinked && (
+                <button
+                  onClick={() => onFindLinked(focusedSessionId)}
+                  style={{
+                    width: '100%', marginTop: 4, padding: '5px 8px', borderRadius: 4,
+                    border: '1px solid rgba(245,158,11,0.4)', background: 'rgba(245,158,11,0.08)',
+                    color: '#F59E0B', fontSize: 9, fontWeight: 600, cursor: 'pointer',
+                  }}
+                >
+                  Show Linked Sessions (shared tables)
+                </button>
+              )}
+              {highlightedSessionIds && highlightedSessionIds.size > 0 && (
+                <div style={{
+                  marginTop: 4, padding: '4px 8px', borderRadius: 4,
+                  background: 'rgba(245,158,11,0.06)', display: 'flex',
+                  alignItems: 'center', justifyContent: 'space-between',
+                }}>
+                  <span style={{ fontSize: 9, color: '#F59E0B' }}>
+                    {highlightedSessionIds.size} sessions highlighted
+                  </span>
+                  <button
+                    onClick={() => {
+                      setFocusedSessionId(null);
+                      onClearHighlight?.();
+                    }}
+                    style={{
+                      background: 'transparent', border: 'none', color: '#F59E0B',
+                      fontSize: 9, cursor: 'pointer', textDecoration: 'underline',
+                    }}
+                  >
+                    Clear
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Top Tables summary — table_gravity only */}
       {algorithm === 'table_gravity' && tableRanking && tableRanking.length > 0 && (
@@ -165,6 +303,27 @@ export default function ChunkSelector({ chunks, activeChunkId, onSelect, onBack,
         </div>
       )}
 
+      {/* Select All / Deselect All */}
+      <div style={{ padding: '6px 10px', borderBottom: `1px solid ${C.border}` }}>
+        <button
+          onClick={allSelected ? onDeselectAll : onSelectAll}
+          style={{
+            width: '100%', padding: '5px 8px', borderRadius: 4,
+            border: `1px solid ${hasSelection ? 'rgba(59,130,246,0.4)' : C.border}`,
+            background: hasSelection ? 'rgba(59,130,246,0.08)' : 'rgba(0,0,0,0.2)',
+            color: hasSelection ? '#60A5FA' : C.muted,
+            fontSize: 10, fontWeight: 600, cursor: 'pointer',
+          }}
+        >
+          {allSelected ? 'Deselect All' : 'Select All'}
+          {hasSelection && !allSelected && (
+            <span style={{ marginLeft: 6, fontSize: 9, opacity: 0.7 }}>
+              ({activeChunkIds.size} selected)
+            </span>
+          )}
+        </button>
+      </div>
+
       {/* Chunk cards */}
       <div
         ref={scrollRef}
@@ -173,14 +332,13 @@ export default function ChunkSelector({ chunks, activeChunkId, onSelect, onBack,
       >
         {useVirtual && <div style={{ height: startIdx * VIRTUAL_ITEM_HEIGHT }} />}
         {visibleChunks.map((chunk) => {
-          const isActive = chunk.id === activeChunkId;
+          const isActive = activeChunkIds.has(chunk.id);
           const isGravity = algorithm === 'table_gravity';
-          // Tier distribution: count sessions per tier within this chunk's range
           const tierDist = getTierDistribution(chunk);
           return (
             <div
               key={chunk.id}
-              onClick={() => onSelect(chunk.id)}
+              onClick={() => onToggle(chunk.id)}
               style={{
                 padding: '10px 12px', marginBottom: 4, borderRadius: 8, cursor: 'pointer',
                 background: isActive ? 'rgba(59,130,246,0.1)' : 'rgba(0,0,0,0.2)',
@@ -189,6 +347,15 @@ export default function ChunkSelector({ chunks, activeChunkId, onSelect, onBack,
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                {/* Checkbox indicator */}
+                <div style={{
+                  width: 10, height: 10, borderRadius: 2, flexShrink: 0,
+                  border: `1.5px solid ${isActive ? '#3B82F6' : '#475569'}`,
+                  background: isActive ? '#3B82F6' : 'transparent',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  {isActive && <span style={{ color: '#fff', fontSize: 7, fontWeight: 900, lineHeight: 1 }}>{'\u2713'}</span>}
+                </div>
                 <div style={{
                   width: 8, height: 8, borderRadius: '50%',
                   background: chunk.color, flexShrink: 0,
@@ -295,6 +462,7 @@ export default function ChunkSelector({ chunks, activeChunkId, onSelect, onBack,
         padding: '6px 12px', borderTop: `1px solid ${C.border}`,
         fontSize: 9, color: C.muted, textAlign: 'center',
       }}>
+        {hasSelection && <span style={{ color: '#60A5FA' }}>{activeChunkIds.size} selected · </span>}
         {filtered.length}/{chunks.length} clusters · {filtered.reduce((a, c) => a + c.session_count, 0)} sessions
       </div>
     </div>
@@ -305,7 +473,6 @@ function getTierDistribution(chunk: ConstellationChunk): Array<{ tier: number; p
   const [lo, hi] = chunk.tier_range;
   if (lo === hi) return [{ tier: lo, pct: 100 }];
   const tierCount = hi - lo + 1;
-  // Approximate distribution: even split across tier range
   return Array.from({ length: tierCount }, (_, i) => ({
     tier: lo + i,
     pct: 100 / tierCount,

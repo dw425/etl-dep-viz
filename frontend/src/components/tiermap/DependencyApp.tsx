@@ -9,7 +9,7 @@
  *   Overlays   — help modal, log viewer modal, onboarding tour
  */
 
-import { lazy, Suspense, useState, useCallback, useEffect, useRef } from 'react';
+import { lazy, Suspense, useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import type {
   TierMapResult,
   ConstellationResult,
@@ -72,6 +72,7 @@ const LineageBuilder = lazy(() => import('./LineageBuilder'));
 const ImpactAnalysisView = lazy(() => import('./ImpactAnalysis'));
 const HelpOverlay = lazy(() => import('../shared/HelpOverlay'));
 const AIChat = lazy(() => import('../chat/AIChat'));
+const AdminConsole = lazy(() => import('./AdminConsole'));
 
 // ── View registry ─────────────────────────────────────────────────────────────
 // ViewId is the union of all valid tab identifiers. Adding a new tab requires:
@@ -79,7 +80,7 @@ const AIChat = lazy(() => import('../chat/AIChat'));
 type ViewId = 'tier' | 'galaxy' | 'constellation' | 'explorer' | 'conflicts' | 'order' | 'matrix'
   | 'tables' | 'duplicates' | 'chunking'
   | 'complexity' | 'waves' | 'heatmap' | 'umap' | 'simulator' | 'concentration' | 'consensus'
-  | 'layers' | 'infra' | 'profile' | 'flowwalker' | 'lineage' | 'impact' | 'chat';
+  | 'layers' | 'infra' | 'profile' | 'flowwalker' | 'lineage' | 'impact' | 'chat' | 'admin';
 
 // Group determines tab section: core, harmonize, vector, nav
 const VIEWS: { id: ViewId; label: string; icon: string; group?: 'core' | 'vector' | 'nav' | 'harmonize' }[] = [
@@ -165,7 +166,9 @@ export function DependencyApp() {
   const [tierData, setTierData] = useState<TierMapResult | null>(null);
   const [constellation, setConstellation] = useState<ConstellationResult | null>(null);
   const [algorithm, setAlgorithm] = useState<AlgorithmKey>('louvain');
-  const [selectedChunkId, setSelectedChunkId] = useState<string | null>(null);
+  const [selectedChunkIds, setSelectedChunkIds] = useState<Set<string>>(new Set());
+  // Session search highlight state
+  const [highlightedSessionIds, setHighlightedSessionIds] = useState<Set<string>>(new Set());
   // uploadId is passed to the vector/export endpoints to avoid re-sending large tier data
   const [uploadId, setUploadId] = useState<number | null>(null);
   const [recentUploads, setRecentUploads] = useState<UploadSummary[]>([]);
@@ -318,8 +321,68 @@ export function DependencyApp() {
   }, [showHelp, showLogPanel, goBack, goForward, navigateView]);
 
   // ── Derived ────────────────────────────────────────────────────────────────
-  // Resolve the full chunk object for the currently selected cluster id
-  const selectedChunk = constellation?.chunks.find(c => c.id === selectedChunkId) ?? null;
+  const selectedChunks = constellation?.chunks.filter(c => selectedChunkIds.has(c.id)) ?? [];
+  const hasChunkSelection = selectedChunks.length > 0;
+
+  // ── Multi-select handlers ─────────────────────────────────────────────────
+  const handleChunkToggle = useCallback((chunkId: string) => {
+    setSelectedChunkIds(prev => {
+      const next = new Set(prev);
+      if (next.has(chunkId)) next.delete(chunkId);
+      else next.add(chunkId);
+      return next;
+    });
+  }, []);
+  const handleSelectAll = useCallback(() => {
+    if (!constellation) return;
+    setSelectedChunkIds(new Set(constellation.chunks.map(c => c.id)));
+  }, [constellation]);
+  const handleDeselectAll = useCallback(() => {
+    setSelectedChunkIds(new Set());
+  }, []);
+
+  // ── Session search: session → tables map ──────────────────────────────────
+  const sessionTableMap = useMemo(() => {
+    if (!tierData) return new Map<string, Set<string>>();
+    const map = new Map<string, Set<string>>();
+    const tableIdToName = new Map(tierData.tables.map((t: any) => [t.id, t.name]));
+    for (const conn of tierData.connections) {
+      const fromIsSession = conn.from.startsWith('S');
+      const toIsSession = conn.to.startsWith('S');
+      if (fromIsSession) {
+        const tName = tableIdToName.get(conn.to);
+        if (tName) {
+          if (!map.has(conn.from)) map.set(conn.from, new Set());
+          map.get(conn.from)!.add(tName);
+        }
+      }
+      if (toIsSession) {
+        const tName = tableIdToName.get(conn.from);
+        if (tName) {
+          if (!map.has(conn.to)) map.set(conn.to, new Set());
+          map.get(conn.to)!.add(tName);
+        }
+      }
+    }
+    return map;
+  }, [tierData]);
+
+  const handleHighlightSession = useCallback((sessionId: string) => {
+    setHighlightedSessionIds(new Set([sessionId]));
+  }, []);
+
+  const handleFindLinked = useCallback((sessionId: string) => {
+    const tables = sessionTableMap.get(sessionId);
+    if (!tables || tables.size === 0) return;
+    const linked = new Set<string>([sessionId]);
+    for (const [sid, sTables] of sessionTableMap) {
+      if (sid === sessionId) continue;
+      for (const t of sTables) {
+        if (tables.has(t)) { linked.add(sid); break; }
+      }
+    }
+    setHighlightedSessionIds(linked);
+  }, [sessionTableMap]);
 
   // Load projects list on mount
   useEffect(() => {
@@ -415,10 +478,14 @@ export function DependencyApp() {
   const handleRecluster = useCallback(async (algo: AlgorithmKey) => {
     if (!tierData) return;
     setAlgorithm(algo);
+    setSelectedChunkIds(new Set());
+    if (algo === 'gradient_scale') {
+      // Pure frontend mode — no backend call needed
+      return;
+    }
     try {
       const result = await recluster(tierData, algo);
       setConstellation(result.constellation);
-      setSelectedChunkId(null);
       logActivity('recluster', undefined, { algorithm: algo });
     } catch (e: any) {
       setError({ message: e.message, phase: 'recluster', timestamp: new Date().toISOString() });
@@ -463,30 +530,30 @@ export function DependencyApp() {
 
   // Sync current state to URL whenever view or uploadId changes
   useEffect(() => {
+    const chunkParam = selectedChunkIds.size > 0 ? Array.from(selectedChunkIds).join(',') : undefined;
     updateUrl({
       view: view,
       upload: uploadId ? String(uploadId) : undefined,
-      chunk: selectedChunkId ?? undefined,
+      chunk: chunkParam,
     });
-  }, [view, uploadId, selectedChunkId, updateUrl]);
+  }, [view, uploadId, selectedChunkIds, updateUrl]);
 
-  // Auto-restore: on first mount, URL params > localStorage > dashboard
+  // Auto-restore: ONLY from URL params (deep links), never from localStorage alone.
+  // Users should always see the dashboard/project screen on fresh load.
   const autoRestoreRef = useRef(false);
   useEffect(() => {
     if (autoRestoreRef.current) return;
     autoRestoreRef.current = true;
     const urlUpload = urlState.upload;
-    const savedUpload = localStorage.getItem('edv-last-upload');
-    const targetUpload = urlUpload || savedUpload;
-    if (targetUpload) {
-      handleLoadUpload(Number(targetUpload), urlState.view);
+    if (urlUpload) {
+      handleLoadUpload(Number(urlUpload), urlState.view);
     }
   }, [handleLoadUpload, urlState]);
 
   // ── Export HTML — generates a self-contained static report and triggers download ─
   const handleExport = useCallback(() => {
     if (!tierData) return;
-    const html = buildTierMapHTML(tierData);
+    const html = buildTierMapHTML(tierData, constellation ?? undefined);
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -497,7 +564,7 @@ export function DependencyApp() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
     logActivity('export', 'tier_map_export.html', { session_count: tierData.stats?.session_count });
-  }, [tierData]);
+  }, [tierData, constellation]);
 
   // ── Drag & drop — filters to only .xml and .zip files before upload ──────
   const onDrop = useCallback((e: React.DragEvent) => {
@@ -509,23 +576,92 @@ export function DependencyApp() {
     if (files.length) handleUpload(files);
   }, [handleUpload]);
 
-  // ── Scoped data for constellation chunk ────────────────────────────────────
-  // When a cluster is selected, all core views receive only that cluster's sessions,
-  // plus the tables and edges that touch those sessions. Full data is used otherwise.
+  // ── Drill filter: compute matching session IDs ─────────────────────────────
+  const drillMatchingIds = useMemo(() => {
+    if (!vectorResults || Object.keys(drillFilter).length === 0) return null;
+    let ids: Set<string> | null = null;
+    const intersect = (a: Set<string>, b: Set<string>) => {
+      const r = new Set<string>(); for (const x of a) if (b.has(x)) r.add(x); return r;
+    };
+    if (drillFilter.complexity_bucket) {
+      const matching = new Set<string>();
+      for (const score of (vectorResults.v11_complexity?.scores ?? [])) {
+        if ((score as any).bucket === drillFilter.complexity_bucket) matching.add((score as any).session_id);
+      }
+      ids = matching;
+    }
+    if (drillFilter.wave_number?.length) {
+      const waveSet = new Set(drillFilter.wave_number);
+      const matching = new Set<string>();
+      for (const wave of (vectorResults.v4_wave_plan?.waves ?? [])) {
+        if (waveSet.has((wave as any).wave_number)) {
+          for (const sid of (wave as any).session_ids) matching.add(sid);
+        }
+      }
+      ids = ids ? intersect(ids, matching) : matching;
+    }
+    if (drillFilter.criticality_tier_min != null) {
+      const matching = new Set<string>();
+      for (const sc of ((vectorResults as any).v9_wave_function?.sessions ?? [])) {
+        if ((sc.criticality_tier ?? 0) >= drillFilter.criticality_tier_min!) matching.add(sc.session_id);
+      }
+      ids = ids ? intersect(ids, matching) : matching;
+    }
+    if (drillFilter.community_macro != null) {
+      const matching = new Set<string>();
+      const macros = (vectorResults as any).v1_communities?.macro_communities ?? {};
+      const sids = macros[String(drillFilter.community_macro)] ?? [];
+      for (const sid of sids) matching.add(sid);
+      ids = ids ? intersect(ids, matching) : matching;
+    }
+    if (drillFilter.is_independent) {
+      const matching = new Set<string>();
+      for (const s of ((vectorResults as any).v10_concentration?.independent_sessions ?? [])) {
+        matching.add(s.session_id);
+      }
+      ids = ids ? intersect(ids, matching) : matching;
+    }
+    return ids ?? new Set<string>();
+  }, [vectorResults, drillFilter]);
+
+  // ── Scoped data for constellation chunk + drill filter ─────────────────────
+  // When clusters are selected, filter to those clusters' sessions.
+  // When drill filter is active, further filter to matching sessions.
   const scopedTierData = (() => {
-    if (!selectedChunk || !tierData) return tierData;
-    const ids = new Set(selectedChunk.session_ids);
-    const sessions = tierData.sessions.filter(s => ids.has(s.id));
-    const sessionIds = new Set(sessions.map(s => s.id));
-    // Include edges where at least one endpoint is inside the cluster
-    const connections = tierData.connections.filter(c => sessionIds.has(c.from) || sessionIds.has(c.to));
-    const tableIds = new Set<string>();
-    connections.forEach(c => {
-      if (!sessionIds.has(c.from)) tableIds.add(c.from);
-      if (!sessionIds.has(c.to)) tableIds.add(c.to);
-    });
-    const tables = tierData.tables.filter(t => tableIds.has(t.id));
-    return { ...tierData, sessions, tables, connections };
+    let data = tierData;
+    if (!data) return data;
+
+    // 1. Chunk filter
+    if (hasChunkSelection) {
+      const ids = new Set<string>();
+      for (const chunk of selectedChunks) for (const sid of chunk.session_ids) ids.add(sid);
+      const sessions = data.sessions.filter(s => ids.has(s.id));
+      const sessionIds = new Set(sessions.map(s => s.id));
+      const connections = data.connections.filter(c => sessionIds.has(c.from) || sessionIds.has(c.to));
+      const tableIds = new Set<string>();
+      connections.forEach(c => {
+        if (!sessionIds.has(c.from)) tableIds.add(c.from);
+        if (!sessionIds.has(c.to)) tableIds.add(c.to);
+      });
+      const tables = data.tables.filter(t => tableIds.has(t.id));
+      data = { ...data, sessions, tables, connections };
+    }
+
+    // 2. Drill filter
+    if (drillMatchingIds && data) {
+      const sessions = data.sessions.filter(s => drillMatchingIds.has(s.id));
+      const sessionIds = new Set(sessions.map(s => s.id));
+      const connections = data.connections.filter(c => sessionIds.has(c.from) || sessionIds.has(c.to));
+      const tableIds = new Set<string>();
+      connections.forEach(c => {
+        if (!sessionIds.has(c.from)) tableIds.add(c.from);
+        if (!sessionIds.has(c.to)) tableIds.add(c.to);
+      });
+      const tables = data.tables.filter(t => tableIds.has(t.id));
+      data = { ...data, sessions, tables, connections };
+    }
+
+    return data;
   })();
 
   const stats = tierData?.stats;
@@ -701,7 +837,7 @@ export function DependencyApp() {
                       setRecentUploads(proj.uploads.map(u => ({
                         id: u.id, filename: u.filename, platform: u.platform,
                         session_count: u.session_count, created_at: u.created_at || '',
-                        algorithm: null, parse_duration_ms: null,
+                        algorithm: null, parse_duration_ms: null, project_id: p.id,
                       })));
                     }
                   }).catch(() => {});
@@ -891,7 +1027,7 @@ export function DependencyApp() {
           {/* Logo — clicking resets to dashboard (tierData = null) */}
           <span
             style={{ fontSize: 14, fontWeight: 800, color: T.text, cursor: 'pointer', letterSpacing: '-0.02em' }}
-            onClick={() => { setTierData(null); setConstellation(null); setUploadId(null); setSelectedChunkId(null); }}
+            onClick={() => { setTierData(null); setConstellation(null); setUploadId(null); setSelectedChunkIds(new Set()); }}
           >
             ETL Dep Viz
           </span>
@@ -1004,6 +1140,16 @@ export function DependencyApp() {
             Profile
           </button>
           <button
+            onClick={() => setView('admin' as ViewId)}
+            style={{
+              padding: '4px 10px', borderRadius: 5, border: `1px solid ${T.border}`,
+              background: view === 'admin' ? T.accentBg : 'transparent',
+              color: view === 'admin' ? T.accentText : T.textMuted, fontSize: 10, cursor: 'pointer',
+            }}
+          >
+            Admin
+          </button>
+          <button
             onClick={() => fileInputRef.current?.click()}
             style={{
               padding: '4px 10px', borderRadius: 5, border: `1px solid ${T.accent}`,
@@ -1068,9 +1214,9 @@ export function DependencyApp() {
       )}
 
       {/* Chunk summary bar (constellation only) */}
-      {view === 'constellation' && selectedChunk && constellation && (
+      {view === 'constellation' && hasChunkSelection && constellation && (
         <ChunkSummary
-          chunk={selectedChunk}
+          chunks={selectedChunks}
           totalSessions={tierData.sessions.length}
           crossChunkEdges={constellation.cross_chunk_edges}
         />
@@ -1079,14 +1225,22 @@ export function DependencyApp() {
       {/* Main content */}
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex' }}>
         {/* Constellation sidebar */}
-        {view === 'constellation' && constellation && (
+        {view === 'constellation' && constellation && algorithm !== 'gradient_scale' && (
           <ChunkSelector
             chunks={constellation.chunks}
-            activeChunkId={selectedChunkId}
-            onSelect={(chunkId: string) => setSelectedChunkId(prev => prev === chunkId ? null : chunkId)}
-            onBack={() => setSelectedChunkId(null)}
+            activeChunkIds={selectedChunkIds}
+            onToggle={handleChunkToggle}
+            onSelectAll={handleSelectAll}
+            onDeselectAll={handleDeselectAll}
+            onBack={handleDeselectAll}
             algorithm={algorithm}
             tableRanking={constellation.table_reference_ranking}
+            points={constellation.points}
+            tierData={tierData}
+            highlightedSessionIds={highlightedSessionIds}
+            onHighlightSession={handleHighlightSession}
+            onFindLinked={handleFindLinked}
+            onClearHighlight={() => setHighlightedSessionIds(new Set())}
           />
         )}
 
@@ -1097,7 +1251,7 @@ export function DependencyApp() {
             <div style={{ flex: 1, overflow: 'hidden', padding: (['tier', 'matrix', 'galaxy', 'constellation', 'tables', 'duplicates'].includes(view)) ? 0 : 20 }}>
               {/* ── Core views ── */}
               {view === 'tier' && scopedTierData && (
-                <ErrorBoundary><TierDiagram data={scopedTierData} /></ErrorBoundary>
+                <ErrorBoundary><TierDiagram data={scopedTierData} chunks={constellation?.chunks} /></ErrorBoundary>
               )}
               {view === 'galaxy' && scopedTierData && (
                 <ErrorBoundary>
@@ -1110,16 +1264,11 @@ export function DependencyApp() {
                     points={constellation.points}
                     chunks={constellation.chunks}
                     crossChunkEdges={constellation.cross_chunk_edges}
-                    onChunkSelect={(chunkId: string) => {
-                      if (selectedChunkId === chunkId) {
-                        setSelectedChunkId(null);
-                      } else {
-                        setSelectedChunkId(chunkId);
-                        navigateView('explorer');
-                      }
-                    }}
+                    selectedChunkIds={selectedChunkIds}
+                    onChunkSelect={handleChunkToggle}
                     algorithm={algorithm}
                     onAlgorithmChange={handleRecluster}
+                    highlightedSessionIds={highlightedSessionIds}
                   />
                 </ErrorBoundary>
               )}
@@ -1169,37 +1318,37 @@ export function DependencyApp() {
               {view === 'complexity' && (
                 vectorResults?.v11_complexity ? (
                   <ErrorBoundary><div style={{ overflow: 'auto', height: '100%' }}><ComplexityOverlay complexity={vectorResults.v11_complexity} /></div></ErrorBoundary>
-                ) : <VectorFallback label="Complexity" onRun={() => navigateView('chunking')} onRunDirect={tierData ? () => analyzeVectors(tierData, 1, uploadId ?? undefined).then(r => setVectorResults(prev => ({ ...prev, ...r }))).catch(e => addToast(e.message)) : undefined} />
+                ) : <VectorFallback label="Complexity" onRun={() => navigateView('chunking')} onRunDirect={tierData ? () => analyzeVectors(tierData, 1, uploadId ?? undefined).then(r => { setVectorResults(prev => ({ ...prev, ...r })); addToast(`Vector analysis complete: ${Object.keys(r).filter(k => k.startsWith('v')).length} vectors`, 'success'); }).catch(e => addToast(e.message)) : undefined} />
               )}
               {view === 'waves' && (
                 vectorResults?.v4_wave_plan ? (
                   <ErrorBoundary><div style={{ overflow: 'auto', height: '100%' }}><WavePlanView wavePlan={vectorResults.v4_wave_plan} /></div></ErrorBoundary>
-                ) : <VectorFallback label="Wave Plan" onRun={() => navigateView('chunking')} onRunDirect={tierData ? () => analyzeVectors(tierData, 1, uploadId ?? undefined).then(r => setVectorResults(prev => ({ ...prev, ...r }))).catch(e => addToast(e.message)) : undefined} />
+                ) : <VectorFallback label="Wave Plan" onRun={() => navigateView('chunking')} onRunDirect={tierData ? () => analyzeVectors(tierData, 1, uploadId ?? undefined).then(r => { setVectorResults(prev => ({ ...prev, ...r })); addToast(`Vector analysis complete: ${Object.keys(r).filter(k => k.startsWith('v')).length} vectors`, 'success'); }).catch(e => addToast(e.message)) : undefined} />
               )}
               {view === 'heatmap' && (
                 vectorResults?.v11_complexity ? (
                   <ErrorBoundary><div style={{ overflow: 'auto', height: '100%' }}><HeatMapView complexity={vectorResults.v11_complexity} /></div></ErrorBoundary>
-                ) : <VectorFallback label="Heat Map" onRun={() => navigateView('chunking')} onRunDirect={tierData ? () => analyzeVectors(tierData, 1, uploadId ?? undefined).then(r => setVectorResults(prev => ({ ...prev, ...r }))).catch(e => addToast(e.message)) : undefined} />
+                ) : <VectorFallback label="Heat Map" onRun={() => navigateView('chunking')} onRunDirect={tierData ? () => analyzeVectors(tierData, 1, uploadId ?? undefined).then(r => { setVectorResults(prev => ({ ...prev, ...r })); addToast(`Vector analysis complete: ${Object.keys(r).filter(k => k.startsWith('v')).length} vectors`, 'success'); }).catch(e => addToast(e.message)) : undefined} />
               )}
               {view === 'umap' && (
                 vectorResults?.v3_dimensionality_reduction ? (
                   <ErrorBoundary><div style={{ overflow: 'auto', height: '100%' }}><UMAPView vectorResults={vectorResults} /></div></ErrorBoundary>
-                ) : <VectorFallback label="UMAP" phase={2} onRun={() => setRightPanel('vectors')} onRunDirect={tierData ? () => analyzeVectors(tierData, 2, uploadId ?? undefined).then(r => setVectorResults(prev => ({ ...prev, ...r }))).catch(e => addToast(e.message)) : undefined} />
+                ) : <VectorFallback label="UMAP" phase={2} onRun={() => setRightPanel('vectors')} onRunDirect={tierData ? () => analyzeVectors(tierData, 2, uploadId ?? undefined).then(r => { setVectorResults(prev => ({ ...prev, ...r })); addToast(`Vector analysis complete: ${Object.keys(r).filter(k => k.startsWith('v')).length} vectors`, 'success'); }).catch(e => addToast(e.message)) : undefined} />
               )}
               {view === 'simulator' && (
                 vectorResults?.v9_wave_function && tierData ? (
                   <ErrorBoundary><div style={{ overflow: 'auto', height: '100%' }}><WaveSimulator waveFunction={vectorResults.v9_wave_function} tierData={tierData} /></div></ErrorBoundary>
-                ) : <VectorFallback label="Simulator" phase={2} onRun={() => setRightPanel('vectors')} onRunDirect={tierData ? () => analyzeVectors(tierData, 2, uploadId ?? undefined).then(r => setVectorResults(prev => ({ ...prev, ...r }))).catch(e => addToast(e.message)) : undefined} />
+                ) : <VectorFallback label="Simulator" phase={2} onRun={() => setRightPanel('vectors')} onRunDirect={tierData ? () => analyzeVectors(tierData, 2, uploadId ?? undefined).then(r => { setVectorResults(prev => ({ ...prev, ...r })); addToast(`Vector analysis complete: ${Object.keys(r).filter(k => k.startsWith('v')).length} vectors`, 'success'); }).catch(e => addToast(e.message)) : undefined} />
               )}
               {view === 'concentration' && (
                 vectorResults?.v10_concentration ? (
                   <ErrorBoundary><div style={{ overflow: 'auto', height: '100%' }}><ConcentrationView concentration={vectorResults.v10_concentration} /></div></ErrorBoundary>
-                ) : <VectorFallback label="Gravity" phase={2} onRun={() => setRightPanel('vectors')} onRunDirect={tierData ? () => analyzeVectors(tierData, 2, uploadId ?? undefined).then(r => setVectorResults(prev => ({ ...prev, ...r }))).catch(e => addToast(e.message)) : undefined} />
+                ) : <VectorFallback label="Gravity" phase={2} onRun={() => setRightPanel('vectors')} onRunDirect={tierData ? () => analyzeVectors(tierData, 2, uploadId ?? undefined).then(r => { setVectorResults(prev => ({ ...prev, ...r })); addToast(`Vector analysis complete: ${Object.keys(r).filter(k => k.startsWith('v')).length} vectors`, 'success'); }).catch(e => addToast(e.message)) : undefined} />
               )}
               {view === 'consensus' && (
                 vectorResults?.v8_ensemble_consensus ? (
                   <ErrorBoundary><div style={{ overflow: 'auto', height: '100%' }}><ConsensusRadar ensemble={vectorResults.v8_ensemble_consensus} /></div></ErrorBoundary>
-                ) : <VectorFallback label="Consensus" phase={3} onRun={() => setRightPanel('vectors')} onRunDirect={tierData ? () => analyzeVectors(tierData, 3, uploadId ?? undefined).then(r => setVectorResults(prev => ({ ...prev, ...r }))).catch(e => addToast(e.message)) : undefined} />
+                ) : <VectorFallback label="Consensus" phase={3} onRun={() => setRightPanel('vectors')} onRunDirect={tierData ? () => analyzeVectors(tierData, 3, uploadId ?? undefined).then(r => { setVectorResults(prev => ({ ...prev, ...r })); addToast(`Vector analysis complete: ${Object.keys(r).filter(k => k.startsWith('v')).length} vectors`, 'success'); }).catch(e => addToast(e.message)) : undefined} />
               )}
 
               {/* ── Layer / navigation views ── */}
@@ -1251,7 +1400,7 @@ export function DependencyApp() {
               {view === 'chat' && (
                 <ErrorBoundary>
                   <div style={{ overflow: 'hidden', height: '100%' }}>
-                    <AIChat uploadId={uploadId} tierData={tierData} />
+                    <AIChat uploadId={uploadId} tierData={tierData} onToast={addToast} />
                   </div>
                 </ErrorBoundary>
               )}
@@ -1264,6 +1413,13 @@ export function DependencyApp() {
                   </div>
                 </ErrorBoundary>
               )}
+
+              {/* Admin Console */}
+              {view === 'admin' && (
+                <ErrorBoundary>
+                  <AdminConsole onToast={addToast} onLoadUpload={handleLoadUpload} />
+                </ErrorBoundary>
+              )}
             </div>
           </Suspense>
         </div>
@@ -1273,11 +1429,11 @@ export function DependencyApp() {
           <div style={{ width: 280, borderLeft: `1px solid ${T.border}`, overflow: 'auto', padding: 12, flexShrink: 0, background: T.bgPanel }}>
             {rightPanel === 'vectors' && (
               // Vector control: run phases 1-3 and view results summary
-              <VectorControlPanel tierData={tierData} vectorResults={vectorResults} onVectorResults={setVectorResults} />
+              <VectorControlPanel tierData={tierData} vectorResults={vectorResults} onVectorResults={setVectorResults} uploadId={uploadId} onToast={addToast} />
             )}
             {rightPanel === 'drill' && vectorResults && (
               // Drill panel: filter any view by vector score ranges
-              <DrillThroughPanel vectorResults={vectorResults} filter={drillFilter} onFilterChange={setDrillFilter} uploadId={uploadId} />
+              <DrillThroughPanel vectorResults={vectorResults} filter={drillFilter} onFilterChange={setDrillFilter} matchingCount={drillMatchingIds ? drillMatchingIds.size : undefined} uploadId={uploadId} />
             )}
             {rightPanel === 'export' && (
               // Export manager: Excel, DOT, Mermaid, Jira CSV, Snapshot, etc.

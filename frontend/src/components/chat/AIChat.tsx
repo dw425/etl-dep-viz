@@ -37,11 +37,12 @@ interface AIChatProps {
   uploadId: number | null;
   tierData: TierMapResult | null;
   onNavigate?: (view: string, params: Record<string, unknown>) => void;
+  onToast?: (message: string, severity: 'error' | 'warning' | 'info' | 'success') => void;
 }
 
 /* ── Component ──────────────────────────────────────────────────────────── */
 
-export default function AIChat({ uploadId, tierData, onNavigate }: AIChatProps) {
+export default function AIChat({ uploadId, tierData, onNavigate, onToast }: AIChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -75,17 +76,21 @@ export default function AIChat({ uploadId, tierData, onNavigate }: AIChatProps) 
       setDocCount(data.documents_indexed || 0);
       const byType = data.by_type || {};
       const warningText = data.warning ? `\n\nWarning: ${data.warning}` : '';
+      const indexMsg = `Index built! ${data.documents_indexed || 0} documents indexed (${byType.session || 0} sessions, ${byType.table || 0} tables, ${byType.chain || 0} chains, ${byType.group || 0} groups). Ask me anything about your ETL environment.${warningText}`;
       setMessages(prev => [...prev, {
         role: 'assistant',
-        content: `Index built! ${data.documents_indexed || 0} documents indexed (${byType.session || 0} sessions, ${byType.table || 0} tables, ${byType.chain || 0} chains, ${byType.group || 0} groups). Ask me anything about your ETL environment.${warningText}`,
+        content: indexMsg,
         timestamp: new Date().toISOString(),
       }]);
+      onToast?.(`AI index ready: ${data.documents_indexed || 0} documents indexed`, 'success');
     } catch (err) {
+      const errMsg = `Failed to build index: ${err instanceof Error ? err.message : 'Unknown error'}. Make sure the AI dependencies are installed (pip install -e ".[ai]").`;
       setMessages(prev => [...prev, {
         role: 'assistant',
-        content: `Failed to build index: ${err instanceof Error ? err.message : 'Unknown error'}. Make sure the AI dependencies are installed (pip install -e ".[ai]").`,
+        content: errMsg,
         timestamp: new Date().toISOString(),
       }]);
+      onToast?.(errMsg, 'error');
     } finally {
       setIndexing(false);
     }
@@ -213,12 +218,15 @@ export default function AIChat({ uploadId, tierData, onNavigate }: AIChatProps) 
                       content: `Re-indexed with vector data! ${data.documents_indexed || 0} documents now include complexity, wave, and community data.`,
                       timestamp: new Date().toISOString(),
                     }]);
+                    onToast?.(`Re-indexed: ${data.documents_indexed || 0} documents updated with vector data`, 'success');
                   } catch (err) {
+                    const errMsg = `Re-index failed: ${err instanceof Error ? err.message : 'Unknown error'}`;
                     setMessages(prev => [...prev, {
                       role: 'assistant' as const,
-                      content: `Re-index failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
+                      content: errMsg,
                       timestamp: new Date().toISOString(),
                     }]);
+                    onToast?.(errMsg, 'error');
                   } finally {
                     setIndexing(false);
                   }

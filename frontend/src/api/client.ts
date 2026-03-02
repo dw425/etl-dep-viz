@@ -184,6 +184,7 @@ export interface UploadSummary {
   session_count: number;
   algorithm: string | null;
   parse_duration_ms: number | null;
+  project_id: number | null;
   created_at: string | null;
 }
 

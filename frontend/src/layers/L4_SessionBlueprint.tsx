@@ -13,11 +13,11 @@ const DIM_LABELS: Record<string, string> = {
   D1_transform_volume: 'Transform Volume',
   D2_diversity: 'Diversity',
   D3_risk: 'Risk',
-  D4_table_footprint: 'Table Footprint',
+  D4_io_volume: 'IO Volume',
   D5_lookup_intensity: 'Lookup Intensity',
   D6_coupling: 'Coupling',
   D7_structural_depth: 'Structural Depth',
-  D8_volume_proxy: 'Volume Proxy',
+  D8_external_reads: 'External Reads',
 };
 
 const BUCKET_COLORS: Record<string, string> = {

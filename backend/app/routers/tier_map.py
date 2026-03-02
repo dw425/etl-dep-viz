@@ -36,7 +36,7 @@ _ZIP_STREAM_CHUNK = 4 * 1024 * 1024                  # 4MB streaming chunk
 
 # Concurrency control: max 2 simultaneous parses to prevent server overload
 _PARSE_SEMAPHORE = asyncio.Semaphore(2)
-_PARSE_TIMEOUT_CAP = 7200  # hard limit 2 hours
+_PARSE_TIMEOUT_CAP = 14400  # hard limit 4 hours
 
 router = APIRouter()
 
@@ -353,11 +353,11 @@ async def analyze_tier_map(
         if not raw:
             raise HTTPException(status_code=422, detail='No XML files found in upload.')
 
-        # Compute scaled timeout: base + 60s/file + 30s/100MB, capped at 2 hours
+        # Compute scaled timeout: base + 300s/file + 60s/100MB, capped at 4 hours
         total_size_mb = sum(len(r) for r in raw) / (1024 * 1024)
         scaled_timeout = min(
             _PARSE_TIMEOUT_CAP,
-            max(settings.parse_timeout_seconds, int(60 * len(raw) + 30 * (total_size_mb / 100))),
+            max(settings.parse_timeout_seconds, int(300 * len(raw) + 60 * (total_size_mb / 100))),
         )
 
         try:
@@ -429,11 +429,11 @@ async def analyze_constellation(
         if not raw:
             raise HTTPException(status_code=422, detail='No XML files found in upload.')
 
-        # Compute scaled timeout
+        # Compute scaled timeout: 300s/file + 60s/100MB, capped at 4 hours
         total_size_mb = sum(len(r) for r in raw) / (1024 * 1024)
         scaled_timeout = min(
             _PARSE_TIMEOUT_CAP,
-            max(settings.parse_timeout_seconds, int(60 * len(raw) + 30 * (total_size_mb / 100))),
+            max(settings.parse_timeout_seconds, int(300 * len(raw) + 60 * (total_size_mb / 100))),
         )
 
         try:
@@ -573,11 +573,11 @@ async def analyze_constellation_stream(
             platform = _detect_platform(raw)
             logger.info("step=classify platform=%s files=%d", platform, total)
 
-            # Scale timeout: base timeout + 60s per file + 30s per 100MB
+            # Scale timeout: base timeout + 300s per file + 60s per 100MB, capped at 4 hours
             total_size_mb = sum(len(r) for r in raw) / (1024 * 1024)
-            scaled_timeout = max(
-                settings.parse_timeout_seconds,
-                int(60 * total + 30 * (total_size_mb / 100)),
+            scaled_timeout = min(
+                _PARSE_TIMEOUT_CAP,
+                max(settings.parse_timeout_seconds, int(300 * total + 60 * (total_size_mb / 100))),
             )
             logger.info("step=timeout_calc base=%ds files=%d size_mb=%.0f scaled=%ds",
                         settings.parse_timeout_seconds, total, total_size_mb, scaled_timeout)
@@ -722,7 +722,7 @@ async def list_algorithms():
 
 @router.get('/tier-map/uploads')
 def list_uploads(
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(20, ge=1, le=500),
     offset: int = Query(0, ge=0),
     x_user_id: str | None = Header(None),
     db: Session = Depends(get_db),
@@ -740,6 +740,7 @@ def list_uploads(
             'session_count': r.session_count,
             'algorithm': r.algorithm,
             'parse_duration_ms': r.parse_duration_ms,
+            'project_id': r.project_id,
             'created_at': r.created_at.isoformat() if r.created_at else None,
         }
         for r in rows

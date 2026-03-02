@@ -1,12 +1,28 @@
 """V11 Complexity Analyzer — 8-dimension weighted complexity scoring.
 
-Scores each session across 8 dimensions and assigns complexity buckets
-(Simple/Medium/Complex/Very Complex) with hours estimates.
+Scores each session across 8 dimensions using percentile-based normalization
+and assigns complexity buckets (Simple/Medium/Complex/Very Complex) with
+hours estimates.
+
+Dimension Definitions:
+  D1: Transform Volume  — number of transform operations
+  D2: Table Diversity    — count of unique tables touched (source ∪ target ∪ lookup)
+  D3: Risk               — write conflicts + staleness risks
+  D4: IO Volume          — total table references (sources + targets + lookups, non-unique)
+  D5: Lookup Intensity   — number of lookup operations
+  D6: Coupling           — how many other sessions share tables with this session
+  D7: Structural Depth   — tier (position in dependency chain)
+  D8: External Reads     — external read operations
+
+Normalization: Percentile-based (outlier-resistant). For dimensions where 0
+means "no complexity" (D1, D3, D4, D5, D6, D8), zero values map to 0 and
+non-zero values are percentile-ranked within the non-zero subset.
 """
 
 from __future__ import annotations
 
 import math
+from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -22,18 +38,18 @@ class ComplexityConfig:
         "D1_transform_volume": 0.15,
         "D2_diversity": 0.10,
         "D3_risk": 0.20,
-        "D4_table_footprint": 0.10,
-        "D5_lookup_intensity": 0.15,
-        "D6_coupling": 0.10,
+        "D4_io_volume": 0.10,
+        "D5_lookup_intensity": 0.10,
+        "D6_coupling": 0.15,
         "D7_structural_depth": 0.10,
-        "D8_volume_proxy": 0.10,
+        "D8_external_reads": 0.10,
     })
 
     # Bucket boundaries (0-100 scale)
     bucket_thresholds: dict[str, tuple[int, int]] = field(default_factory=lambda: {
-        "Simple": (0, 25),
-        "Medium": (26, 50),
-        "Complex": (51, 75),
+        "Simple": (0, 30),
+        "Medium": (31, 55),
+        "Complex": (56, 75),
         "Very Complex": (76, 100),
     })
 
@@ -47,6 +63,12 @@ class ComplexityConfig:
 
     # Accelerator factor (e.g., for automated migration tools)
     accelerator_factor: float = 0.7
+
+    # Dimensions where raw value 0 means "no complexity contribution"
+    zero_floor_dims: set[str] = field(default_factory=lambda: {
+        "D1_transform_volume", "D3_risk", "D4_io_volume",
+        "D5_lookup_intensity", "D6_coupling", "D8_external_reads",
+    })
 
 
 @dataclass
@@ -119,13 +141,59 @@ class ComplexityAnalyzer:
         if not features:
             return ComplexityAnalysisResult()
 
-        # Compute population stats for normalization
-        stats = self._compute_population_stats(features)
+        # Compute shared-table coupling across the population
+        coupling_map = self._compute_coupling(features)
 
-        scores = []
+        # Collect raw dimension values for every session
+        dim_names = list(self.config.weights.keys())
+        raw_by_dim: dict[str, list[float]] = {d: [] for d in dim_names}
+
         for feat in features:
-            score = self._score_session(feat, stats)
-            scores.append(score)
+            raws = self._raw_values(feat, coupling_map)
+            for d in dim_names:
+                raw_by_dim[d].append(raws[d])
+
+        # Percentile-normalize each dimension across the population
+        norm_by_dim: dict[str, list[float]] = {}
+        for d in dim_names:
+            zero_floor = d in self.config.zero_floor_dims
+            norm_by_dim[d] = self._percentile_normalize(raw_by_dim[d], zero_floor)
+
+        # Build per-session scores
+        scores: list[SessionComplexityScore] = []
+        for i, feat in enumerate(features):
+            dimensions: list[DimensionScore] = []
+            for d in dim_names:
+                w = self.config.weights[d]
+                dimensions.append(DimensionScore(
+                    name=d,
+                    raw_value=raw_by_dim[d][i],
+                    normalized=norm_by_dim[d][i],
+                    weight=w,
+                    weighted_score=norm_by_dim[d][i] * w,
+                ))
+
+            overall = sum(dim.weighted_score for dim in dimensions)
+            overall = max(0.0, min(100.0, overall))
+
+            bucket = self._assign_bucket(overall)
+            hours = self.config.hours_per_bucket.get(bucket, (16, 40))
+            factor = self.config.accelerator_factor
+
+            # Top 3 drivers
+            sorted_dims = sorted(dimensions, key=lambda d: d.weighted_score, reverse=True)
+            top_drivers = [d.name.replace("_", " ").title() for d in sorted_dims[:3]]
+
+            scores.append(SessionComplexityScore(
+                session_id=feat.session_id,
+                name=feat.name,
+                overall_score=overall,
+                bucket=bucket,
+                dimensions=dimensions,
+                hours_estimate_low=hours[0] * factor,
+                hours_estimate_high=hours[1] * factor,
+                top_drivers=top_drivers,
+            ))
 
         # Bucket distribution
         dist: dict[str, int] = {"Simple": 0, "Medium": 0, "Complex": 0, "Very Complex": 0}
@@ -153,80 +221,111 @@ class ComplexityAnalyzer:
             total_hours_high=total_high,
         )
 
-    def _compute_population_stats(self, features: list[SessionFeatures]) -> dict[str, dict[str, float]]:
-        """Compute min/max/mean for each raw dimension across the population."""
-        dims = {
-            "D1_transform_volume": [f.transform_count for f in features],
-            "D2_diversity": [len(set(f.source_tables) | set(f.target_tables) | set(f.lookup_tables)) for f in features],
-            "D3_risk": [f.write_conflict_count + f.staleness_risk for f in features],
-            "D4_table_footprint": [f.total_table_footprint for f in features],
-            "D5_lookup_intensity": [f.lookup_count for f in features],
-            "D6_coupling": [f.upstream_count + f.downstream_count for f in features],
-            "D7_structural_depth": [f.dependency_depth for f in features],
-            "D8_volume_proxy": [f.ext_reads + f.transform_count for f in features],
-        }
+    # ------------------------------------------------------------------
+    # Raw dimension extraction
+    # ------------------------------------------------------------------
 
-        stats = {}
-        for name, values in dims.items():
-            vmin = min(values) if values else 0
-            vmax = max(values) if values else 0
-            vmean = sum(values) / len(values) if values else 0
-            stats[name] = {"min": vmin, "max": vmax, "mean": vmean}
-        return stats
-
-    def _score_session(
-        self,
-        feat: SessionFeatures,
-        stats: dict[str, dict[str, float]],
-    ) -> SessionComplexityScore:
-        """Score a single session across all 8 dimensions."""
-        raw_values = {
+    def _raw_values(self, feat: SessionFeatures, coupling: dict[str, int]) -> dict[str, float]:
+        """Compute raw dimension values for a single session."""
+        return {
             "D1_transform_volume": feat.transform_count,
-            "D2_diversity": len(set(feat.source_tables) | set(feat.target_tables) | set(feat.lookup_tables)),
+            "D2_diversity": len(
+                set(feat.source_tables) | set(feat.target_tables) | set(feat.lookup_tables)
+            ),
             "D3_risk": feat.write_conflict_count + feat.staleness_risk,
-            "D4_table_footprint": feat.total_table_footprint,
+            "D4_io_volume": (
+                len(feat.source_tables) + len(feat.target_tables) + len(feat.lookup_tables)
+            ),
             "D5_lookup_intensity": feat.lookup_count,
-            "D6_coupling": feat.upstream_count + feat.downstream_count,
+            "D6_coupling": coupling.get(feat.session_id, 0),
             "D7_structural_depth": feat.dependency_depth,
-            "D8_volume_proxy": feat.ext_reads + feat.transform_count,
+            "D8_external_reads": feat.ext_reads,
         }
 
-        dimensions = []
-        for dim_name, raw in raw_values.items():
-            s = stats[dim_name]
-            rng = s["max"] - s["min"]
-            normalized = ((raw - s["min"]) / rng * 100.0) if rng > 0 else 50.0
-            normalized = max(0.0, min(100.0, normalized))
-            weight = self.config.weights.get(dim_name, 0.1)
-            dimensions.append(DimensionScore(
-                name=dim_name,
-                raw_value=raw,
-                normalized=normalized,
-                weight=weight,
-                weighted_score=normalized * weight,
-            ))
+    # ------------------------------------------------------------------
+    # Coupling: shared-table overlap across the population
+    # ------------------------------------------------------------------
 
-        overall = sum(d.weighted_score for d in dimensions)
-        overall = max(0.0, min(100.0, overall))
+    def _compute_coupling(self, features: list[SessionFeatures]) -> dict[str, int]:
+        """Count how many *other* sessions share at least one table with each session."""
+        table_to_sessions: dict[str, set[str]] = defaultdict(set)
+        for f in features:
+            all_tables = set(f.source_tables) | set(f.target_tables) | set(f.lookup_tables)
+            for t in all_tables:
+                table_to_sessions[t].add(f.session_id)
 
-        bucket = self._assign_bucket(overall)
-        hours = self.config.hours_per_bucket.get(bucket, (16, 40))
-        factor = self.config.accelerator_factor
+        coupling: dict[str, int] = {}
+        for f in features:
+            all_tables = set(f.source_tables) | set(f.target_tables) | set(f.lookup_tables)
+            shared: set[str] = set()
+            for t in all_tables:
+                shared |= table_to_sessions[t]
+            shared.discard(f.session_id)
+            coupling[f.session_id] = len(shared)
 
-        # Top 3 drivers
-        sorted_dims = sorted(dimensions, key=lambda d: d.weighted_score, reverse=True)
-        top_drivers = [d.name.replace("_", " ").title() for d in sorted_dims[:3]]
+        return coupling
 
-        return SessionComplexityScore(
-            session_id=feat.session_id,
-            name=feat.name,
-            overall_score=overall,
-            bucket=bucket,
-            dimensions=dimensions,
-            hours_estimate_low=hours[0] * factor,
-            hours_estimate_high=hours[1] * factor,
-            top_drivers=top_drivers,
-        )
+    # ------------------------------------------------------------------
+    # Percentile normalization (outlier-resistant)
+    # ------------------------------------------------------------------
+
+    def _percentile_normalize(
+        self, values: list[float], zero_floor: bool = False
+    ) -> list[float]:
+        """Normalize values to 0-100 using percentile rank.
+
+        If zero_floor=True, raw value 0 always maps to normalized 0 and
+        non-zero values are percentile-ranked within the non-zero subset
+        (scaled to 1-100).
+        """
+        n = len(values)
+        if n == 0:
+            return []
+        if n == 1:
+            return [50.0]
+
+        if zero_floor:
+            nz_indices = [i for i in range(n) if values[i] > 0]
+            if not nz_indices:
+                return [0.0] * n  # all zeros → no complexity
+            result = [0.0] * n
+            nz_values = [values[i] for i in nz_indices]
+            nz_norms = self._rank_to_percentile(nz_values)
+            for idx, norm in zip(nz_indices, nz_norms):
+                result[idx] = max(1.0, norm)  # non-zero always ≥ 1
+            return result
+        else:
+            return self._rank_to_percentile(values)
+
+    @staticmethod
+    def _rank_to_percentile(values: list[float]) -> list[float]:
+        """Pure percentile rank: sorted position → 0-100 scale.
+
+        Handles ties by assigning the average rank of the tie group.
+        """
+        n = len(values)
+        if n <= 1:
+            return [50.0] * n
+
+        sorted_idx = sorted(range(n), key=lambda i: values[i])
+        result = [0.0] * n
+
+        i = 0
+        while i < n:
+            j = i
+            while j < n and values[sorted_idx[j]] == values[sorted_idx[i]]:
+                j += 1
+            avg_rank = (i + j - 1) / 2.0
+            pct = avg_rank / (n - 1) * 100.0
+            for k in range(i, j):
+                result[sorted_idx[k]] = pct
+            i = j
+
+        return result
+
+    # ------------------------------------------------------------------
+    # Bucket assignment
+    # ------------------------------------------------------------------
 
     def _assign_bucket(self, score: float) -> str:
         for name, (low, high) in self.config.bucket_thresholds.items():

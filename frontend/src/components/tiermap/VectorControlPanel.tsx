@@ -12,6 +12,8 @@ interface Props {
   tierData: TierMapResult;
   vectorResults: VectorResults | null;
   onVectorResults: (results: VectorResults) => void;
+  uploadId?: number | null;
+  onToast?: (message: string, severity: 'error' | 'warning' | 'info' | 'success') => void;
 }
 
 const PHASE_LABELS: Record<number, { label: string; desc: string; vectors: string }> = {
@@ -20,7 +22,7 @@ const PHASE_LABELS: Record<number, { label: string; desc: string; vectors: strin
   3: { label: 'Full', desc: '+ V5 Affinity + V6 Spectral + V7 HDBSCAN + V8 Ensemble', vectors: 'V1-V11' },
 };
 
-export default function VectorControlPanel({ tierData, vectorResults, onVectorResults }: Props) {
+export default function VectorControlPanel({ tierData, vectorResults, onVectorResults, uploadId, onToast }: Props) {
   const [phase, setPhase] = useState<1 | 2 | 3>(1);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState('');
@@ -29,15 +31,20 @@ export default function VectorControlPanel({ tierData, vectorResults, onVectorRe
     setLoading(true);
     setProgress(`Running Phase ${phase} analysis...`);
     try {
-      const results = await analyzeVectors(tierData, phase);
+      const results = await analyzeVectors(tierData, phase, uploadId ?? undefined);
       onVectorResults(results);
-      setProgress(`Phase ${phase} complete in ${results.total_time ?? '?'}s`);
+      const vecCount = Object.keys(results).filter(k => k.startsWith('v')).length;
+      const msg = `Phase ${phase} complete: ${vecCount} vectors in ${results.total_time ?? '?'}s`;
+      setProgress(msg);
+      onToast?.(msg, 'success');
     } catch (err) {
-      setProgress(`Error: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      const errMsg = `Vector analysis error: ${err instanceof Error ? err.message : 'Unknown error'}`;
+      setProgress(errMsg);
+      onToast?.(errMsg, 'error');
     } finally {
       setLoading(false);
     }
-  }, [tierData, phase, onVectorResults]);
+  }, [tierData, phase, onVectorResults, uploadId, onToast]);
 
   const availableVectors = vectorResults ? Object.keys(vectorResults).filter(k => k.startsWith('v')) : [];
 

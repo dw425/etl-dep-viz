@@ -1,13 +1,13 @@
 /**
  * exportTierMapHTML.ts — Generates a self-contained interactive HTML document
  * matching the Lumen_Retro reference format: React 18 + Babel from CDN,
- * 5 views (Tier Diagram, Explorer, Conflicts, Exec Order, Matrix),
+ * 6 views (Tier Diagram, Constellation, Explorer, Conflicts, Exec Order, Matrix),
  * all with hover/click/selection interactivity.
  *
- * Data from TierMapResult replaces the hardcoded values.
+ * Data from TierMapResult + optional ConstellationResult replaces hardcoded values.
  */
 
-import type { TierMapResult } from '../../types/tiermap';
+import type { TierMapResult, ConstellationResult } from '../../types/tiermap';
 
 // ── Derive session-level detail from connections ─────────────────────────────
 
@@ -36,12 +36,10 @@ function buildSessionData(data: TierMapResult): Record<string, SessionDetail> {
     const lookups: string[] = [];
 
     data.connections.forEach(c => {
-      // Session → Table = write/chain target
       if (c.from === s.id && tableIdToName.has(c.to)) {
         const tName = tableIdToName.get(c.to)!;
         if (!targets.includes(tName)) targets.push(tName);
       }
-      // Table → Session = read/lookup source
       if (c.to === s.id && tableIdToName.has(c.from)) {
         const tName = tableIdToName.get(c.from)!;
         if (c.type === 'read_after_write' || c.type === 'source_read') {
@@ -71,7 +69,7 @@ function buildSessionData(data: TierMapResult): Record<string, SessionDetail> {
 
 // ── Main export ──────────────────────────────────────────────────────────────
 
-export function buildTierMapHTML(data: TierMapResult): string {
+export function buildTierMapHTML(data: TierMapResult, constellation?: ConstellationResult): string {
   const sessionData = buildSessionData(data);
   const execOrder = data.sessions.slice().sort((a, b) => a.step - b.step).map(s => s.full);
 
@@ -82,6 +80,11 @@ export function buildTierMapHTML(data: TierMapResult): string {
   const tierConnectionsJSON = JSON.stringify(data.connections);
   const statsJSON = JSON.stringify(data.stats);
   const timestamp = new Date().toISOString().replace('T', ' ').slice(0, 19);
+
+  const constellationPointsJSON = constellation ? JSON.stringify(constellation.points) : '[]';
+  const constellationChunksJSON = constellation ? JSON.stringify(constellation.chunks) : '[]';
+  const crossChunkEdgesJSON = constellation ? JSON.stringify(constellation.cross_chunk_edges) : '[]';
+  const hasConstellation = constellation && constellation.points.length > 0;
 
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
@@ -97,7 +100,7 @@ export function buildTierMapHTML(data: TierMapResult): string {
 const{useState,useCallback,useMemo,useRef,useEffect}=React;
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// DATA LAYER — injected from TierMapResult
+// DATA LAYER — injected from TierMapResult + ConstellationResult
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const sessionData = ${sessionDataJSON};
@@ -107,6 +110,10 @@ const tierTables = ${tierTablesJSON};
 const tierConnections = ${tierConnectionsJSON};
 const tierStats = ${statsJSON};
 const exportTimestamp = "${timestamp}";
+const constellationPoints = ${constellationPointsJSON};
+const constellationChunks = ${constellationChunksJSON};
+const crossChunkEdges = ${crossChunkEdgesJSON};
+const hasConstellation = ${hasConstellation ? 'true' : 'false'};
 
 // Derive write conflicts, read-after-write chains, and table maps
 const writeConflicts = {}; const readAfterWrite = {}; const allTargets = {}; const allSources = {}; const allTables = {};
@@ -170,7 +177,7 @@ const tGroupsData = Array.from(allTierNums).sort((a,b)=>a-b).map(tier=>({
 // VIEW 1: EXPLORER
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const ExplorerView = ({selectedSession,setSelectedSession,selectedTable,setSelectedTable}) => {
+const ExplorerView = ({selectedSession,setSelectedSession,selectedTable,setSelectedTable,filterIds}) => {
   const sel = selectedSession ? sessionData[selectedSession] : null;
   const connSessions = useMemo(()=>{
     if(!selectedTable) return new Set();
@@ -178,6 +185,11 @@ const ExplorerView = ({selectedSession,setSelectedSession,selectedTable,setSelec
     Object.entries(sessionData).forEach(([n,d])=>{if(d.sources.includes(selectedTable)||d.targets.includes(selectedTable)||d.lookups.includes(selectedTable))s.add(n);});
     return s;
   },[selectedTable]);
+
+  const filteredOrder = useMemo(()=>{
+    if(!filterIds) return executionOrder;
+    return executionOrder.filter(n=>{const d=sessionData[n];return d&&filterIds.has("S"+d.step)||filterIds.has(n);});
+  },[filterIds]);
 
   const Badge = ({name,type,onClick:oc}) => {
     const cm={write:C.write,read:C.read,lookup:C.lookup};
@@ -189,8 +201,8 @@ const ExplorerView = ({selectedSession,setSelectedSession,selectedTable,setSelec
   return (
     <div style={{display:"flex",gap:16,height:"100%",overflow:"hidden"}}>
       <div style={{width:320,flexShrink:0,display:"flex",flexDirection:"column",gap:8,overflowY:"auto",paddingRight:8}}>
-        <div style={{fontSize:10,fontWeight:700,color:C.textMuted,textTransform:"uppercase",letterSpacing:"0.1em",padding:"0 4px",marginBottom:4}}>Sessions ({executionOrder.length})</div>
-        {executionOrder.map(name=>{
+        <div style={{fontSize:10,fontWeight:700,color:C.textMuted,textTransform:"uppercase",letterSpacing:"0.1em",padding:"0 4px",marginBottom:4}}>Sessions ({filteredOrder.length})</div>
+        {filteredOrder.map(name=>{
           const d=sessionData[name]; if(!d)return null; const isSel=selectedSession===name;
           const isHi=selectedTable&&connSessions.has(name); const dim=selectedTable&&!connSessions.has(name);
           return (
@@ -301,7 +313,7 @@ const OrderView = () => (
 // VIEW 4: TIER DIAGRAM
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const TierDiagram = () => {
+const TierDiagram = ({filterIds}) => {
   const containerRef = useRef(null);
   const nodeRefs = useRef({});
   const [lines,setLines] = useState([]);
@@ -311,15 +323,22 @@ const TierDiagram = () => {
   const [hiddenTiers,setHiddenTiers] = useState(()=>new Set());
   const regRef = useCallback((id,el)=>{if(el)nodeRefs.current[id]=el;},[]);
 
-  // Map every node id to its tier for connection filtering
+  const filteredSessions = useMemo(()=>filterIds?tierSessions.filter(s=>filterIds.has(s.id)):tierSessions,[filterIds]);
+  const filteredTables = useMemo(()=>{
+    if(!filterIds) return tierTables;
+    const sessionIds=new Set(filteredSessions.map(s=>s.id));
+    const tableIds=new Set();
+    tierConnections.forEach(c=>{if(sessionIds.has(c.from))tableIds.add(c.to);if(sessionIds.has(c.to))tableIds.add(c.from);});
+    return tierTables.filter(t=>tableIds.has(t.id));
+  },[filterIds,filteredSessions]);
+
   const nodeTierMap = useMemo(()=>{
     const m=new Map();
-    tierSessions.forEach(s=>m.set(s.id,s.tier));
-    tierTables.forEach(t=>m.set(t.id,t.tier));
+    filteredSessions.forEach(s=>m.set(s.id,s.tier));
+    filteredTables.forEach(t=>m.set(t.id,t.tier));
     return m;
-  },[]);
+  },[filteredSessions,filteredTables]);
 
-  // Only connections where both endpoints belong to a visible tier
   const activeConns = useMemo(()=>
     tierConnections.filter(cn=>{
       const fT=nodeTierMap.get(cn.from);
@@ -328,8 +347,16 @@ const TierDiagram = () => {
     })
   ,[hiddenTiers,nodeTierMap]);
 
-  // Visible tier groups
-  const visibleGroups = useMemo(()=>tGroupsData.filter(g=>!hiddenTiers.has(g.tier)),[hiddenTiers]);
+  const allTierNumsLocal = new Set();
+  filteredSessions.forEach(s=>allTierNumsLocal.add(s.tier));
+  filteredTables.forEach(t=>allTierNumsLocal.add(t.tier));
+  const tGroupsLocal = Array.from(allTierNumsLocal).sort((a,b)=>a-b).map(tier=>({
+    tier,
+    sessions:filteredSessions.filter(s=>s.tier===tier),
+    tables:filteredTables.filter(t=>t.tier===tier),
+  })).filter(g=>g.sessions.length>0||g.tables.length>0);
+
+  const visibleGroups = useMemo(()=>tGroupsLocal.filter(g=>!hiddenTiers.has(g.tier)),[hiddenTiers,tGroupsLocal]);
 
   const connCounts = useMemo(()=>{const c={};activeConns.forEach(cn=>{c[cn.from]=(c[cn.from]||0)+1;c[cn.to]=(c[cn.to]||0)+1;});return c;},[activeConns]);
 
@@ -435,17 +462,15 @@ const TierDiagram = () => {
         </div>
       </div>
       <div style={{width:260,borderLeft:"1px solid #1E293B",background:"rgba(15,23,42,0.6)",overflowY:"auto",flexShrink:0,display:"flex",flexDirection:"column"}}>
-
-        {/* Tier Visibility toggles */}
         <div style={{padding:"10px 14px",borderBottom:"1px solid #1E293B",flexShrink:0}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
             <div style={{fontSize:10,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:"0.1em"}}>Tier Visibility</div>
             <div style={{display:"flex",gap:6}}>
               <button onClick={()=>setHiddenTiers(new Set())} style={{fontSize:8,padding:"2px 6px",borderRadius:3,border:"1px solid #1E293B",background:"transparent",color:"#64748B",cursor:"pointer"}}>All</button>
-              <button onClick={()=>setHiddenTiers(new Set(tGroupsData.map(g=>g.tier)))} style={{fontSize:8,padding:"2px 6px",borderRadius:3,border:"1px solid #1E293B",background:"transparent",color:"#64748B",cursor:"pointer"}}>None</button>
+              <button onClick={()=>setHiddenTiers(new Set(tGroupsLocal.map(g=>g.tier)))} style={{fontSize:8,padding:"2px 6px",borderRadius:3,border:"1px solid #1E293B",background:"transparent",color:"#64748B",cursor:"pointer"}}>None</button>
             </div>
           </div>
-          {tGroupsData.map(g=>{
+          {tGroupsLocal.map(g=>{
             const cfg=getTierCfg(g.tier);
             const hidden=hiddenTiers.has(g.tier);
             const toggle=()=>setHiddenTiers(prev=>{const next=new Set(prev);next.has(g.tier)?next.delete(g.tier):next.add(g.tier);return next;});
@@ -462,20 +487,19 @@ const TierDiagram = () => {
             );
           })}
         </div>
-
         <div style={{padding:"12px 14px",borderBottom:"1px solid #1E293B",flexShrink:0}}><div style={{fontSize:10,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:"0.1em"}}>Node Detail</div></div>
-        {sel?(()=>{const s=tierSessions.find(x=>x.id===sel);const t=tierTables.find(x=>x.id===sel);const nd=s||t;if(!nd)return null;const outs=activeConns.filter(c=>c.from===sel);const ins=activeConns.filter(c=>c.to===sel);return(
+        {sel?(()=>{const s=filteredSessions.find(x=>x.id===sel);const t=filteredTables.find(x=>x.id===sel);const nd=s||t;if(!nd)return null;const outs=activeConns.filter(c=>c.from===sel);const ins=activeConns.filter(c=>c.to===sel);return(
           <div style={{padding:14,flex:1}}>
             <div style={{fontSize:12,fontWeight:800,color:"#E2E8F0",fontFamily:"'JetBrains Mono',monospace",marginBottom:4}}>{nd.name}</div>
             {s&&<div style={{fontSize:9,color:"#64748B",marginBottom:12,fontFamily:"monospace",wordBreak:"break-all"}}>{s.full}</div>}
             {t&&<div style={{fontSize:9,color:"#64748B",marginBottom:12}}>{t.type} · tier {t.tier}</div>}
-            {outs.length>0&&<div style={{marginBottom:12}}><div style={{fontSize:9,fontWeight:700,color:"#94A3B8",textTransform:"uppercase",marginBottom:6}}>Outputs → ({outs.length})</div>{outs.map((c,i)=>{const tgt=[...tierSessions,...tierTables].find(x=>x.id===c.to);const ct=connTypes[c.type]||connTypes.write_clean;return(<div key={i} style={{display:"flex",alignItems:"center",gap:5,marginBottom:4}}><div style={{width:8,height:3,borderRadius:1,background:ct.color,flexShrink:0}}/><span style={{fontSize:9,color:ct.color,fontWeight:600,flexShrink:0}}>{c.type.replace(/_/g," ")}</span><span style={{fontSize:9,color:"#CBD5E1",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>→ {tgt?.name||c.to}</span></div>);})}</div>}
-            {ins.length>0&&<div style={{marginBottom:12}}><div style={{fontSize:9,fontWeight:700,color:"#94A3B8",textTransform:"uppercase",marginBottom:6}}>Inputs ← ({ins.length})</div>{ins.map((c,i)=>{const src=[...tierSessions,...tierTables].find(x=>x.id===c.from);const ct=connTypes[c.type]||connTypes.write_clean;return(<div key={i} style={{display:"flex",alignItems:"center",gap:5,marginBottom:4}}><div style={{width:8,height:3,borderRadius:1,background:ct.color,flexShrink:0}}/><span style={{fontSize:9,color:ct.color,fontWeight:600,flexShrink:0}}>{c.type.replace(/_/g," ")}</span><span style={{fontSize:9,color:"#CBD5E1",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>← {src?.name||c.from}</span></div>);})}</div>}
+            {outs.length>0&&<div style={{marginBottom:12}}><div style={{fontSize:9,fontWeight:700,color:"#94A3B8",textTransform:"uppercase",marginBottom:6}}>Outputs → ({outs.length})</div>{outs.map((c,i)=>{const tgt=[...filteredSessions,...filteredTables].find(x=>x.id===c.to);const ct=connTypes[c.type]||connTypes.write_clean;return(<div key={i} style={{display:"flex",alignItems:"center",gap:5,marginBottom:4}}><div style={{width:8,height:3,borderRadius:1,background:ct.color,flexShrink:0}}/><span style={{fontSize:9,color:ct.color,fontWeight:600,flexShrink:0}}>{c.type.replace(/_/g," ")}</span><span style={{fontSize:9,color:"#CBD5E1",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>→ {tgt?.name||c.to}</span></div>);})}</div>}
+            {ins.length>0&&<div style={{marginBottom:12}}><div style={{fontSize:9,fontWeight:700,color:"#94A3B8",textTransform:"uppercase",marginBottom:6}}>Inputs ← ({ins.length})</div>{ins.map((c,i)=>{const src=[...filteredSessions,...filteredTables].find(x=>x.id===c.from);const ct=connTypes[c.type]||connTypes.write_clean;return(<div key={i} style={{display:"flex",alignItems:"center",gap:5,marginBottom:4}}><div style={{width:8,height:3,borderRadius:1,background:ct.color,flexShrink:0}}/><span style={{fontSize:9,color:ct.color,fontWeight:600,flexShrink:0}}>{c.type.replace(/_/g," ")}</span><span style={{fontSize:9,color:"#CBD5E1",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>← {src?.name||c.from}</span></div>);})}</div>}
           </div>
         );})():<div style={{padding:20,color:"#475569",fontSize:11,textAlign:"center",flex:1,display:"flex",alignItems:"center",justifyContent:"center"}}>Click a node to inspect</div>}
         <div style={{padding:"10px 14px",borderTop:"1px solid #1E293B",flexShrink:0}}>
           <div style={{fontSize:9,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:6}}>Connection Density</div>
-          {[...tierSessions,...tierTables].filter(n=>(connCounts[n.id]||0)>0).sort((a,b)=>(connCounts[b.id]||0)-(connCounts[a.id]||0)).slice(0,12).map(n=>(
+          {[...filteredSessions,...filteredTables].filter(n=>(connCounts[n.id]||0)>0).sort((a,b)=>(connCounts[b.id]||0)-(connCounts[a.id]||0)).slice(0,12).map(n=>(
             <div key={n.id} style={{display:"flex",alignItems:"center",gap:5,marginBottom:3}}>
               <div style={{fontSize:8,color:"#64748B",width:12,textAlign:"right",fontFamily:"monospace"}}>{connCounts[n.id]||0}</div>
               <div style={{flex:1,height:5,borderRadius:2,background:"#1E293B",overflow:"hidden"}}><div style={{height:"100%",borderRadius:2,width:Math.min((connCounts[n.id]||0)/8*100,100)+"%",background:(connCounts[n.id]||0)>4?"#EF4444":(connCounts[n.id]||0)>2?"#F59E0B":"#3B82F6"}}/></div>
@@ -525,6 +549,199 @@ const MatrixView = () => {
 
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// VIEW 6: CONSTELLATION (SVG-based static renderer)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const ConstellationView = ({onSelectCluster,selectedClusterId}) => {
+  const [search,setSearch] = useState("");
+  const [hov,setHov] = useState(null);
+  const [highlighted,setHighlighted] = useState(new Set());
+  const svgRef = useRef(null);
+  const [transform,setTransform] = useState({x:0,y:0,k:1});
+  const dragRef = useRef(null);
+
+  const chunkMap = useMemo(()=>{const m=new Map();constellationChunks.forEach(c=>m.set(c.id,c));return m;},[]);
+  const chunkColorMap = useMemo(()=>{const m=new Map();constellationChunks.forEach(c=>m.set(c.id,c.color));return m;},[]);
+
+  // Hulls
+  const hulls = useMemo(()=>{
+    const grouped=new Map();
+    constellationPoints.forEach(p=>{if(!grouped.has(p.chunk_id))grouped.set(p.chunk_id,[]);grouped.get(p.chunk_id).push(p);});
+    const result=[];
+    for(const[id,pts]of grouped){
+      if(pts.length<3)continue;
+      // Simple convex hull (Graham scan)
+      const sorted=[...pts].sort((a,b)=>a.x-b.x||a.y-b.y);
+      const cross=(o,a,b)=>(a.x-o.x)*(b.y-o.y)-(a.y-o.y)*(b.x-o.x);
+      const lower=[];for(const p of sorted){while(lower.length>=2&&cross(lower[lower.length-2],lower[lower.length-1],p)<=0)lower.pop();lower.push(p);}
+      const upper=[];for(let i=sorted.length-1;i>=0;i--){const p=sorted[i];while(upper.length>=2&&cross(upper[upper.length-2],upper[upper.length-1],p)<=0)upper.pop();upper.push(p);}
+      lower.pop();upper.pop();
+      const hull=[...lower,...upper];
+      result.push({id,hull,color:chunkColorMap.get(id)||"#3B82F6"});
+    }
+    return result;
+  },[chunkColorMap]);
+
+  // Search results
+  const searchResults = useMemo(()=>{
+    if(!search.trim())return[];
+    const q=search.toLowerCase();
+    return constellationPoints.filter(p=>p.name.toLowerCase().includes(q)).slice(0,20);
+  },[search]);
+
+  // Session-table map for linked sessions
+  const sessionTableMap = useMemo(()=>{
+    const map=new Map();
+    const tableIdToName=new Map();tierTables.forEach(t=>tableIdToName.set(t.id,t.name));
+    tierConnections.forEach(c=>{
+      if(c.from.startsWith("S")){const tn=tableIdToName.get(c.to);if(tn){if(!map.has(c.from))map.set(c.from,new Set());map.get(c.from).add(tn);}}
+      if(c.to.startsWith("S")){const tn=tableIdToName.get(c.from);if(tn){if(!map.has(c.to))map.set(c.to,new Set());map.get(c.to).add(tn);}}
+    });
+    return map;
+  },[]);
+
+  const findLinked = useCallback((sid)=>{
+    const tables=sessionTableMap.get(sid);
+    if(!tables||tables.size===0)return;
+    const linked=new Set([sid]);
+    for(const[s,st]of sessionTableMap){if(s===sid)continue;for(const t of st){if(tables.has(t)){linked.add(s);break;}}}
+    setHighlighted(linked);
+  },[sessionTableMap]);
+
+  const W=800,H=600,PAD=40;
+  const sx=(nx)=>PAD+nx*(W-PAD*2);
+  const sy=(ny)=>PAD+ny*(H-PAD*2);
+
+  // Mouse wheel zoom
+  const handleWheel = useCallback((e)=>{
+    e.preventDefault();
+    const factor=e.deltaY>0?0.9:1.1;
+    const svg=svgRef.current;if(!svg)return;
+    const rect=svg.getBoundingClientRect();
+    const mx=e.clientX-rect.left;const my=e.clientY-rect.top;
+    setTransform(prev=>{
+      const nk=Math.max(0.3,Math.min(20,prev.k*factor));
+      const nx=mx-(mx-prev.x)*nk/prev.k;
+      const ny=my-(my-prev.y)*nk/prev.k;
+      return{x:nx,y:ny,k:nk};
+    });
+  },[]);
+
+  const handleMouseDown = useCallback((e)=>{
+    if(e.target.tagName==="circle"||e.target.tagName==="polygon")return;
+    dragRef.current={startX:e.clientX-transform.x,startY:e.clientY-transform.y};
+  },[transform]);
+
+  const handleMouseMove = useCallback((e)=>{
+    if(!dragRef.current)return;
+    setTransform(prev=>({...prev,x:e.clientX-dragRef.current.startX,y:e.clientY-dragRef.current.startY}));
+  },[]);
+
+  const handleMouseUp = useCallback(()=>{dragRef.current=null;},[]);
+
+  const hasHighlight=highlighted.size>0;
+  const hasFilter=!!selectedClusterId;
+
+  return (
+    <div style={{display:"flex",height:"100%",overflow:"hidden"}}>
+      {/* Left sidebar: cluster list + search */}
+      <div style={{width:240,borderRight:"1px solid #1E293B",background:"rgba(15,23,42,0.6)",display:"flex",flexDirection:"column",overflow:"hidden",flexShrink:0}}>
+        <div style={{padding:"8px 10px",borderBottom:"1px solid #1E293B"}}>
+          <input type="text" placeholder="Search sessions..." value={search} onChange={e=>setSearch(e.target.value)}
+            style={{width:"100%",padding:"5px 10px",borderRadius:5,border:"1px solid #1E293B",background:"rgba(0,0,0,0.3)",color:"#E2E8F0",fontSize:10,outline:"none",fontFamily:"'JetBrains Mono',monospace"}}/>
+        </div>
+        {search.trim()&&searchResults.length>0&&(
+          <div style={{maxHeight:200,overflowY:"auto",borderBottom:"1px solid #1E293B",padding:"4px 8px"}}>
+            {searchResults.map(p=>{
+              const chunk=chunkMap.get(p.chunk_id);
+              return(<div key={p.session_id} onClick={()=>{setHighlighted(new Set([p.session_id]));}} style={{padding:"4px 6px",borderRadius:4,cursor:"pointer",fontSize:9,color:"#E2E8F0",fontFamily:"monospace"}}>
+                {p.name}<div style={{fontSize:8,color:"#475569"}}>Tier {p.tier} · {chunk?.label||""}</div>
+              </div>);
+            })}
+            {searchResults.length>0&&searchResults[0]&&(
+              <button onClick={()=>findLinked(searchResults[0].session_id)} style={{width:"100%",marginTop:4,padding:"4px 8px",borderRadius:4,border:"1px solid rgba(245,158,11,0.4)",background:"rgba(245,158,11,0.08)",color:"#F59E0B",fontSize:9,cursor:"pointer"}}>Show Linked Sessions</button>
+            )}
+          </div>
+        )}
+        {hasHighlight&&(
+          <div style={{padding:"4px 10px",borderBottom:"1px solid #1E293B",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <span style={{fontSize:9,color:"#F59E0B"}}>{highlighted.size} highlighted</span>
+            <button onClick={()=>setHighlighted(new Set())} style={{fontSize:9,color:"#F59E0B",background:"transparent",border:"none",cursor:"pointer",textDecoration:"underline"}}>Clear</button>
+          </div>
+        )}
+        <div style={{flex:1,overflowY:"auto",padding:"6px 8px"}}>
+          {selectedClusterId&&(
+            <button onClick={()=>onSelectCluster(null)} style={{width:"100%",marginBottom:6,padding:"5px 8px",borderRadius:4,border:"1px solid #60A5FA",background:"transparent",color:"#60A5FA",fontSize:9,cursor:"pointer"}}>
+              Clear cluster filter
+            </button>
+          )}
+          {constellationChunks.map(chunk=>{
+            const isActive=selectedClusterId===chunk.id;
+            return(<div key={chunk.id} onClick={()=>onSelectCluster(isActive?null:chunk.id)} style={{padding:"8px 10px",marginBottom:3,borderRadius:6,cursor:"pointer",background:isActive?"rgba(59,130,246,0.1)":"rgba(0,0,0,0.2)",border:"1px solid "+(isActive?"#3B82F6":"#1E293B")}}>
+              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                <div style={{width:8,height:8,borderRadius:"50%",background:chunk.color,flexShrink:0}}/>
+                <span style={{fontSize:9,fontWeight:700,color:"#E2E8F0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{chunk.label}</span>
+                <span style={{fontSize:8,fontFamily:"monospace",color:"#60A5FA"}}>{chunk.session_count}</span>
+              </div>
+            </div>);
+          })}
+        </div>
+      </div>
+      {/* SVG canvas */}
+      <div style={{flex:1,position:"relative",background:"#080C14"}}>
+        <svg ref={svgRef} width="100%" height="100%" onWheel={handleWheel} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp} style={{cursor:dragRef.current?"grabbing":"grab"}}>
+          <g transform={"translate("+transform.x+","+transform.y+") scale("+transform.k+")"}>
+            {/* Hulls */}
+            {hulls.map(h=>{
+              const isSelected=!hasFilter||h.id===selectedClusterId;
+              return(<polygon key={h.id} points={h.hull.map(p=>sx(p.x)+","+sy(p.y)).join(" ")} fill={h.color} fillOpacity={isSelected?0.08:0.02} stroke={h.color} strokeOpacity={isSelected?0.3:0.05} strokeWidth={h.id===selectedClusterId?2:1} onClick={()=>onSelectCluster(h.id===selectedClusterId?null:h.id)} style={{cursor:"pointer"}}/>);
+            })}
+            {/* Cross-chunk edges */}
+            {crossChunkEdges.map((e,i)=>{
+              if(hasFilter&&e.from_chunk!==selectedClusterId&&e.to_chunk!==selectedClusterId)return null;
+              const fc=constellationPoints.filter(p=>p.chunk_id===e.from_chunk);
+              const tc=constellationPoints.filter(p=>p.chunk_id===e.to_chunk);
+              if(!fc.length||!tc.length)return null;
+              const fx=fc.reduce((a,p)=>a+p.x,0)/fc.length;
+              const fy=fc.reduce((a,p)=>a+p.y,0)/fc.length;
+              const tx=tc.reduce((a,p)=>a+p.x,0)/tc.length;
+              const ty=tc.reduce((a,p)=>a+p.y,0)/tc.length;
+              return(<line key={i} x1={sx(fx)} y1={sy(fy)} x2={sx(tx)} y2={sy(ty)} stroke="rgba(148,163,184,0.15)" strokeWidth={Math.min(e.count*0.3,3)}/>);
+            })}
+            {/* Session dots */}
+            {constellationPoints.map(p=>{
+              const color=chunkColorMap.get(p.chunk_id)||"#3B82F6";
+              const isInCluster=!hasFilter||p.chunk_id===selectedClusterId;
+              const isHi=hasHighlight?highlighted.has(p.session_id):null;
+              if(isHi===false)return(<circle key={p.session_id} cx={sx(p.x)} cy={sy(p.y)} r={1.5} fill="rgba(100,116,139,0.08)"/>);
+              return(<g key={p.session_id}>
+                {isHi===true&&<circle cx={sx(p.x)} cy={sy(p.y)} r={6} fill="none" stroke="rgba(245,158,11,0.8)" strokeWidth={2}/>}
+                <circle cx={sx(p.x)} cy={sy(p.y)} r={2.5} fill={color} opacity={isInCluster?0.7:0.08}
+                  onMouseEnter={()=>setHov(p)} onMouseLeave={()=>setHov(null)} onClick={()=>onSelectCluster(p.chunk_id===selectedClusterId?null:p.chunk_id)} style={{cursor:"pointer"}}/>
+                {p.critical&&isInCluster&&<circle cx={sx(p.x)} cy={sy(p.y)} r={6} fill="none" stroke="rgba(239,68,68,0.5)" strokeWidth={1}/>}
+              </g>);
+            })}
+          </g>
+        </svg>
+        {/* Tooltip */}
+        {hov&&(
+          <div style={{position:"absolute",top:10,left:10,padding:"6px 12px",borderRadius:6,background:"rgba(15,23,42,0.92)",border:"1px solid rgba(148,163,184,0.3)",fontSize:10,color:"#E2E8F0",pointerEvents:"none",fontFamily:"'JetBrains Mono',monospace"}}>
+            <div style={{fontWeight:700}}>{hov.name}</div>
+            <div style={{color:"#94A3B8"}}>Tier {hov.tier}{hov.critical?" (critical)":""} · {chunkMap.get(hov.chunk_id)?.label||""}</div>
+          </div>
+        )}
+        {/* Stats */}
+        <div style={{position:"absolute",bottom:12,left:12,padding:"6px 14px",borderRadius:8,background:"rgba(15,23,42,0.85)",border:"1px solid rgba(30,41,59,0.6)",fontSize:10,color:"#64748B",display:"flex",gap:16}}>
+          <span><strong style={{color:"#E2E8F0"}}>{constellationPoints.length}</strong> Sessions</span>
+          <span><strong style={{color:"#3B82F6"}}>{constellationChunks.length}</strong> Clusters</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // MAIN APP
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -532,8 +749,19 @@ const App = function App() {
   const [view,setView] = useState("tier");
   const [selectedSession,setSelectedSession] = useState(null);
   const [selectedTable,setSelectedTable] = useState(null);
+  const [selectedClusterId,setSelectedClusterId] = useState(null);
+
+  // Build filter set when a cluster is selected
+  const clusterFilterIds = useMemo(()=>{
+    if(!selectedClusterId) return null;
+    const chunk=constellationChunks.find(c=>c.id===selectedClusterId);
+    if(!chunk) return null;
+    return new Set(chunk.session_ids);
+  },[selectedClusterId]);
+
   const views = [
     {id:"tier",label:"Tier Diagram",icon:"▤"},
+    ...(hasConstellation?[{id:"constellation",label:"Constellation",icon:"✦"}]:[]),
     {id:"explorer",label:"Explorer",icon:"◎"},
     {id:"conflicts",label:"Conflicts & Chains",icon:"⚠"},
     {id:"order",label:"Exec Order",icon:"↓"},
@@ -551,6 +779,12 @@ const App = function App() {
           </div>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:16}}>
+          {selectedClusterId&&(
+            <div style={{display:"flex",alignItems:"center",gap:8,padding:"4px 12px",borderRadius:6,background:"rgba(59,130,246,0.1)",border:"1px solid rgba(59,130,246,0.3)"}}>
+              <span style={{fontSize:10,color:"#60A5FA"}}>Viewing cluster: {constellationChunks.find(c=>c.id===selectedClusterId)?.label||selectedClusterId}</span>
+              <button onClick={()=>setSelectedClusterId(null)} style={{background:"transparent",border:"none",color:"#60A5FA",cursor:"pointer",fontSize:11}}>✕</button>
+            </div>
+          )}
           {(view==="tier"||view==="matrix")&&<div style={{display:"flex",gap:10,fontSize:9}}>
             {Object.entries(connTypes).map(([k,ct])=>(<div key={k} style={{display:"flex",alignItems:"center",gap:3}}><div style={{width:14,height:ct.baseWidth+1,borderRadius:1,background:ct.color,...(ct.dash?{backgroundImage:"repeating-linear-gradient(90deg,"+ct.color+" 0px,"+ct.color+" 3px,transparent 3px,transparent 6px)"}:{})}}/><span style={{color:"#94A3B8"}}>{ct.label}</span></div>))}
           </div>}
@@ -565,12 +799,13 @@ const App = function App() {
         {tierStats.staleness_risks>0&&<span style={{color:"#F59E0B"}}><strong>{tierStats.staleness_risks}</strong> Stale Lookups</span>}
         <span style={{color:"#94A3B8"}}><strong style={{color:"#E2E8F0"}}>{tierStats.max_tier}</strong> Tier Depth</span>
       </div>
-      <div style={{flex:1,overflow:"hidden",padding:view==="tier"||view==="matrix"?0:20}}>
-        {view==="explorer"&&<ExplorerView selectedSession={selectedSession} setSelectedSession={setSelectedSession} selectedTable={selectedTable} setSelectedTable={setSelectedTable}/>}
+      <div style={{flex:1,overflow:"hidden",padding:view==="tier"||view==="matrix"||view==="constellation"?0:20}}>
+        {view==="explorer"&&<ExplorerView selectedSession={selectedSession} setSelectedSession={setSelectedSession} selectedTable={selectedTable} setSelectedTable={setSelectedTable} filterIds={clusterFilterIds}/>}
         {view==="conflicts"&&<ConflictsView/>}
         {view==="order"&&<OrderView/>}
-        {view==="tier"&&<TierDiagram/>}
+        {view==="tier"&&<TierDiagram filterIds={clusterFilterIds}/>}
         {view==="matrix"&&<MatrixView/>}
+        {view==="constellation"&&hasConstellation&&<ConstellationView onSelectCluster={setSelectedClusterId} selectedClusterId={selectedClusterId}/>}
       </div>
     </div>
   );
@@ -581,8 +816,8 @@ const root=ReactDOM.createRoot(document.getElementById("root"));root.render(<App
 }
 
 /** Trigger download of the HTML string as a file */
-export function downloadTierMapHTML(data: TierMapResult, filename?: string): void {
-  const html = buildTierMapHTML(data);
+export function downloadTierMapHTML(data: TierMapResult, constellation?: ConstellationResult, filename?: string): void {
+  const html = buildTierMapHTML(data, constellation);
   const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

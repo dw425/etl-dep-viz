@@ -1,5 +1,5 @@
 /**
- * Chunk Summary — top bar showing stats for the currently selected chunk.
+ * Chunk Summary — top bar showing stats for the currently selected chunk(s).
  */
 
 import React from 'react';
@@ -10,15 +10,27 @@ const C = {
 };
 
 interface ChunkSummaryProps {
-  chunk: ConstellationChunk;
+  chunks: ConstellationChunk[];
   totalSessions: number;
   crossChunkEdges: CrossChunkEdge[];
 }
 
-export default function ChunkSummary({ chunk, totalSessions, crossChunkEdges }: ChunkSummaryProps) {
+export default function ChunkSummary({ chunks, totalSessions, crossChunkEdges }: ChunkSummaryProps) {
+  if (chunks.length === 0) return null;
+
+  const selectedIds = new Set(chunks.map(c => c.id));
   const crossCount = crossChunkEdges.filter(
-    (e) => e.from_chunk === chunk.id || e.to_chunk === chunk.id,
+    (e) => selectedIds.has(e.from_chunk) || selectedIds.has(e.to_chunk),
   ).reduce((sum, e) => sum + e.count, 0);
+
+  const totalSelected = chunks.reduce((a, c) => a + c.session_count, 0);
+  const totalTables = chunks.reduce((a, c) => a + c.table_count, 0);
+  const tierMin = Math.min(...chunks.map(c => c.tier_range[0]));
+  const tierMax = Math.max(...chunks.map(c => c.tier_range[1]));
+  const totalConflicts = chunks.reduce((a, c) => a + c.conflict_count, 0);
+  const totalChains = chunks.reduce((a, c) => a + c.chain_count, 0);
+
+  const title = chunks.length === 1 ? chunks[0].label : `${chunks.length} clusters selected`;
 
   return (
     <div style={{
@@ -29,32 +41,34 @@ export default function ChunkSummary({ chunk, totalSessions, crossChunkEdges }: 
     }}>
       {/* Chunk color dot + name */}
       <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <span style={{
-          width: 8, height: 8, borderRadius: '50%', background: chunk.color, display: 'inline-block',
-        }} />
-        <strong style={{ color: C.text }}>{chunk.label}</strong>
+        {chunks.length === 1 && (
+          <span style={{
+            width: 8, height: 8, borderRadius: '50%', background: chunks[0].color, display: 'inline-block',
+          }} />
+        )}
+        <strong style={{ color: C.text }}>{title}</strong>
       </span>
 
       {/* Session count / total */}
       <span>
-        <strong style={{ color: C.text }}>{chunk.session_count}</strong>
+        <strong style={{ color: C.text }}>{totalSelected}</strong>
         <span> / {totalSessions} sessions</span>
       </span>
 
       {/* Table count */}
       <span>
-        <strong style={{ color: '#10B981' }}>{chunk.table_count}</strong> tables
+        <strong style={{ color: '#10B981' }}>{totalTables}</strong> tables
       </span>
 
       {/* Tier range */}
       <span>
-        Tier <strong style={{ color: C.text }}>{chunk.tier_range[0]}</strong>–<strong style={{ color: C.text }}>{chunk.tier_range[1]}</strong>
+        Tier <strong style={{ color: C.text }}>{tierMin}</strong>–<strong style={{ color: C.text }}>{tierMax}</strong>
       </span>
 
-      {/* Pivot tables */}
-      {chunk.pivot_tables.length > 0 && (
+      {/* Pivot tables — show from first chunk only */}
+      {chunks.length === 1 && chunks[0].pivot_tables.length > 0 && (
         <span style={{ fontFamily: 'monospace', fontSize: 9, color: '#94A3B8' }}>
-          {chunk.pivot_tables.slice(0, 3).join(' · ')}
+          {chunks[0].pivot_tables.slice(0, 3).join(' · ')}
         </span>
       )}
 
@@ -66,14 +80,14 @@ export default function ChunkSummary({ chunk, totalSessions, crossChunkEdges }: 
       )}
 
       {/* Conflicts / chains */}
-      {chunk.conflict_count > 0 && (
+      {totalConflicts > 0 && (
         <span style={{ color: '#EF4444' }}>
-          <strong>{chunk.conflict_count}</strong> conflicts
+          <strong>{totalConflicts}</strong> conflicts
         </span>
       )}
-      {chunk.chain_count > 0 && (
+      {totalChains > 0 && (
         <span style={{ color: '#F97316' }}>
-          <strong>{chunk.chain_count}</strong> chains
+          <strong>{totalChains}</strong> chains
         </span>
       )}
     </div>
