@@ -553,7 +553,7 @@ export function DependencyApp() {
   // ── Export HTML — generates a self-contained static report and triggers download ─
   const handleExport = useCallback(() => {
     if (!tierData) return;
-    const html = buildTierMapHTML(tierData, constellation ?? undefined);
+    const html = buildTierMapHTML(tierData, constellation ?? undefined, vectorResults);
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
