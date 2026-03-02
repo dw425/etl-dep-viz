@@ -2,6 +2,28 @@
 
 Simulates failure cascade propagation through the dependency graph.
 Computes blast radius, criticality scores, and what-if analysis.
+
+Algorithm:
+  For each session, run BFS in both forward (downstream) and backward (upstream)
+  directions through the adjacency graph. At each hop, the "wave amplitude"
+  decays by DECAY_FACTOR (0.7) and is scaled by the target node's mass
+  (derived from V11 complexity). Propagation stops when amplitude < 0.01.
+
+Criticality Score Formula (0-100):
+  0.4 * (blast_radius / n)           — fraction of graph reachable
+  0.3 * (chain_depth / n)            — longest cascade path
+  0.3 * (node_mass / max_mass)       — intrinsic complexity weight
+
+Criticality Tiers: 1 (0-20), 2 (20-40), 3 (40-60), 4 (60-80), 5 (80-100)
+
+Amplification Factor: blast_radius / direct_connections — how much failure
+  impact grows beyond immediate neighbors.
+
+What-If Analysis: what_if_failure() simulates a specific session failure and
+  returns hop-by-hop breakdown of the cascade.
+
+Output: WaveFunctionResult with per-session criticality scores and fluctuation
+data (amplitude decay curves for top-impact sessions).
 """
 
 from __future__ import annotations

@@ -8,12 +8,19 @@ import React, { useEffect, useRef } from 'react';
 import type { SystemNode, SystemEdge } from './infraUtils';
 import { ENV_COLORS, SYSTEM_ICONS } from './infraUtils';
 
+/** A dashed-border zone rectangle grouping nodes by deployment environment. */
 export interface ZoneRect {
+  /** Environment key (e.g. "aws", "on-prem"). */
   env: string;
+  /** Display label for the zone header (e.g. "AWS Cloud"). */
   label: string;
+  /** Top-left x coordinate in canvas space. */
   x: number;
+  /** Top-left y coordinate in canvas space. */
   y: number;
+  /** Width of the zone rectangle. */
   w: number;
+  /** Height of the zone rectangle. */
   h: number;
 }
 
@@ -31,6 +38,7 @@ interface Props {
 const NODE_W = 100;
 const NODE_H = 56;
 
+/** Draws a filled arrowhead at position (x, y) pointing in the given angle. */
 function drawArrowhead(ctx: CanvasRenderingContext2D, x: number, y: number, angle: number, size: number) {
   ctx.save();
   ctx.translate(x, y);
@@ -45,6 +53,7 @@ function drawArrowhead(ctx: CanvasRenderingContext2D, x: number, y: number, angl
   ctx.restore();
 }
 
+/** Traces a rounded-rectangle path without stroking or filling. */
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   ctx.beginPath();
   ctx.moveTo(x + r, y);
@@ -75,6 +84,14 @@ function edgePoint(cx: number, cy: number, tx: number, ty: number): { x: number;
   return { x: cx + dx * scale, y: cy + dy * scale };
 }
 
+/**
+ * Canvas renderer for the infrastructure topology. Draws in three layers:
+ * 1. Zone backgrounds (dashed environment borders with labels)
+ * 2. Edges with curved quadratic Bezier paths and arrowheads
+ * 3. Nodes as rounded-rect cards with icon, name, and stats
+ *
+ * Supports HiDPI rendering via devicePixelRatio scaling.
+ */
 export default function InfraCanvas({ nodes, edges, nodePositions, zones, hoveredSystem, selectedSystem, onHover, onClick }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 

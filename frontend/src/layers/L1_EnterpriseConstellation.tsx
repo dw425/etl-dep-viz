@@ -21,6 +21,12 @@ const BUCKET_COLORS: Record<string, string> = {
   'Very Complex': '#EF4444',
 };
 
+/**
+ * Top-level enterprise view showing V1 community supernodes as color-coded orbs.
+ * Three-panel layout: group list (left), supernode canvas (center), environment summary (right).
+ * Triggers vector analysis on mount if results are not yet available.
+ * Click a supernode to drill down to L2 (domain cluster).
+ */
 export default function L1_EnterpriseConstellation() {
   const { tierData, vectorResults, setVectorResults, drillDown } = useNavigationContext();
   const [loading, setLoading] = useState(false);
@@ -173,6 +179,7 @@ export default function L1_EnterpriseConstellation() {
   );
 }
 
+/** Label-value pair used in the right-hand environment summary panel. */
 function SummaryStat({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="flex justify-between">
@@ -199,7 +206,8 @@ function SupernodeCanvas({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Simple circular layout for supernodes
+  // Circular layout: supernodes positioned evenly around a circle,
+  // with radius proportional to session_count.
   const nodePositions = useMemo(() => {
     const positions: Record<string, { x: number; y: number; r: number }> = {};
     const n = supernodes.length;

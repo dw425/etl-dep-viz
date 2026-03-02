@@ -24,6 +24,11 @@ const INFA_FUNCTIONS = new Set([
   'NVL', 'NVL2', 'COALESCE',
 ]);
 
+/**
+ * Tokenizes and syntax-highlights an Informatica expression into React elements.
+ * Highlights: Informatica functions (purple bold), parameter variables like $$/$PM (pink bold),
+ * strings (green), numbers (orange), field references (blue, clickable if onFieldClick provided).
+ */
 function highlightExpression(
   expr: string,
   onFieldClick?: (fieldName: string) => void,
@@ -69,6 +74,12 @@ function highlightExpression(
   return tokens;
 }
 
+/**
+ * Renders an Informatica expression with syntax highlighting in a monospace pre block.
+ * Field names are clickable when onFieldClick is provided (navigates to field detail).
+ * @param expression - Raw Informatica expression text
+ * @param onFieldClick - Optional callback when a field reference token is clicked
+ */
 export default function ExpressionViewer({ expression, onFieldClick }: Props) {
   const highlighted = useMemo(
     () => highlightExpression(expression, onFieldClick),

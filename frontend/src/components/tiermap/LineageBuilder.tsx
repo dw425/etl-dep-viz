@@ -62,6 +62,7 @@ const TYPE_COLORS: Record<string, string> = {
   'Sequence Generator': '#6366F1',
 };
 
+/** Map transformation type to a color, matching by substring (case-insensitive). */
 function getTypeColor(type: string): string {
   for (const [key, color] of Object.entries(TYPE_COLORS)) {
     if (type.toLowerCase().includes(key.toLowerCase())) return color;
@@ -69,6 +70,12 @@ function getTypeColor(type: string): string {
   return '#64748b';
 }
 
+/**
+ * LineageBuilder -- column-level lineage viewer showing field-to-field data
+ * flow through transformation instances. Clicking any field triggers a
+ * bidirectional BFS trace that highlights the complete forward and backward
+ * lineage path, dimming unrelated fields.
+ */
 export default function LineageBuilder({ tierData, selectedSession, onSessionSelect }: Props) {
   const [sessionId, setSessionId] = useState(selectedSession || '');
   const [lineageData, setLineageData] = useState<LineageData | null>(null);

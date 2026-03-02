@@ -27,6 +27,11 @@ const BUCKET_COLORS: Record<string, string> = {
   'Very Complex': '#EF4444',
 };
 
+/**
+ * Single-session exploded view showing source-to-target flow with complexity breakdown.
+ * Three-panel layout: session info + criticality (left), upstream/downstream flow diagram
+ * (center), V11 complexity radar with per-dimension bars (right).
+ */
 export default function L4_SessionBlueprint() {
   const { currentParams, tierData, vectorResults, drillDown } = useNavigationContext();
   const [l4Data, setL4Data] = useState<Record<string, unknown> | null>(null);
@@ -226,6 +231,7 @@ export default function L4_SessionBlueprint() {
   );
 }
 
+/** Compact label-value row used in the left session info panel. */
 function InfoRow({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="flex justify-between text-xs mb-1">

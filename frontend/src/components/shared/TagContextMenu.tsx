@@ -33,6 +33,12 @@ interface Props {
   onTagCreated?: () => void;
 }
 
+/**
+ * Context menu for adding tags to sessions, tables, or transforms.
+ * Shows 7 built-in tag presets (PII Risk, Review Needed, etc.) and a custom tag creator
+ * with color picker and optional annotation note.
+ * Positioned absolutely at the provided {x, y} coordinates.
+ */
 export default function TagContextMenu({ objectId, objectType, position, onClose, onTagCreated }: Props) {
   const [customMode, setCustomMode] = useState(false);
   const [noteMode, setNoteMode] = useState(false);

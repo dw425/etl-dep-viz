@@ -44,6 +44,17 @@ interface ChunkSelectorProps {
 const VIRTUAL_ITEM_HEIGHT = 120;
 const VIRTUAL_OVERSCAN = 4;
 
+/**
+ * ChunkSelector -- left sidebar listing constellation chunks as filterable,
+ * sortable cards with virtual scrolling for large chunk counts (>80).
+ *
+ * Features:
+ *  - Cluster search and sort (default/sessions/tier/conflicts)
+ *  - Session search with highlight + "find linked" shared-table discovery
+ *  - Pin management for quick navigation to tracked sessions
+ *  - Table gravity mode shows anchor tables and top-referenced tables
+ *  - Select all / deselect all with visual checkbox indicators
+ */
 export default function ChunkSelector({
   chunks, activeChunkIds, onToggle, onSelectAll, onDeselectAll, onBack, algorithm, tableRanking,
   points, highlightedSessionIds, onHighlightSession, onFindLinked, onClearHighlight,
@@ -515,6 +526,7 @@ export default function ChunkSelector({
   );
 }
 
+/** Compute an approximate tier distribution for the chunk's tier range (uniform split). */
 function getTierDistribution(chunk: ConstellationChunk): Array<{ tier: number; pct: number }> {
   const [lo, hi] = chunk.tier_range;
   if (lo === hi) return [{ tier: lo, pct: 100 }];

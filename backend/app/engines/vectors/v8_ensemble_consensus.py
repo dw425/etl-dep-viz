@@ -1,7 +1,25 @@
-"""V8 Ensemble Consensus — co-association matrix from V1–V7 results.
+"""V8 Ensemble Consensus — co-association matrix from V1-V7 results.
 
 Builds a consensus clustering by aggregating cluster assignments
 from all available vectors and identifying high-confidence vs contested sessions.
+
+Algorithm (standard path, n <= 8000):
+  1. Extract per-session cluster labels from V1 (meso), V2 (domain), V3 (auto-cluster),
+     V5 (affinity), V6 (spectral), V7 (HDBSCAN).
+  2. Build co-association matrix: co_assoc[i,j] = fraction of vectors that place
+     sessions i and j in the same cluster. This is a soft similarity measure.
+  3. Convert to distance (1 - co_assoc) and run average-linkage agglomerative
+     clustering with target K = median(K values across input vectors).
+  4. Score each session: consensus_score = avg co-association with same-cluster members.
+     Sessions with score < 0.5 are "contested" (vectors disagree on placement).
+
+Large-N Path (n > 8000):
+  Skips the O(n^2) co-association matrix. Instead uses majority-vote on per-session
+  labels: for each session, count how many vectors agree with the mode label.
+  Uses V1 (communities) as the base clustering.
+
+Output: EnsembleConsensusResult with consensus cluster assignments, per-vector
+label breakdown, contested/high-confidence counts.
 """
 
 from __future__ import annotations
@@ -85,6 +103,14 @@ class EnsembleConsensusVector:
         all_results: dict[str, Any],
         session_ids: list[str],
     ) -> EnsembleConsensusResult:
+        """Build consensus clustering from all available vector results.
+
+        Args:
+            all_results: Full orchestrator output dict containing V1-V7 results.
+            session_ids: Ordered session ID list for index mapping.
+
+        Requires at least 2 input vectors with valid cluster assignments.
+        """
         if np is None:
             raise ImportError("numpy is required for EnsembleConsensusVector. Install it with: pip install numpy")
         if linkage is None:

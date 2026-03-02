@@ -78,6 +78,12 @@ interface LayoutResult {
   tierBands: TierBand[];
 }
 
+/**
+ * Build a tier-banded layout from the tier map result. Groups sessions by
+ * integer tier, assigns x positions within each band, and creates only
+ * session-to-session edges (table endpoints are skipped to reduce noise).
+ * The virtual canvas is sized to fit all nodes without overlap.
+ */
 function buildLayout(data: TierMapResult, viewportW: number, viewportH: number): LayoutResult {
   const nodeMap = new Map<string, LayoutNode>();
 
@@ -179,6 +185,24 @@ interface WebGLCanvasProps {
 
 // ── Component ────────────────────────────────────────────────────────────────
 
+/**
+ * WebGLCanvas -- high-performance Canvas 2D renderer for graphs with 500+
+ * sessions. Uses a virtual canvas sized by data density (not viewport), with
+ * initial zoom-to-fit so the full diagram is visible. Sessions only -- tables
+ * are excluded to reduce clutter. Tier band backgrounds provide structure at
+ * all zoom levels.
+ *
+ * Rendering features:
+ *   - D3 zoom/pan with zoom extent [0.01, 20]
+ *   - Quadtree spatial indexing for viewport culling and hover hit detection
+ *   - Progressive LOD: dot (far zoom) -> circle (mid) -> full label (close)
+ *   - HiDPI (Retina) support via devicePixelRatio scaling
+ *   - requestAnimationFrame loop with dirty flag (only redraws when needed)
+ *   - Edge rendering with quadratic Bezier curves, capped at maxEdges per LOD
+ *
+ * Sidebar: tier filter checkboxes, hovered node detail, top-connections density
+ * bar, and connection type color legend.
+ */
 export default function WebGLCanvas({
   data,
   onSessionSelect,

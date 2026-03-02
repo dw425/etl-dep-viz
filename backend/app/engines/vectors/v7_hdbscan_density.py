@@ -2,6 +2,23 @@
 
 Runs HDBSCAN on UMAP projection (from V3) or falls back to feature matrix.
 Identifies noise points and reports cluster stability scores.
+
+Unlike partitioning methods (K-Means, Spectral), HDBSCAN does not force
+every point into a cluster. Sessions in low-density regions are labeled
+as noise (cluster = -1), which helps identify genuinely isolated sessions.
+
+Input Preference:
+  - If V3 UMAP coords are available (2D "balanced" projection), use those.
+    HDBSCAN on UMAP coordinates is faster and often more meaningful than
+    on raw 16-dimensional features.
+  - Otherwise, fall back to the raw feature matrix.
+
+Library Fallback:
+  If `hdbscan` package is not installed, falls back to sklearn's DBSCAN
+  with StandardScaler normalization and eps=0.5.
+
+Output: HDBSCANResult with cluster assignments, noise session list, noise ratio,
+and per-cluster persistence (stability) scores.
 """
 
 from __future__ import annotations
@@ -42,6 +59,14 @@ class HDBSCANDensityVector:
         session_ids: list[str],
         umap_coords: dict[str, Any] | None = None,
     ) -> HDBSCANResult:
+        """Run density-based clustering.
+
+        Args:
+            feature_matrix: Dense normalized features (n x 16). Used as fallback.
+            session_ids: Session ID list matching matrix indices.
+            umap_coords: Optional V3 projection dict with 'coords' list of {x, y} dicts.
+                         Preferred over feature_matrix when available.
+        """
         if np is None:
             raise ImportError("numpy is required for HDBSCANDensityVector. Install it with: pip install numpy")
         n = len(session_ids)

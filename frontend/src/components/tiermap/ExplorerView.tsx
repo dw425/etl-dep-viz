@@ -18,6 +18,7 @@ import {
 } from './constants';
 import TierFilterSidebar, { type TierFilters, getDefaultTierFilters, applyTierFilters } from '../shared/TierFilterSidebar';
 
+/** Props for ExplorerView — requires the full tier map result. */
 interface Props {
   data: TierMapResult;
 }
@@ -31,14 +32,20 @@ const BADGE_BG: Record<string, string> = {
   lookup: 'rgba(245,158,11,0.08)',
 };
 
+/** Props for an inline table badge showing read/write/lookup status and conflict warnings. */
 interface BadgeProps {
+  /** Table name to display */
   name: string;
+  /** Relationship type: 'write' | 'read' | 'lookup' */
   type: string;
+  /** Whether this table is currently highlighted by user selection */
   isHighlighted: boolean;
+  /** Whether this table has a write-write conflict */
   hasConflict: boolean;
   onClick: () => void;
 }
 
+/** Clickable table badge showing the table name with color coding by relationship type. */
 const Badge: React.FC<BadgeProps> = ({ name, type, isHighlighted, hasConflict, onClick }) => (
   <span
     onClick={onClick}
@@ -75,6 +82,13 @@ const Badge: React.FC<BadgeProps> = ({ name, type, isHighlighted, hasConflict, o
 
 type SortKey = 'step' | 'tier' | 'name' | 'reads' | 'writes' | 'lookups' | 'transforms';
 
+/**
+ * ExplorerView -- session browser with detail panel. Left panel shows a
+ * virtually-scrolled list of sessions with R/W/L badge counts, sortable by
+ * step, tier, name, or I/O counts. Right panel shows selected session's
+ * table references, write conflicts, and downstream consumers, or shows
+ * table-centric view when a table badge is clicked.
+ */
 const ExplorerView: React.FC<Props> = ({ data }) => {
   const [selectedSession, setSelectedSession] = useState<string | null>(null);
   const [selectedTable, setSelectedTable] = useState<string | null>(null);

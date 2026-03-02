@@ -2,6 +2,23 @@
 
 Aggregates session connections into system nodes (Oracle, Teradata, S3, etc.)
 with edge thickness proportional to session count.
+
+Algorithm (build_infrastructure_graph):
+  1. Infer system type for each table from name patterns (e.g., "ora_" -> Oracle,
+     "s3://" -> S3). Falls back to "database" for unrecognized patterns.
+     An explicit connection_map overrides auto-detection.
+  2. Build system nodes: one per unique system type, with table count and
+     session count (how many sessions touch tables in that system).
+  3. Build system edges: when a session reads from system A and writes to system B,
+     an edge A->B is created. Edge weight = number of distinct sessions performing
+     that cross-system data movement.
+  4. Group systems by environment (on-prem, AWS, Azure, GCP) for zone-based layout.
+
+Pattern Matching:
+  16 system patterns are defined in _SYSTEM_PATTERNS. Each pattern is a list of
+  substrings matched case-insensitively against table names. First match wins.
+
+Output: Dict with systems[], edges[], and environment_groups{} for the Infra view.
 """
 
 from __future__ import annotations
@@ -37,14 +54,19 @@ def build_infrastructure_graph(
     features: list[SessionFeatures],
     connection_map: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Build system-level infrastructure graph.
+    """Build system-level infrastructure graph from session feature vectors.
 
     Args:
-        features: SessionFeatures from feature_extractor
-        connection_map: Optional explicit table→system mapping
+        features: SessionFeatures from FeatureMatrixBuilder (source_tables,
+                  target_tables, lookup_tables per session).
+        connection_map: Optional explicit table->system mapping. Overrides
+                        auto-detection from _SYSTEM_PATTERNS.
 
     Returns:
-        Dict with systems, edges, and environment groupings.
+        Dict with:
+          - systems[]: SystemNode dicts (id, name, type, env, session/table counts)
+          - edges[]: SystemEdge dicts (from, to, session_count, session_ids)
+          - environment_groups{}: env_name -> list of system_ids
     """
     # Infer system from table names
     table_to_system: dict[str, str] = {}
@@ -137,6 +159,9 @@ def build_infrastructure_graph(
     }
 
 
+# ── System Detection Patterns ──────────────────────────────────────────────
+# Each key is a system type, values are substring patterns matched
+# case-insensitively against table names. First match wins.
 _SYSTEM_PATTERNS = {
     "oracle": ["ora_", "oracle_", "dblink", "ownername.", "v$", "dba_", "all_tab"],
     "teradata": ["td_", "tera_", "teradata", "pdcrdata", "dbc."],

@@ -28,6 +28,15 @@ interface Props {
 
 const SUB_NODE_CAP = 8;
 
+/**
+ * Infrastructure topology view showing system-level nodes (Oracle, Teradata, S3, Kafka, etc.)
+ * connected by session-count edges. Uses two detection modes:
+ * 1. Connection-profile mode: aggregates by dbtype from parsed connection profiles.
+ * 2. Fallback mode: infers system type from table name patterns via regex.
+ *
+ * Three-panel layout: sidebar with expandable connection sub-nodes (left),
+ * zone-based canvas with curved edges (center), and tabbed detail panel (right).
+ */
 export default function L1A_InfrastructureTopology({ tierData, vectorResults, onNavigateView }: Props) {
   const [selectedSystem, setSelectedSystem] = useState<SystemNode | null>(null);
   const [hoveredSystem, setHoveredSystem] = useState<string | null>(null);

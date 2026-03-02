@@ -1,7 +1,20 @@
 """Drill-Through Engine — cross-variable filtering across all vector dimensions.
 
-Supports slicing by ANY combination of V1–V11 dimensions simultaneously,
+Supports slicing by ANY combination of V1-V11 dimensions simultaneously,
 with aggregation (count, avg, sum, distribution).
+
+Architecture:
+  1. _build_index() — flattens all vector results into a per-session property dict
+     (community, domain, wave, complexity, criticality, independence, gravity group).
+  2. filter() — applies user-provided dimension filters (equality, list membership,
+     range via _min/_max suffixes) and returns matching session IDs + aggregates.
+  3. Aggregates include avg complexity, avg criticality, max blast radius, and
+     categorical distributions (bucket, tier, wave, community, domain histograms).
+
+Supported Filter Dimensions:
+  community_macro/meso/micro (V1), domain_id (V2), wave_number (V4),
+  complexity_score/bucket (V11), criticality_tier/blast_radius (V9),
+  is_independent/gravity_group (V10). Suffix _min/_max for range filters.
 """
 
 from __future__ import annotations
@@ -19,7 +32,11 @@ class FilteredResult:
 
 
 class DrillThroughEngine:
-    """Cross-dimension filtering engine for vector analysis results."""
+    """Cross-dimension filtering engine for vector analysis results.
+
+    Stateless — instantiate and call filter() with the full results dict each time.
+    The index is rebuilt on each call to ensure consistency with the latest vector data.
+    """
 
     def filter(
         self,

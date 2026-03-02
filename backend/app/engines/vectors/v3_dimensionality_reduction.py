@@ -3,6 +3,20 @@
 Projects high-dimensional feature space to 2D for visualization,
 with auto-cluster detection via KMeans on the projected space.
 Falls back to PCA if umap-learn is not installed.
+
+Multi-Scale Strategy:
+  - "local" (n_neighbors=10):  preserves local structure, shows tight clusters
+  - "balanced" (n_neighbors=30): default, good general-purpose layout
+  - "global" (n_neighbors=100): preserves global topology, shows broad groups
+  For large datasets (>8000 sessions), only "balanced" is computed to save time.
+
+Auto-Clustering:
+  After projection, KMeans is run with an elbow heuristic: try K from 2 to
+  sqrt(n/2), pick K with the largest inertia drop. This provides cluster
+  labels for coloring the scatter plot and for V7/V8 downstream consumption.
+
+Output: DimensionalityReductionResult with projections dict (scale -> coords + clusters)
+and the method used ("umap" or "pca").
 """
 
 from __future__ import annotations
@@ -64,6 +78,12 @@ class DimensionalityReductionVector:
         feature_matrix,
         session_ids: list[str],
     ) -> DimensionalityReductionResult:
+        """Project feature matrix to 2D at multiple scales.
+
+        Args:
+            feature_matrix: Dense normalized feature matrix (n x 16) from FeatureMatrixBuilder.
+            session_ids: Session ID list matching matrix row indices.
+        """
         if np is None:
             raise ImportError("numpy is required for DimensionalityReductionVector. Install it with: pip install numpy")
         if StandardScaler is None:
@@ -181,7 +201,7 @@ class DimensionalityReductionVector:
         width: int = 1200,
         height: int = 800,
     ) -> list[dict[str, Any]]:
-        """Convert normalized coords to pixel positions for constellation canvas."""
+        """Convert normalized [0,1] coords to pixel positions for constellation canvas rendering."""
         margin = 50
         w = width - 2 * margin
         h = height - 2 * margin

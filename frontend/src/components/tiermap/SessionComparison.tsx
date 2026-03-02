@@ -23,6 +23,12 @@ interface Dimension {
   maxVal: number;
 }
 
+/**
+ * SessionComparison -- side-by-side radar chart comparing two sessions across
+ * 6 dimensions (tier, transforms, reads, lookups, step, critical). Rendered
+ * via D3 SVG with overlapping polygons (blue=A, purple=B) and a detail table
+ * showing per-dimension values and deltas.
+ */
 export default function SessionComparison({ sessionA, sessionB, onClose }: SessionComparisonProps) {
   const svgRef = useRef<SVGSVGElement>(null);
 

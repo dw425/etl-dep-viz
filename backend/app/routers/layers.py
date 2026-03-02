@@ -33,14 +33,35 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/layers", tags=["layers"])
 
 
+# ── DB Loader ─────────────────────────────────────────────────────────────
+
+
 def _load_from_upload(upload_id: int, db: DBSession) -> tuple[dict, dict]:
-    """Load tier_data and vector_results from DB by upload_id."""
+    """Load tier_data and vector_results from DB by upload_id.
+
+    All layer endpoints accept either an inline tier_data body OR an upload_id
+    query param. When upload_id is provided, this helper loads both datasets
+    from the persisted upload row.
+
+    Args:
+        upload_id: DB primary key of the upload.
+        db: SQLAlchemy session.
+
+    Returns:
+        Tuple of (tier_data dict, vector_results dict).
+
+    Raises:
+        HTTPException(404): Upload not found.
+    """
     upload = db.query(Upload).filter(Upload.id == upload_id).first()
     if not upload:
         raise HTTPException(404, f"Upload {upload_id} not found")
     tier_data = upload.get_tier_data() or {}
     vector_results = upload.get_vector_results() or {}
     return tier_data, vector_results
+
+
+# ── L1: Enterprise Overview ───────────────────────────────────────────────
 
 
 @router.post("/L1")
@@ -50,7 +71,23 @@ async def enterprise_constellation(
     upload_id: int | None = Query(None),
     db: DBSession = Depends(get_db),
 ):
-    """L1: Enterprise constellation — supernodes, superedges, environment summary."""
+    """L1: Enterprise constellation — supernodes, superedges, environment summary.
+
+    Highest level of the progressive disclosure hierarchy. Each supernode
+    represents one V1 community cluster. Complexity metrics from V11 are
+    aggregated per-supernode so the UI can render colour-coded size circles.
+
+    If vector_results are not supplied, Phase 1 vectors run lazily on the fly.
+
+    Args:
+        tier_data: Full tier data (or None if upload_id is provided).
+        vector_results: Pre-computed vector results (or None for lazy bootstrap).
+        upload_id: Optional DB upload ID to load data from.
+        db: SQLAlchemy session (injected).
+
+    Returns:
+        Dict with layer=1, supernode_graph, environment_summary, and vector_results.
+    """
     if upload_id and not tier_data:
         tier_data, vector_results = _load_from_upload(upload_id, db)
     if not tier_data:
@@ -108,6 +145,9 @@ async def enterprise_constellation(
     }
 
 
+# ── L2: Domain Cluster ────────────────────────────────────────────────────
+
+
 @router.post("/L2/{group_id}")
 async def domain_cluster(
     group_id: str = Path(...),
@@ -116,7 +156,22 @@ async def domain_cluster(
     upload_id: int | None = Query(None),
     db: DBSession = Depends(get_db),
 ):
-    """L2: Domain cluster — sessions within one gravity/community group."""
+    """L2: Domain cluster — sessions within one macro community group.
+
+    Drills into a single L1 supernode to show all its member sessions and
+    their meso-level sub-clusters. Connections where at least one endpoint
+    is in the group are included (both internal and cross-boundary edges).
+
+    Args:
+        group_id: V1 macro community ID (may have "community_" prefix).
+        tier_data: Full tier data (or None if upload_id provided).
+        vector_results: Pre-computed vectors with v1_communities.
+        upload_id: Optional DB upload ID.
+        db: SQLAlchemy session (injected).
+
+    Returns:
+        Dict with sessions, sub_clusters, connections, complexity_scores.
+    """
     if upload_id and not tier_data:
         tier_data, vector_results = _load_from_upload(upload_id, db)
     tier_data = tier_data or {}
@@ -180,6 +235,9 @@ async def domain_cluster(
     }
 
 
+# ── L3: Workflow Neighborhood ─────────────────────────────────────────────
+
+
 @router.post("/L3/{group_id}/{scope_type}/{scope_id}")
 async def workflow_neighborhood(
     group_id: str = Path(...),
@@ -190,7 +248,23 @@ async def workflow_neighborhood(
     upload_id: int | None = Query(None),
     db: DBSession = Depends(get_db),
 ):
-    """L3: Workflow neighborhood — sessions in a sub-cluster or workflow."""
+    """L3: Workflow neighborhood — sessions in a sub-cluster or workflow.
+
+    Drills into an L2 sub-cluster (meso community) or a named workflow path
+    to show its member sessions with cascade/SCC annotations.
+
+    Args:
+        group_id: Parent macro community (from L2).
+        scope_type: Either 'sub_cluster' (meso community) or 'workflow' (path prefix).
+        scope_id: Meso community key or workflow path prefix.
+        tier_data: Full tier data (or None if upload_id provided).
+        vector_results: Pre-computed vectors with v1, v4, v9 data.
+        upload_id: Optional DB upload ID.
+        db: SQLAlchemy session (injected).
+
+    Returns:
+        Dict with sessions, connections (internal only), cascade_data, scc_groups.
+    """
     if upload_id and not tier_data:
         tier_data, vector_results = _load_from_upload(upload_id, db)
     tier_data = tier_data or {}
@@ -243,6 +317,9 @@ async def workflow_neighborhood(
     }
 
 
+# ── L4: Session Blueprint ─────────────────────────────────────────────────
+
+
 @router.post("/L4/{session_id}")
 async def session_blueprint(
     session_id: str = Path(...),
@@ -251,7 +328,22 @@ async def session_blueprint(
     upload_id: int | None = Query(None),
     db: DBSession = Depends(get_db),
 ):
-    """L4: Session blueprint — single session exploded view."""
+    """L4: Session blueprint — single session exploded view.
+
+    Shows the session's complexity score, criticality, and its immediate
+    upstream/downstream connections. This is the deepest layer that works
+    with the standard tier_data structure.
+
+    Args:
+        session_id: Session ID (e.g. 'S42').
+        tier_data: Full tier data (or None if upload_id provided).
+        vector_results: Pre-computed vectors with v11 complexity, v9 criticality.
+        upload_id: Optional DB upload ID.
+        db: SQLAlchemy session (injected).
+
+    Returns:
+        Dict with session, complexity, criticality, upstream/downstream connections.
+    """
     if upload_id and not tier_data:
         tier_data, vector_results = _load_from_upload(upload_id, db)
     tier_data = tier_data or {}
@@ -295,6 +387,9 @@ async def session_blueprint(
     }
 
 
+# ── L5: Mapping Pipeline ──────────────────────────────────────────────────
+
+
 @router.post("/L5/{session_id}/{mapping_id}")
 async def mapping_pipeline(
     session_id: str = Path(...),
@@ -303,7 +398,21 @@ async def mapping_pipeline(
     upload_id: int | None = Query(None),
     db: DBSession = Depends(get_db),
 ):
-    """L5: Mapping pipeline — transform pipeline within a session."""
+    """L5: Mapping pipeline — transform pipeline within a session.
+
+    Requires deep XML parsing data (mapping_detail) that may not be available
+    for all sessions. Returns whatever transform-level detail exists.
+
+    Args:
+        session_id: Session ID.
+        mapping_id: Mapping/transformation name within the session.
+        tier_data: Full tier data (or None if upload_id provided).
+        upload_id: Optional DB upload ID.
+        db: SQLAlchemy session (injected).
+
+    Returns:
+        Dict with session details and mapping pipeline information.
+    """
     if upload_id and not tier_data:
         tier_data, _ = _load_from_upload(upload_id, db)
     tier_data = tier_data or {}
@@ -323,6 +432,9 @@ async def mapping_pipeline(
     }
 
 
+# ── L6: Object Detail ─────────────────────────────────────────────────────
+
+
 @router.post("/L6/{object_type}/{object_id}")
 async def object_detail(
     object_type: str = Path(...),
@@ -331,7 +443,21 @@ async def object_detail(
     upload_id: int | None = Query(None),
     db: DBSession = Depends(get_db),
 ):
-    """L6: Object detail — table, transform, or expression detail."""
+    """L6: Object detail — table, transform, or expression detail.
+
+    Deepest layer of progressive disclosure. For tables, returns the table
+    metadata plus all sessions that read from or write to it.
+
+    Args:
+        object_type: One of 'table', 'transform', 'expression'.
+        object_id: The object's ID or name.
+        tier_data: Full tier data (or None if upload_id provided).
+        upload_id: Optional DB upload ID.
+        db: SQLAlchemy session (injected).
+
+    Returns:
+        Dict with the object's details and its reader/writer connections.
+    """
     if upload_id and not tier_data:
         tier_data, _ = _load_from_upload(upload_id, db)
     tier_data = tier_data or {}
@@ -362,6 +488,9 @@ async def object_detail(
     }
 
 
+# ── Flow Walker ───────────────────────────────────────────────────────────
+
+
 @router.post("/flow/{session_id}")
 async def flow_walker(
     session_id: str = Path(...),
@@ -370,7 +499,27 @@ async def flow_walker(
     upload_id: int | None = Query(None),
     db: DBSession = Depends(get_db),
 ):
-    """End-to-end flow walker — upstream/downstream chains, mapping pipeline, tables touched."""
+    """End-to-end flow walker — upstream/downstream chains, mapping pipeline, tables touched.
+
+    Recursively traces all upstream producers and downstream consumers of a
+    session by following the bipartite session-table connection graph. Also
+    enriches the response with complexity, wave assignment, and SCC data.
+
+    The connection graph is bipartite: sessions (S*) connect to tables (T*).
+    To walk upstream: find tables this session reads -> find sessions that write
+    those tables -> recurse. Downstream is the mirror.
+
+    Args:
+        session_id: The session to trace from.
+        tier_data: Full tier data (or None if upload_id provided).
+        vector_results: Pre-computed vectors for complexity/wave enrichment.
+        upload_id: Optional DB upload ID.
+        db: SQLAlchemy session (injected).
+
+    Returns:
+        Dict with session, upstream list, downstream list, mapping_detail,
+        tables_touched, complexity, wave_info, scc, and counts.
+    """
     if upload_id and not tier_data:
         tier_data, vector_results = _load_from_upload(upload_id, db)
     tier_data = tier_data or {}

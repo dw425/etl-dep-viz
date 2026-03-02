@@ -7,6 +7,16 @@ at query time without loading all documents into memory.
 
 ChromaDB is initialized lazily on first use (see `client` property) so the
 import error surfaces only when the feature is actually needed, not at startup.
+
+Collection Lifecycle:
+  - create_collection() — deletes any existing collection first (clean re-index).
+  - index_documents()   — batch upsert (5000 docs/batch) with scalar metadata.
+  - search()            — cosine similarity query with optional type filter.
+  - delete_collection() — cleanup when an upload is deleted.
+
+Metadata Constraints:
+  ChromaDB requires scalar metadata values (str, int, float). Booleans are
+  stored as strings; lists, dicts, and None are silently dropped during indexing.
 """
 
 from __future__ import annotations

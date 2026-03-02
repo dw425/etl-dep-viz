@@ -31,7 +31,15 @@ def create_tag(
     data: dict[str, Any] = Body(...),
     db: Session = Depends(get_db),
 ):
-    """Create a tag on a session, table, or transform."""
+    """Create a tag on a session, table, or transform.
+
+    Args:
+        data: JSON body with object_id, object_type, label, color, note, tag_type, created_by.
+        db: SQLAlchemy session (injected).
+
+    Returns:
+        Created tag dict with tag_id, object_id, label, color, etc.
+    """
     tag = ActiveTag(
         tag_id=str(uuid.uuid4())[:8],  # short but collision-resistant prefix
         object_id=data.get("object_id", ""),
@@ -65,7 +73,15 @@ def get_tags_for_object(
     object_id: str,
     db: Session = Depends(get_db),
 ):
-    """Get all tags for an object."""
+    """Get all tags for an object (session, table, or transform).
+
+    Args:
+        object_id: The ETL object's ID (e.g. 'S42', 'T_7').
+        db: SQLAlchemy session (injected).
+
+    Returns:
+        Dict with 'tags' list containing all tags attached to this object.
+    """
     tags = db.query(ActiveTag).filter(ActiveTag.object_id == object_id).all()
     return {
         "tags": [
@@ -92,7 +108,21 @@ def update_tag(
     data: dict[str, Any] = Body(...),
     db: Session = Depends(get_db),
 ):
-    """Update tag fields (color, label, note)."""
+    """Update tag fields (color, label, note, tag_type).
+
+    Partial update: only fields present in the request body are changed.
+
+    Args:
+        tag_id: The 8-char UUID prefix identifying the tag.
+        data: JSON body with fields to update.
+        db: SQLAlchemy session (injected).
+
+    Returns:
+        Updated tag dict.
+
+    Raises:
+        HTTPException(404): Tag not found.
+    """
     tag = db.query(ActiveTag).filter(ActiveTag.tag_id == tag_id).first()
     if not tag:
         raise HTTPException(404, "Tag not found")
@@ -121,7 +151,18 @@ def delete_tag(
     tag_id: str,
     db: Session = Depends(get_db),
 ):
-    """Delete a tag by ID."""
+    """Delete a tag by its 8-char UUID prefix.
+
+    Args:
+        tag_id: The tag identifier.
+        db: SQLAlchemy session (injected).
+
+    Returns:
+        {'deleted': True} on success.
+
+    Raises:
+        HTTPException(404): Tag not found.
+    """
     tag = db.query(ActiveTag).filter(ActiveTag.tag_id == tag_id).first()
     if not tag:
         raise HTTPException(404, "Tag not found")
@@ -139,7 +180,16 @@ def list_tags(
     tag_type: str | None = Query(None),
     db: Session = Depends(get_db),
 ):
-    """List all tags with optional filters."""
+    """List all tags with optional filters, ordered most recent first.
+
+    Args:
+        object_type: Optional filter (e.g. 'session', 'table', 'transform').
+        tag_type: Optional filter (e.g. 'custom', 'migration_status').
+        db: SQLAlchemy session (injected).
+
+    Returns:
+        Dict with 'tags' list of all matching tags.
+    """
     q = db.query(ActiveTag)
     if object_type:
         q = q.filter(ActiveTag.object_type == object_type)

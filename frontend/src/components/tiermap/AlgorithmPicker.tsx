@@ -31,6 +31,11 @@ const SPEED_COLORS: Record<string, string> = {
   medium: '#F59E0B',
 };
 
+/**
+ * AlgorithmPicker -- clustering algorithm selection grid with optional
+ * side-by-side comparison mode. Each algorithm card shows name, description,
+ * icon, and speed indicator (instant/fast/medium).
+ */
 export default function AlgorithmPicker({
   currentAlgorithm,
   onAlgorithmChange,

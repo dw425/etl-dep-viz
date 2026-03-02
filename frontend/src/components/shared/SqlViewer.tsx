@@ -24,6 +24,11 @@ const SQL_KEYWORDS = new Set([
   'COUNT', 'SUM', 'AVG', 'MIN', 'MAX', 'COALESCE', 'NVL', 'CAST',
 ]);
 
+/**
+ * Tokenizes and syntax-highlights a SQL string into React elements.
+ * Highlights: keywords (blue bold), strings (green), numbers (orange),
+ * comments (gray italic), identifiers (default).
+ */
 function highlightSQL(sql: string): JSX.Element[] {
   const tokens: JSX.Element[] = [];
   // Simple tokenizer: split on boundaries
@@ -57,6 +62,12 @@ function highlightSQL(sql: string): JSX.Element[] {
   return tokens;
 }
 
+/**
+ * Collapsible SQL code viewer with line numbers, syntax highlighting, and a copy button.
+ * @param sql - The SQL text to display
+ * @param title - Header label (default: "SQL")
+ * @param defaultCollapsed - Whether to start in collapsed state
+ */
 export default function SqlViewer({ sql, title, defaultCollapsed = false }: Props) {
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
   const [copied, setCopied] = useState(false);

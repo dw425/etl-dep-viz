@@ -14,6 +14,12 @@ const COLORS = [
   '#EC4899', '#84CC16', '#F97316', '#8B5CF6', '#14B8A6', '#FB923C',
 ];
 
+/**
+ * Domain-level view showing sessions within a single community group.
+ * Three-panel layout: sub-clusters (left), session list or tier view (center), domain profile (right).
+ * Fetches L2 data from the backend on mount. Click a session to drill to L4; click a
+ * sub-cluster to drill to L3.
+ */
 export default function L2_DomainCluster() {
   const { currentParams, tierData, vectorResults, drillDown, drillUp } = useNavigationContext();
   const [l2Data, setL2Data] = useState<Record<string, unknown> | null>(null);
@@ -188,6 +194,7 @@ export default function L2_DomainCluster() {
   );
 }
 
+/** Label-value pair used in the right-hand domain profile panel. */
 function ProfileStat({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="flex justify-between">
@@ -197,6 +204,7 @@ function ProfileStat({ label, value }: { label: string; value: string | number }
   );
 }
 
+/** Alternate view that groups sessions by tier band as a set of tag clouds. */
 function TierView({ sessions, connections, onSessionClick }: {
   sessions: TierSession[];
   connections: TierConn[];

@@ -1,7 +1,20 @@
 """V5 Affinity Propagation — message-passing clustering with exemplar identification.
 
 Uses sklearn's AffinityPropagation on the similarity matrix with
-sampling for large datasets (15K+ sessions).
+sampling for large datasets (5K+ sessions).
+
+Unlike K-Means/Louvain, Affinity Propagation automatically determines the number
+of clusters by exchanging "responsibility" and "availability" messages between
+data points. Each cluster has a real data point as its exemplar (representative),
+which is useful for identifying prototypical sessions within each group.
+
+Scaling Strategy:
+  - Below MAX_DIRECT (5000): run directly on full similarity matrix.
+  - Above MAX_DIRECT: sample 5000 sessions, run AP on the sample, then assign
+    remaining sessions to the nearest exemplar by similarity (nearest-neighbor).
+
+Output: AffinityResult with cluster assignments, exemplar session IDs, and
+convergence iteration count.
 """
 
 from __future__ import annotations
@@ -46,6 +59,13 @@ class AffinityPropagationVector:
         similarity_matrix,
         session_ids: list[str],
     ) -> AffinityResult:
+        """Run Affinity Propagation clustering.
+
+        Args:
+            similarity_matrix: Pairwise similarity (n x n numpy array). Median value
+                               is used as the preference parameter (controls cluster count).
+            session_ids: Session ID list matching matrix indices.
+        """
         if np is None:
             raise ImportError("numpy is required for AffinityPropagationVector. Install it with: pip install numpy")
         if AffinityPropagation is None:

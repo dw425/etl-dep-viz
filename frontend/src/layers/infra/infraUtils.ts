@@ -4,44 +4,78 @@
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
+/** A named database connection within a system node (e.g. "ORACLE_PROD", "TD_DW"). */
 export interface ConnectionSubNode {
+  /** Connection profile name from Informatica. */
   connection_name: string;
+  /** Database type (e.g. "Oracle", "Teradata"). */
   dbtype: string;
+  /** Database subtype if available. */
   dbsubtype?: string;
+  /** Raw connection string (JDBC URL, host:port, etc.). */
   connection_string?: string;
+  /** Parsed host/port/database from the connection string. */
   parsed_connection?: ParsedConnectionString;
+  /** Number of sessions using this connection. */
   session_count: number;
+  /** Session IDs that reference this connection. */
   session_ids: string[];
 }
 
+/** An infrastructure system node (Oracle, S3, Kafka, etc.) aggregated from connections/tables. */
 export interface SystemNode {
+  /** Unique system identifier (e.g. "oracle", "s3", "kafka"). */
   system_id: string;
+  /** System type label. */
   system_type: string;
+  /** Deployment environment: "on-prem", "aws", "azure", "gcp", or "unknown". */
   environment: string;
+  /** Number of ETL sessions touching this system. */
   session_count: number;
+  /** Number of tables belonging to this system. */
   table_count: number;
+  /** Named connection profiles associated with this system. */
   connections: string[];
+  /** Expanded connection sub-nodes with per-connection session counts. */
   sub_nodes: ConnectionSubNode[];
+  /** Flat list of session IDs touching this system. */
   session_ids: string[];
 }
 
+/** An edge between two system nodes, representing data flow via ETL sessions. */
 export interface SystemEdge {
+  /** Source system_id. */
   source: string;
+  /** Target system_id. */
   target: string;
+  /** Number of sessions that move data along this edge. */
   session_count: number;
+  /** Session IDs traversing this edge. */
   session_ids: string[];
+  /** "directed" if one-way, "bidirectional" if sessions flow both directions. */
   direction: 'directed' | 'bidirectional';
 }
 
+/** Structured components extracted from a raw connection string. */
 export interface ParsedConnectionString {
+  /** Hostname or IP address. */
   host?: string;
+  /** Port number as string. */
   port?: string;
+  /** Database or service name. */
   database?: string;
+  /** Original unparsed connection string. */
   raw: string;
 }
 
 // ── Connection string parsing ──────────────────────────────────────────────────
 
+/**
+ * Parses a connection string into host, port, and database components.
+ * Supports JDBC Oracle, generic JDBC, simple host:port/db, and host:port formats.
+ * @param raw - Raw connection string (JDBC URL, host:port, etc.)
+ * @returns Parsed components, or undefined if input is empty
+ */
 export function parseConnectionString(raw: string | undefined): ParsedConnectionString | undefined {
   if (!raw || !raw.trim()) return undefined;
   const s = raw.trim();
@@ -87,6 +121,11 @@ export function parseConnectionString(raw: string | undefined): ParsedConnection
 
 // ── System type mapping ────────────────────────────────────────────────────────
 
+/**
+ * Maps an Informatica dbtype string to a canonical system type identifier.
+ * @param dbtype - Database type string from connection profile (e.g. "Oracle", "SQL Server")
+ * @returns Canonical system type (e.g. "oracle", "sqlserver", "postgres")
+ */
 export function mapDbTypeToSystem(dbtype: string): string {
   const lower = (dbtype || '').toLowerCase();
   if (lower.includes('oracle')) return 'oracle';
@@ -101,6 +140,11 @@ export function mapDbTypeToSystem(dbtype: string): string {
   return lower || 'unknown';
 }
 
+/**
+ * Maps a dbtype string to a deployment environment.
+ * @param dbtype - Database type string
+ * @returns Environment: "aws", "azure", "gcp", or "on-prem"
+ */
 export function mapDbTypeToEnv(dbtype: string): string {
   const lower = (dbtype || '').toLowerCase();
   if (lower.includes('s3') || lower.includes('redshift') || lower.includes('aws')) return 'aws';
@@ -109,6 +153,12 @@ export function mapDbTypeToEnv(dbtype: string): string {
   return 'on-prem';
 }
 
+/**
+ * Infers the system type and environment from a table or object name using regex patterns.
+ * This is the fallback detection mode when connection profiles are not available.
+ * @param name - Table name, connection name, or object identifier
+ * @returns system_id, system_type, and environment tuple
+ */
 export function inferSystem(name: string): { system_id: string; system_type: string; environment: string } {
   const lower = name.toLowerCase();
 
@@ -142,8 +192,11 @@ export function inferSystem(name: string): { system_id: string; system_type: str
 
 // ── Schema parsing from raw table names ────────────────────────────────────────
 
+/** A group of tables that share the same schema/owner prefix. */
 export interface SchemaGroup {
+  /** Schema or owner name (e.g. "DW_OWNER"). "(default)" for unqualified names. */
   schema: string;
+  /** Deduplicated, sorted list of table names within this schema. */
   tables: string[];
 }
 

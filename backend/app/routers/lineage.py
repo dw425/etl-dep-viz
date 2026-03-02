@@ -177,7 +177,17 @@ def _trace_backward(graph: dict, start_id: str, max_hops: int = 20) -> dict:
 
 @router.post('/lineage/graph')
 async def get_lineage_graph(tier_data: dict = Body(...)):
-    """Build and return the full lineage graph for the uploaded data."""
+    """Build and return the full lineage graph for the uploaded data.
+
+    Args:
+        tier_data: Full tier data with sessions, tables, connections.
+
+    Returns:
+        Lineage graph dict with nodes, edges, lineage_edges, and table_sessions.
+
+    Raises:
+        HTTPException(422): tier_data has no sessions.
+    """
     if not tier_data.get('sessions'):
         raise HTTPException(status_code=422, detail='tier_data must contain sessions.')
     graph = _build_lineage_graph(tier_data)
@@ -191,7 +201,19 @@ async def trace_forward(
     tier_data: dict = Body(...),
     max_hops: int = Query(20, ge=1, le=100),
 ):
-    """Trace data flow forward from a node (impact analysis)."""
+    """Trace data flow forward from a node (impact analysis).
+
+    BFS traversal following data-flow direction to find all downstream
+    nodes reachable from node_id within max_hops.
+
+    Args:
+        node_id: Starting node (session or table ID).
+        tier_data: Full tier data with sessions, tables, connections.
+        max_hops: Max BFS depth (1-100, default 20).
+
+    Returns:
+        Trace dict with nodes (with depth), edges, start, and direction.
+    """
     graph = _build_lineage_graph(tier_data)
     result = _trace_forward(graph, node_id, max_hops)
     logger.info("trace_forward node=%s hops=%d reached=%d", node_id, max_hops, len(result['nodes']))
@@ -204,7 +226,19 @@ async def trace_backward(
     tier_data: dict = Body(...),
     max_hops: int = Query(20, ge=1, le=100),
 ):
-    """Trace data flow backward from a node (dependency analysis)."""
+    """Trace data flow backward from a node (dependency analysis).
+
+    BFS traversal following reverse data-flow direction to find all upstream
+    nodes that can reach node_id within max_hops.
+
+    Args:
+        node_id: Starting node (session or table ID).
+        tier_data: Full tier data with sessions, tables, connections.
+        max_hops: Max BFS depth (1-100, default 20).
+
+    Returns:
+        Trace dict with nodes (with depth), edges, start, and direction.
+    """
     graph = _build_lineage_graph(tier_data)
     result = _trace_backward(graph, node_id, max_hops)
     logger.info("trace_backward node=%s hops=%d reached=%d", node_id, max_hops, len(result['nodes']))
@@ -216,7 +250,20 @@ async def get_table_lineage(
     table_name: str,
     tier_data: dict = Body(...),
 ):
-    """Get all sessions that read/write/lookup a specific table."""
+    """Get all sessions that read/write/lookup a specific table.
+
+    Table name is uppercased for matching (ETL convention).
+
+    Args:
+        table_name: The table name to look up.
+        tier_data: Full tier data with sessions, tables, connections.
+
+    Returns:
+        Dict with table name and lists of writer, reader, and lookup session IDs.
+
+    Raises:
+        HTTPException(404): Table not found in the lineage graph.
+    """
     graph = _build_lineage_graph(tier_data)
     table_info = graph['table_sessions'].get(table_name.upper())
     if not table_info:
@@ -345,7 +392,19 @@ async def get_column_lineage(
     session_id: str,
     tier_data: dict = Body(...),
 ):
-    """Get column-level lineage for a session from CONNECTOR/TRANSFORMFIELD data."""
+    """Get column-level lineage for a session from CONNECTOR/TRANSFORMFIELD data.
+
+    Requires deep XML parsing (Phase 9) to have populated mapping_detail
+    with connector and field records. Returns a flow graph suitable for
+    rendering a column-level Sankey or flow diagram in the UI.
+
+    Args:
+        session_id: The session to extract column lineage for.
+        tier_data: Full tier data (must include mapping_detail for this session).
+
+    Returns:
+        Dict with session_id, columns (nodes), flows (edges), and counts.
+    """
     return _build_column_lineage(tier_data, session_id)
 
 
@@ -360,7 +419,18 @@ async def impact_analysis(
 ):
     """Run forward impact analysis from a session.
 
-    Returns all downstream sessions, tables, and the cascading impact chain.
+    Combines lineage graph building with forward BFS trace, then classifies
+    reached nodes into impacted sessions vs tables with depth annotations.
+    Used by the "Impact Analysis" panel in the UI.
+
+    Args:
+        session_id: Source session to analyze impact from.
+        tier_data: Full tier data with sessions, tables, connections.
+        max_hops: Max cascade depth (1-50, default 10).
+
+    Returns:
+        Dict with source info, impacted_sessions, impacted_tables,
+        total_impacted count, max_depth, and trace edges.
     """
     graph = _build_lineage_graph(tier_data)
     trace = _trace_forward(graph, session_id, max_hops)

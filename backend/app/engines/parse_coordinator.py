@@ -2,6 +2,21 @@
 
 Wraps per-file parsing in ThreadPoolExecutor for parallel execution,
 with per-file error handling so one bad file doesn't abort the batch.
+
+Pipeline (parse_files_parallel):
+  Phase 1 — SHA-256 content hashing for duplicate detection. Files with
+            identical content are skipped (common when re-uploading).
+  Phase 2 — Parse files via the caller-provided parse_fn (infa_engine.analyze
+            or nifi_tier_engine.analyze). Runs in parallel (ThreadPoolExecutor)
+            for multi-file uploads; sequential for single files.
+
+Session Merging:
+  When multiple files define the same session name, _merge_sessions combines
+  their source/target/lookup lists (union) rather than overwriting, so split
+  Informatica exports produce the same result as a single monolithic export.
+
+Output: (merged_sessions_dict, ParseAudit) — the audit trail records per-file
+timing, status, content hash, and cumulative session count for monitoring.
 """
 
 from __future__ import annotations
@@ -80,16 +95,23 @@ def parse_files_parallel(
 ) -> tuple[Dict[str, Any], ParseAudit]:
     """Parse multiple files in parallel with fault isolation and dedup.
 
+    Phase 1: Hash each file for dedup; skip empty files and exact duplicates.
+    Phase 2: Parse remaining files (parallel if >1, sequential if 1).
+             Each file is wrapped in try/except so one failure doesn't abort the batch.
+
     Args:
-        contents: List of file contents (bytes)
-        filenames: List of filenames
-        parse_fn: Function to parse a single file: (content, filename) -> dict
+        contents: List of file contents (bytes) — typically from UploadFile.read().
+        filenames: List of filenames (parallel to contents).
+        parse_fn: Function to parse a single file: (content, filename) -> session_dict.
+                  Typically infa_engine.analyze() or nifi_tier_engine.analyze().
         progress_fn: Optional callback(current, total, filename, status, sessions_so_far)
-        max_workers: Maximum parallel workers
-        deduplicate: If True, skip files with duplicate SHA-256 hashes
+                     for SSE progress streaming.
+        max_workers: Maximum parallel workers (default 4).
+        deduplicate: If True, skip files with duplicate SHA-256 hashes.
 
     Returns:
-        (merged_sessions, audit) — merged session dict and parse audit trail
+        (merged_sessions, audit) — merged session dict and parse audit trail.
+        Sessions from multiple files are unioned by _merge_sessions().
     """
     audit = ParseAudit(total_files=len(contents))
     t0 = time.monotonic()

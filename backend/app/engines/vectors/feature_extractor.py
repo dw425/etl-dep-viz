@@ -1,6 +1,20 @@
 """Shared feature extraction layer for all analysis vectors.
 
-Bridges our TierMapResult format → dense numpy matrices for ML algorithms.
+Bridges the tier_data dict format (sessions/tables/connections) into structured
+SessionFeatures objects and dense numpy matrices consumed by V1-V11 engines.
+
+Two main components:
+  1. extract_session_features() — converts tier_data into list[SessionFeatures]
+     by parsing connections to derive upstream/downstream counts, conflict counts,
+     chain involvement, and staleness risk per session.
+
+  2. FeatureMatrixBuilder — constructs three matrix types from SessionFeatures:
+     - Dense matrix (n x 16): min-max normalized numeric features for ML
+     - Adjacency matrix (n x n sparse): directed session-to-session edges with
+       type-based weights (chain=1.0, read_after_write=0.8, etc.)
+     - Similarity matrix (n x n dense): pairwise Jaccard/cosine/overlap on table
+       sets, computed via vectorized binary matrix multiplication for O(n*t + n^2)
+       performance instead of O(n^2 * t) Python loops.
 """
 
 from __future__ import annotations
@@ -23,7 +37,12 @@ except ImportError:
 
 @dataclass
 class SessionFeatures:
-    """Feature profile for a single session/processor."""
+    """Feature profile for a single session/processor.
+
+    Used by all vector engines as the canonical representation of a session.
+    The __post_init__ method computes derived fields (total_table_footprint,
+    unique_table_ratio) automatically from the table lists.
+    """
 
     session_id: str
     name: str
@@ -64,9 +83,15 @@ class SessionFeatures:
 
 
 class FeatureMatrixBuilder:
-    """Build numpy arrays from SessionFeatures for ML algorithms."""
+    """Build numpy arrays from SessionFeatures for ML algorithms.
 
-    # Feature columns for the dense matrix
+    Provides three matrix construction methods used by different vectors:
+    - build_dense_matrix()      -> V3, V7 (feature-based projection/clustering)
+    - build_adjacency_matrix()  -> V1, V4, V9 (graph-based analysis)
+    - build_similarity_matrix() -> V1, V2, V5, V6, V8, V10 (pairwise similarity)
+    """
+
+    # Feature columns for the dense matrix (order matters — index = column position)
     FEATURE_NAMES = [
         "tier", "transform_count", "ext_reads", "lookup_count",
         "source_table_count", "target_table_count", "lookup_table_count",
@@ -82,7 +107,11 @@ class FeatureMatrixBuilder:
         self._id_to_idx = {f.session_id: i for i, f in enumerate(features)}
 
     def build_dense_matrix(self):
-        """Build normalized feature matrix (n_sessions x n_features)."""
+        """Build min-max normalized feature matrix (n_sessions x 16 features).
+
+        Each column is independently scaled to [0, 1]. Constant columns
+        (where all sessions have the same value) remain at 0.
+        """
         if np is None:
             raise ImportError("numpy is required for FeatureMatrixBuilder. Install it with: pip install numpy")
         n = len(self.features)

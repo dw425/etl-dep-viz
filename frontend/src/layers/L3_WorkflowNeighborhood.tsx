@@ -9,6 +9,13 @@ import { getL3Data, whatIfSimulation } from '../api/client';
 import type { TierSession, TierConn } from '../types/tiermap';
 import type { WhatIfResult } from '../types/vectors';
 
+/**
+ * Workflow-scoped view showing 10-80 sessions within a sub-cluster or workflow.
+ * Three-panel layout: session list with SCC indicators (left), tier diagram with cascade
+ * highlighting (center), cascade analysis details (right).
+ * Supports what-if cascade simulation: click "Cascade from here" on any session
+ * to see downstream blast radius and affected sessions.
+ */
 export default function L3_WorkflowNeighborhood() {
   const { currentParams, tierData, vectorResults, drillDown } = useNavigationContext();
   const [l3Data, setL3Data] = useState<Record<string, unknown> | null>(null);

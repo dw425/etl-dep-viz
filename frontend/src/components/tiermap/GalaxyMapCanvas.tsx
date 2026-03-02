@@ -1,25 +1,37 @@
 /**
- * Galaxy Map v2 — enhanced orbital visualization with D3 zoom + search + detail panel.
+ * GalaxyMapCanvas -- Orbital visualization of the session dependency graph.
  *
- * OVERVIEW  Sessions placed equally spaced on a single large circle —
- *           no overlap, no clustering. Sorted by tier then step.
- *           Session→session edges as colored arcs. Click → FOCUSED.
+ * @description
+ * Renders sessions as spheres on a large circular orbit, connected by colored
+ * arcs. Two interaction modes: Overview (all sessions on the ring) and Focused
+ * (zoom into one session with its tables/neighbors on concentric orbit rings).
  *
- * FOCUSED   SVG zooms 2× centered on the focused session. Three
- *           concentric orbit rings:
- *             Ring 1 (185 px) — inner tables (up to 12)
- *             Ring 2 (285 px) — overflow tables
- *             Ring 3 (355 px) — connected sessions (clickable → switch)
- *           Click orbit session → zoom transitions to that session.
- *           ← Overview or ESC returns to overview.
+ * Layout algorithm:
+ *   OVERVIEW  — Sessions sorted by (tier, step), placed at equal angular
+ *               intervals on a single circle. Radius R chosen so arc gaps
+ *               are ~110px. Session→session dependency arcs drawn as SVG
+ *               quadratic Bezier curves, colored by connection type.
  *
- * Enhancements (v2):
- *   - D3 zoom/pan for smooth navigation (scroll to zoom, drag to pan)
- *   - Search overlay (Ctrl+F or click search icon)
- *   - Session detail panel on right-click or double-click
- *   - Minimap navigator (bottom-right corner)
- *   - Node grouping by tier with visual ring indicators
- *   - Performance: virtualized rendering for off-screen nodes
+ *   FOCUSED   — SVG zooms 2x centered on the selected session. Three
+ *               concentric rings appear around it:
+ *                 Ring 1 (185px) — inner tables (up to 12)
+ *                 Ring 2 (285px) — overflow tables (beyond 12)
+ *                 Ring 3 (355px) — connected sessions (clickable to switch)
+ *               Click an orbit session to smoothly transition focus.
+ *               ESC or "Overview" button returns to full view.
+ *
+ * Features:
+ *   - D3 zoom/pan (scroll to zoom, drag to pan)
+ *   - Ctrl+F search overlay with fly-to navigation
+ *   - Double-click or right-click for session detail panel
+ *   - Minimap inset (bottom-right) showing viewport position
+ *   - Tier ring guides — faint circles at average tier radii
+ *   - Parallax background stars (outside D3 zoom group)
+ *   - GalaxyFilterSidebar for tier/connection/size filtering
+ *   - Viewport culling: only render nodes inside visible bounds
+ *
+ * @param data - Full TierMapResult (sessions, tables, connections)
+ * @param onClose - Callback to return to the previous view
  */
 
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';

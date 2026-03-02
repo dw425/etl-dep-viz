@@ -10,6 +10,12 @@ interface Props {
   onToggle: (mode: 'technical' | 'business') => void;
 }
 
+/**
+ * Pill-shaped toggle switch between "Technical" and "Business" terminology modes.
+ * Blue highlight for technical, green for business.
+ * @param mode - Currently active mode
+ * @param onToggle - Callback when the user switches modes
+ */
 export default function SemanticToggle({ mode, onToggle }: Props) {
   return (
     <div className="flex items-center gap-1 bg-gray-800 rounded-lg border border-gray-700 p-0.5">

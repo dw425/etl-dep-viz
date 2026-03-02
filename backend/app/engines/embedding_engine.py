@@ -3,12 +3,18 @@
 Supports two modes:
   1. LOCAL  — sentence-transformers (default, no API key, CPU-friendly).
               Uses all-MiniLM-L6-v2 (384-dim) unless overridden.
-              Falls back to zero-vectors if the library is not installed.
+              Falls back to zero-vectors if the library is not installed,
+              allowing ChromaDB indexing to proceed (but search quality is zero).
   2. OPENAI — text-embedding-3-small via OpenAI API (1536-dim, higher quality).
               Requires EDV_LLM_API_KEY and the `openai` package.
+              Processes in batches to respect API token limits.
 
-Vectors produced here are consumed by VectorStore for ChromaDB ingestion
-(during indexing) and by HybridSearchEngine for query-time lookup.
+Vectors produced here are consumed by:
+  - VectorStore.index_documents() — during indexing, stores embeddings in ChromaDB.
+  - HybridSearchEngine.search()   — at query time, embeds the user question.
+
+All embeddings are L2-normalized to unit length so cosine distance == euclidean
+distance in ChromaDB's HNSW index.
 """
 
 from __future__ import annotations

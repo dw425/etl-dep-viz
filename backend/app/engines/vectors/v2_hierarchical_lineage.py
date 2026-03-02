@@ -2,6 +2,17 @@
 
 Groups sessions into data domains based on shared table usage,
 with silhouette-guided optimal cut and auto-generated domain labels.
+
+Algorithm:
+  1. Convert similarity matrix to distance (1 - similarity), make symmetric.
+  2. Run Ward's agglomerative clustering on the condensed distance matrix.
+  3. Sweep K from 2..min(n/2, 20), pick K with best silhouette score.
+  4. Classify tables per domain as core (>50% of members use it),
+     peripheral (domain-local), or cross-domain (used by 2+ domains).
+  5. Auto-label each domain by its most-shared core table name.
+
+Output: List of DomainProfile objects with session_ids, core/peripheral/cross-domain
+tables, plus the optimal K and silhouette score.
 """
 
 from __future__ import annotations
@@ -75,6 +86,12 @@ class HierarchicalLineageVector:
         features: list[SessionFeatures],
         similarity_matrix,
     ) -> HierarchicalLineageResult:
+        """Run hierarchical clustering to identify data domains.
+
+        Args:
+            features: SessionFeatures list for table set extraction.
+            similarity_matrix: Pairwise Jaccard similarity (n x n numpy array).
+        """
         if np is None:
             raise ImportError("numpy is required for HierarchicalLineageVector. Install it with: pip install numpy")
         if linkage is None:

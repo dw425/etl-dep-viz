@@ -1,15 +1,22 @@
 """RAG Query Engine — query classification, hybrid search, and LLM-powered chat.
 
 Pipeline for each user question (RAGChatEngine.chat):
-  1. classify_query       — keyword-based intent detection + entity extraction
-  2. HybridSearchEngine   — vector similarity search + direct entity lookup
-  3. _build_context       — format top-N retrieved docs into an LLM context block
-  4. _call_llm            — send system prompt + context + history to Anthropic/OpenAI
-  5. _extract_references  — scan response text for session/table names (sidebar)
-  6. _generate_suggestions — return follow-up question prompts for the UI
+  1. classify_query       — keyword-based intent detection + entity extraction.
+                            10 intents (session_lookup, table_lookup, lineage_trace,
+                            impact_analysis, complexity_query, wave_query, group_query,
+                            comparison, environment, general). First pattern match wins.
+  2. HybridSearchEngine   — dual retrieval: vector similarity (ChromaDB) + direct
+                            entity name lookup in tier_data. Per-type search (5 hits
+                            per doc_type) ensures no single type dominates context.
+  3. _build_context       — format top-N retrieved docs into numbered XML blocks.
+  4. _call_llm            — send system prompt + context + history to Anthropic/OpenAI.
+                            Max 2048 tokens output, last 10 conversation turns retained.
+  5. _extract_references  — scan response text for session/table names (sidebar links).
+  6. _generate_suggestions — intent-specific follow-up question prompts for the UI.
 
-Intent classification is done with lightweight keyword matching (no ML) so it
-remains fast and deterministic regardless of embedding availability.
+Intent classification uses deterministic keyword matching (no ML) so it
+remains fast and predictable regardless of embedding availability.
+Entities are extracted as uppercase identifiers (4+ chars) from the raw question.
 """
 
 from __future__ import annotations

@@ -2,6 +2,19 @@
 
 Uses Tarjan's algorithm (via NetworkX) to find SCCs, then builds a
 condensation DAG for migration wave planning with topological ordering.
+
+Algorithm:
+  1. Build directed graph from adjacency matrix.
+  2. Find all Strongly Connected Components (SCCs) — groups of sessions with
+     mutual dependencies (cycles). These must be migrated as atomic units.
+  3. Build condensation DAG: each SCC becomes a single node, acyclic by definition.
+  4. Compute topological generations on the condensation DAG — each generation
+     becomes a migration wave (can execute in parallel within a wave).
+  5. Estimate migration hours per wave using V11 complexity scores:
+     avg_complexity 0-25 -> 0.5x base, 26-50 -> 1.0x, 51-75 -> 1.5x, 76-100 -> 2.5x.
+
+Output: WavePlan with waves (ordered execution batches), SCC groups (cycle detection),
+critical path length (= number of waves), and per-wave hour estimates.
 """
 
 from __future__ import annotations
@@ -91,6 +104,13 @@ class TopologicalSCCVector:
         session_ids: list[str],
         complexity_scores: dict[str, float] | None = None,
     ) -> WavePlan:
+        """Build migration wave plan from dependency graph.
+
+        Args:
+            adjacency: Sparse CSR adjacency matrix from FeatureMatrixBuilder.
+            session_ids: Session ID list matching matrix indices.
+            complexity_scores: Optional V11 scores {session_id: 0-100} for hour scaling.
+        """
         if sparse is None:
             raise ImportError("scipy is required for TopologicalSCCVector. Install it with: pip install scipy")
         n = len(session_ids)

@@ -1,6 +1,21 @@
 /**
- * ExecOrderView.tsx -- Timeline with numbered steps, session cards,
- * conflict/chain badges.
+ * ExecOrderView -- Recommended execution order timeline.
+ *
+ * Displays sessions as a vertical timeline with numbered step circles and
+ * connecting lines. Each card shows write targets and badges for CONFLICT
+ * (write-write on the same table) and CHAIN (read-after-write dependency).
+ *
+ * Layout:
+ *   Left column  — numbered circle + vertical connector line
+ *   Right column — session card with name, targets, conflict/chain badges
+ *   Right edge   — TierFilterSidebar (compact)
+ *
+ * Performance:
+ *   - Virtual scrolling kicks in at 200+ sessions to keep DOM node count low.
+ *   - ResizeObserver tracks container height so the visible window stays accurate.
+ *   - Fixed ITEM_HEIGHT (64px) is assumed for position calculations.
+ *
+ * @param data - Full tier map result; filtered via TierFilterSidebar before rendering.
  */
 
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';

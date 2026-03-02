@@ -4,9 +4,25 @@ Mirrors the output format of infa_engine.analyze() so the constellation map,
 tier diagram, and galaxy map all work identically for NiFi flows.
 
 Concept mapping:
-  Informatica SESSION  →  NiFi Process Group (or top-level processor cluster)
-  Informatica TABLE    →  NiFi external resource (DB table, Kafka topic, S3 bucket, etc.)
-  Informatica MAPPING  →  NiFi connection graph within a process group
+  Informatica SESSION  ->  NiFi Process Group (or top-level processor cluster)
+  Informatica TABLE    ->  NiFi external resource (DB table, Kafka topic, S3 bucket, etc.)
+  Informatica MAPPING  ->  NiFi connection graph within a process group
+
+Data Flow:
+  1. _parse_nifi_xml()   — delegates to parsers/nifi_xml.py for raw processor/connection extraction
+  2. _classify()         — categorize each processor as source/sink/transform
+  3. _extract_resource() — identify external resources from processor properties
+  4. analyze()           — 8-phase pipeline matching infa_engine output format:
+     Phase 1: parse all files
+     Phase 2: build connection graph
+     Phase 3: build table usage maps (resource -> processors)
+     Phase 4: assign tiers via topological sort (NetworkX) or BFS fallback
+     Phase 5-7: build output nodes/edges
+     Phase 8: compute stats
+
+Processor Classification Strategy:
+  - Known types matched against _SOURCE_TYPES / _SINK_TYPES lookup sets
+  - Heuristic fallback: prefix-based (Get*/Fetch* -> source, Put*/Publish* -> sink)
 """
 
 from __future__ import annotations

@@ -1,10 +1,35 @@
 /**
- * Constellation Canvas — HTML5 Canvas renderer for 15K session points.
- * Uses D3 zoom/pan + quadtree for O(log N) hover/click hit detection.
- * Renders cluster hulls, labels, cross-chunk edges, and critical markers.
- * Supports: multi-select, display toggles, gradient scale map, session highlight,
- * semantic LOD, search/fly-to, mini-map, path tracing, proximity radar,
- * rich hover cards, edge bundling, session pins, complexity heat overlay.
+ * ConstellationCanvas — HTML5 Canvas renderer for 15K+ session scatter plots.
+ *
+ * @description
+ * The primary visualization for clustered session data. Each session is a point
+ * placed via force-directed layout; clusters are rendered as convex hulls with
+ * centroid labels. Uses Canvas (not SVG) for performance at scale.
+ *
+ * Rendering pipeline (per frame):
+ *   1. Clear canvas, apply DPR scaling
+ *   2. Draw heat/density overlay if active (KDE grid → per-cell fill)
+ *   3. Draw cluster hulls (convex hull polygons, alpha fill)
+ *   4. Draw cross-chunk edge bundles (quadratic Bezier curves)
+ *   5. Draw session dots (color by chunk, dim by filter state)
+ *   6. Draw critical markers, pinned indicators, hover cards
+ *   7. Draw labels at appropriate LOD level
+ *   8. Update mini-map inset
+ *
+ * Level-of-detail (LOD) system:
+ *   - FAR  (k < 0.8): Supernode bubbles at cluster centroids, no individual dots
+ *   - MID  (0.8..3.0): Individual dots, hulls, bundled edges
+ *   - CLOSE (k > 3.0): Full labels on each dot, connection lines on hover
+ *
+ * Key algorithms:
+ *   - D3 quadtree for O(log N) spatial hit testing on hover/click
+ *   - D3 polygonHull for convex cluster boundaries
+ *   - Gaussian KDE (kernel density estimation) for heat/gradient overlays
+ *   - BFS on adjacency graph for path tracing and proximity radar
+ *   - Edge bundling: aggregate cross-chunk edges into weighted arcs
+ *
+ * @see GalaxyMapCanvas for the orbital SVG-based view
+ * @see UMAPView for the dimensionality-reduction scatter plot
  */
 
 import React, { useRef, useEffect, useCallback, useMemo, useState } from 'react';
@@ -144,6 +169,7 @@ export default function ConstellationCanvas({
     return m;
   }, [points]);
 
+  /** Average position of all points in each chunk — used for supernode placement at far zoom */
   const chunkCentroids = useMemo(() => {
     const centroids = new Map<string, { x: number; y: number; count: number }>();
     for (const p of points) {
@@ -156,6 +182,7 @@ export default function ConstellationCanvas({
     return result;
   }, [points]);
 
+  /** Convex hull boundary for each chunk — d3.polygonHull needs >= 3 points */
   const chunkHulls = useMemo(() => {
     const grouped = new Map<string, [number, number][]>();
     for (const p of points) {
@@ -177,6 +204,8 @@ export default function ConstellationCanvas({
   }, [points]);
 
   // ── Adjacency list for path tracing / proximity ────────────────────────
+  // Built from tierData connections, mapping session names to their neighbors.
+  // Used by BFS in path tracing (A→B shortest path) and proximity radar (N-hop neighborhood).
 
   const adjacency = useMemo(() => {
     if (!tierData) return new Map<string, Set<string>>();
@@ -228,11 +257,14 @@ export default function ConstellationCanvas({
   }, [vectorResults]);
 
   // ── Complexity heat overlay KDE ────────────────────────────────────────
+  // Gaussian KDE: each session contributes a weighted bell curve to a 60x60 grid.
+  // Weight = complexity score / 100. The resulting density field is rendered as
+  // a green→red heat overlay behind the session dots.
 
   const heatGrid = useMemo(() => {
     if (!showHeatOverlay || complexityMap.size === 0) return null;
     const gridSize = 60;
-    const bandwidth = 0.05;
+    const bandwidth = 0.05; // Controls kernel width in normalized [0,1] space
     const grid = new Float64Array(gridSize * gridSize);
     const bwCells = Math.ceil(bandwidth * gridSize * 3);
 
@@ -260,6 +292,9 @@ export default function ConstellationCanvas({
   }, [points, complexityMap, showHeatOverlay]);
 
   // ── Gradient Scale density ─────────────────────────────────────────────
+  // Similar KDE but for session density (unweighted) on an 80x80 grid.
+  // After computing the grid, local maxima above 15% of peak are extracted
+  // as "density peaks" — shown as numbered pins on the canvas.
 
   const densityGrid = useMemo(() => {
     if (algorithm !== 'gradient_scale') return null;
@@ -378,6 +413,8 @@ export default function ConstellationCanvas({
   }, [showRadar, radarSession, radarHops, adjacency, pointMap, points]);
 
   // ── Edge bundles ───────────────────────────────────────────────────────
+  // Aggregate individual cross-chunk edges into chunk-to-chunk bundles with
+  // combined counts. Rendered as weighted arcs between chunk centroids.
 
   const edgeBundles = useMemo(() => {
     const bundles = new Map<string, { from: string; to: string; count: number }>();
@@ -391,6 +428,9 @@ export default function ConstellationCanvas({
   }, [crossChunkEdges]);
 
   // ── Drawing ────────────────────────────────────────────────────────────
+  // Main render function called on every animation frame when dirtyRef is set.
+  // Handles DPR-aware canvas sizing, viewport transforms, and the full
+  // layered rendering pipeline (overlays → hulls → edges → dots → labels → UI).
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -425,6 +465,8 @@ export default function ConstellationCanvas({
     const focusedPt = searchFocusedId ? pointMap.get(searchFocusedId) : null;
 
     // ── Complexity heat overlay ──────────────────────────────────────────
+    // Render the KDE grid as colored cells — green(low) to red(high complexity).
+    // Each cell's color is interpolated linearly between green and red.
     if (showHeatOverlay && heatGrid && !isGradient) {
       const { grid, maxVal, gridSize } = heatGrid;
       const cellW = cw / gridSize;
@@ -446,6 +488,8 @@ export default function ConstellationCanvas({
     }
 
     // ── GRADIENT SCALE MAP MODE ─────────────────────────────────────────
+    // Alternative rendering: density-based heatmap with peak markers.
+    // Uses HSL lightness to encode density, with numbered pin markers at peaks.
     if (isGradient && densityGrid) {
       const { grid, maxDensity, peaks, gridSize } = densityGrid;
       const cellW = cw / gridSize;
@@ -500,7 +544,9 @@ export default function ConstellationCanvas({
       const chunkSizeMap = new Map<string, number>();
       for (const chunk of chunks) chunkSizeMap.set(chunk.id, chunk.session_count);
 
-      // ── LOD: FAR — Supernode bubbles ──
+      // ── LOD: FAR (k < 0.8) — Supernode bubbles ──
+      // At far zoom, individual dots are too small to see. Instead, render
+      // each cluster as a single bubble at its centroid, sized by sqrt(session_count).
       if (k < LOD_FAR_THRESHOLD) {
         // Draw hulls dimly
         if (showHulls) {

@@ -1,14 +1,21 @@
 """Document Generator — converts parsed ETL data into structured text documents for vector embedding.
 
 Produces 5 document types at different granularity levels:
-  1. Session Profile    — one per session: deps, transforms, complexity, wave, community
-  2. Table Profile      — one per table: readers, writers, lookups, lineage
-  3. Dependency Chain   — one per significant chain (>=3 sessions), traced via DFS
-  4. Group Summary      — one per community/gravity group: shared tables, avg complexity
-  5. Environment Summary — one global overview: stats, complexity distribution, wave plan
+  1. Session Profile    — one per session: deps, transforms, complexity, wave, community.
+                          Enriched with V11 (complexity), V4 (wave), V1 (community),
+                          V10 (gravity), V3 (criticality) when vector_results available.
+  2. Table Profile      — one per table: readers, writers, lookups, upstream/downstream lineage.
+                          Flags write conflicts when multiple sessions write to same table.
+  3. Dependency Chain   — one per significant chain (>=3 sessions), traced via DFS from
+                          DAG entry points. Top 200 longest paths kept.
+  4. Group Summary      — one per V10 gravity group: shared tables, avg complexity,
+                          tier range, migration-together recommendation.
+  5. Environment Summary — one global overview: stats, complexity distribution, wave plan,
+                          community structure, database platform counts, top 10 complex sessions.
 
 Documents are consumed by the IndexingPipeline, which embeds them into ChromaDB for
-semantic search via the RAGChatEngine.
+semantic search via the RAGChatEngine. Each document has a stable id (e.g.,
+"session:{sid}", "table:{name}") so re-indexing replaces previous docs cleanly.
 """
 
 from __future__ import annotations

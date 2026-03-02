@@ -16,9 +16,16 @@ interface Props {
   onSessionClick?: (sessionId: string) => void;
 }
 
+/**
+ * WavePlanView -- displays migration waves as horizontal bands sized proportionally
+ * to session count. Each wave band is expandable to show individual sessions.
+ * SCC (strongly connected component) cycle groups are highlighted with amber
+ * warning badges. Prerequisite arrows show inter-wave ordering constraints.
+ */
 export default function WavePlanView({ wavePlan, onSessionClick }: Props) {
   const [expandedWave, setExpandedWave] = useState<number | null>(null);
 
+  // Build a set of session IDs that participate in cyclic SCCs (for amber highlighting)
   const sccSessionSet = useMemo(() => {
     const s = new Set<string>();
     for (const g of wavePlan.scc_groups) {
@@ -29,6 +36,7 @@ export default function WavePlanView({ wavePlan, onSessionClick }: Props) {
     return s;
   }, [wavePlan.scc_groups]);
 
+  // Max session count across waves — used to scale the proportional width bars
   const maxSessions = useMemo(() => {
     return Math.max(...wavePlan.waves.map(w => w.session_count), 1);
   }, [wavePlan.waves]);
@@ -154,6 +162,7 @@ export default function WavePlanView({ wavePlan, onSessionClick }: Props) {
   );
 }
 
+/** Compact stat badge for the summary bar. */
 function SumStat({ label, value }: { label: string; value: number }) {
   return (
     <div>

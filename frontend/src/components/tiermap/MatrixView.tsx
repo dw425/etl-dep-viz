@@ -19,6 +19,16 @@ interface Props {
 
 const PAGE_SIZE = 50;
 
+/**
+ * MatrixView -- sessions (rows) x tables (columns) relationship grid.
+ * Each cell shows connection type badges (W, R, L, etc.) with color coding.
+ * Hovering a row/column header highlights the entire cross-section.
+ *
+ * Performance optimizations for large datasets (13K+ sessions, 19K+ tables):
+ *  - Sparse mode (default): only renders rows/columns that have connections
+ *  - Paginated: 50 rows x 50 columns per page with prev/next navigation
+ *  - Search filter for sessions and tables
+ */
 const MatrixView: React.FC<Props> = ({ data }) => {
   const [hov, setHov] = useState<string | null>(null);
   const [sparseMode, setSparseMode] = useState(true);

@@ -1,6 +1,22 @@
 /**
- * ConsensusRadar — per-session radar chart showing V1–V8 cluster assignments.
- * Red = contested (vectors disagree), green = consensus.
+ * ConsensusRadar -- V8 Ensemble consensus viewer.
+ *
+ * Shows how well different vector engines (V1-V8) agree on cluster assignments
+ * for each session. Sessions where vectors disagree are flagged as "contested".
+ *
+ * Layout:
+ *   Top   — summary: cluster count, contested count, high-confidence count, vectors used
+ *   Left  — session list, sortable by consensus score or contested status
+ *   Right — SessionConsensusDetail: score, consensus cluster, per-vector assignment table
+ *
+ * Color coding:
+ *   - Red dot:   contested (vectors disagree on cluster)
+ *   - Green dot:  high confidence (consensus_score > 0.8)
+ *   - Amber dot:  moderate confidence
+ *   - Per-vector badges: green checkmark = agrees with consensus, red X = disagrees
+ *
+ * @param ensemble        - V8 ensemble result with sessions, per_vector_assignments, scores
+ * @param onSessionSelect - Callback when a session is clicked
  */
 
 import React, { useMemo, useState } from 'react';

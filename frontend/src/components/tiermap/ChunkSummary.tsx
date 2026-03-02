@@ -15,6 +15,11 @@ interface ChunkSummaryProps {
   crossChunkEdges: CrossChunkEdge[];
 }
 
+/**
+ * ChunkSummary -- horizontal stats bar showing aggregate metrics for the
+ * currently selected chunk(s): session count, table count, tier range,
+ * pivot tables, cross-cluster links, conflict/chain counts.
+ */
 export default function ChunkSummary({ chunks, totalSessions, crossChunkEdges }: ChunkSummaryProps) {
   if (chunks.length === 0) return null;
 

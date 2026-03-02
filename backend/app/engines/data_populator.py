@@ -1,10 +1,25 @@
 """Data populator — fills per-view materialized tables from parse output.
 
-Three entry points called at different stages of the pipeline:
+Four entry points called at different stages of the pipeline:
   1. populate_core_tables()           — after parse (sessions, tables, connections)
   2. populate_view_tables()           — after core tables (derived per-view data)
   3. populate_constellation_tables()  — after clustering
   4. populate_vector_tables()         — after vector analysis
+
+All functions are idempotent: they delete existing rows for the upload_id before
+inserting new ones. This makes re-parse and re-analysis safe without manual cleanup.
+
+Table Groups (26 total):
+  Foundation (4): SessionRecord, TableRecord, ConnectionRecord, ConnectionProfileRecord
+  Core Views (10): TierLayout, GalaxyNodes, ExplorerDetail, WriteConflicts,
+                    ReadChains, ExecOrder, MatrixCells, TableProfiles,
+                    DuplicateGroups, DuplicateMembers
+  Constellation (3): ConstellationChunks, ConstellationPoints, ConstellationEdges
+  Vector (8): ComplexityScores, WaveAssignments, UmapCoords, Communities,
+              WaveFunction, ConcentrationGroups, ConcentrationMembers, Ensemble
+
+Also provides reconstruct_tier_data() to rebuild the in-memory tier_data dict
+from normalized DB tables (used when loading an existing upload without re-parsing).
 """
 
 import hashlib
@@ -157,7 +172,9 @@ def populate_core_tables(
 def populate_view_tables(db: Session, upload_id: int) -> None:
     """Derive and populate all 10 core-view materialized tables from foundation tables.
 
-    Call AFTER populate_core_tables().
+    Call AFTER populate_core_tables(). Loads all foundation records into memory,
+    builds lookup maps and connection indexes, then delegates to per-view
+    populate functions. Each function is idempotent (deletes before inserting).
     """
     logger.info("populate_view_tables: upload_id=%d", upload_id)
 
@@ -621,7 +638,12 @@ def populate_vector_tables(
     upload_id: int,
     vector_results: dict,
 ) -> None:
-    """Populate all vector view tables from analysis output."""
+    """Populate all vector view tables from analysis output.
+
+    Dispatches to per-vector populate functions based on which keys are
+    present in vector_results. Each function handles multiple output formats
+    (dict keys vary between vector engine versions) via .get() fallbacks.
+    """
     if not vector_results:
         return
 
@@ -890,7 +912,14 @@ def _populate_ensemble(db: Session, upload_id: int, data: dict) -> None:
 # ── 5. Reconstruct tier_data from normalized tables ──────────────────────────
 
 def reconstruct_tier_data(db: Session, upload_id: int) -> dict | None:
-    """Reconstruct full tier_data dict from normalized tables. Legacy JSON fallback."""
+    """Reconstruct full tier_data dict from normalized DB tables.
+
+    Used when loading an existing upload from the database without re-parsing
+    the original XML files. Rebuilds the same dict shape that infa_engine.analyze()
+    or nifi_tier_engine.analyze() would produce.
+
+    Returns None if no sessions exist for the upload_id.
+    """
     sessions = db.query(SessionRecord).filter(SessionRecord.upload_id == upload_id).all()
     if not sessions:
         return None

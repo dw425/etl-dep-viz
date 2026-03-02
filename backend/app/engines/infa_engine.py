@@ -1,7 +1,21 @@
-"""Informatica XML Engine — parses PowerCenter XML files and returns Lumen_Retro-compatible tier data.
+"""Informatica XML Engine — parses PowerCenter XML files and returns tier diagram data.
 
-Single-file engine: parse → normalise → detect conflicts → assign tiers → return JSON.
+Single-file engine: parse -> normalise -> detect conflicts -> assign tiers -> return JSON.
 All sessions, all writes, all reads, all lookups, no tier cap, unlimited depth.
+
+Data Flow:
+  1. _parse_file()       — XML -> raw session dicts per file
+  2. _process_folder()   — extract SOURCE/TARGET/MAPPING/SESSION/WORKFLOW per folder
+  3. analyze()           — merge all files, detect conflicts, assign tiers via DAG/BFS,
+                           build output nodes (sessions + tables + connections + stats)
+
+Output Format (matches nifi_tier_engine.analyze):
+  {sessions: [...], tables: [...], connections: [...], stats: {...}, warnings: [...]}
+
+Tier Assignment Algorithm:
+  - Build a directed graph from session-to-session dependencies (via shared tables)
+  - Topological sort (NetworkX) or BFS fallback assigns each session a tier depth
+  - Tables are placed at tier = max(writer_tiers) + 0.5
 
 KEY FIX: In Informatica XML, <TABLEATTRIBUTE NAME="Lookup table name"> lives on
 <TRANSFORMATION TYPE="Lookup Procedure"> elements, NOT on <INSTANCE> elements inside MAPPING.
@@ -111,6 +125,7 @@ def validate_xml_schema(content: bytes) -> dict:
 # ── XML helpers ────────────────────────────────────────────────────────────────
 
 def _parse_xml(content: bytes) -> Any:
+    """Parse XML bytes into an element tree, preferring lxml for error recovery."""
     if _LXML:
         parser = _ET.XMLParser(recover=True, remove_comments=True)  # type: ignore[call-arg]
         return _ET.fromstring(content, parser=parser)
@@ -154,6 +169,7 @@ def _parse_xml_iterparse(content: bytes):
 
 
 def _attr(el: Any, name: str) -> str:
+    """Get XML attribute with case-insensitive fallback. Returns '' if missing."""
     v = el.get(name)
     if v is not None:
         return v

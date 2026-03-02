@@ -1,8 +1,36 @@
 /**
- * HeatMapView — Canvas grid showing per-session composite heat scores.
- * Each cell is one session, colored green→yellow→red by composite heat.
- * Supports grouping by None/Gravity/Community/Wave/Tier, sidebar filters,
- * hover tooltips, and click detail panel with V11 dimension bars.
+ * HeatMapView -- Canvas grid where each cell represents one ETL session,
+ * colored green-to-yellow-to-red by a composite "heat" score.
+ *
+ * @description
+ * Provides an at-a-glance overview of session risk/complexity across the entire
+ * dataset. Sessions are laid out in a responsive grid (auto-sized to container
+ * width), optionally grouped into labeled sections.
+ *
+ * Composite heat formula:
+ *   heat = complexity(V11) * 0.4 + connectionDensity * 0.3 + transformScore * 0.3
+ *
+ *   - complexity: V11 overall_score / 100 (0..1)
+ *   - connectionDensity: this session's connection count / max across all sessions
+ *   - transformScore: this session's transform count / max across all sessions
+ *
+ * Grouping modes (radio buttons in sidebar):
+ *   - None: flat grid sorted by heat or name
+ *   - Gravity (V10): group by gravity group ID
+ *   - Community (V1): group by macro community assignment
+ *   - Wave (V4): group by migration wave number
+ *   - Tier: group by execution tier
+ *
+ * Canvas rendering:
+ *   - Uses HTML5 Canvas with DPR scaling for crisp rendering on Retina displays
+ *   - Cell layout computed in cellLayout memo; positions cached for hit testing
+ *   - Group headers rendered as labeled horizontal bars above each section
+ *   - Critical sessions marked with a small red dot in the cell corner
+ *
+ * @param complexity - V11 complexity scores for all sessions
+ * @param tierData - Full TierMapResult for session/connection metadata
+ * @param vectorResults - Full vector results for V1/V4/V10 group lookups
+ * @param onSessionSelect - Callback when user wants to drill into a session
  */
 
 import { useMemo, useRef, useEffect, useState, useCallback } from 'react';
@@ -61,6 +89,8 @@ const C = {
 };
 
 // ── Heat color: green → yellow → red ─────────────────────────────────────────
+// Two-segment linear interpolation: [0, 0.5] green→yellow, [0.5, 1.0] yellow→red.
+// Input `t` is clamped to [0, 1]. Returns an RGB string.
 
 function heatColor(t: number): string {
   const clamped = Math.max(0, Math.min(1, t));
@@ -99,6 +129,10 @@ export default function HeatMapView({ complexity, tierData, vectorResults, onSes
   const [containerWidth, setContainerWidth] = useState(800);
 
   // ── Build session heat data ─────────────────────────────────────────────
+  // Merges data from V11 complexity scores, tierData sessions/connections, and
+  // V1/V4/V10 vector results into a flat array of SessionHeatData. Each entry
+  // carries the composite heat score plus all the metadata needed for grouping,
+  // filtering, tooltips, and the detail panel.
 
   const sessionHeatData = useMemo((): SessionHeatData[] => {
     const scores = complexity?.scores || [];
@@ -255,6 +289,9 @@ export default function HeatMapView({ complexity, tierData, vectorResults, onSes
   }, [filteredSessions, groupBy, sortMode]);
 
   // ── Canvas cell layout ───────────────────────────────────────────────────
+  // Computes (x, y) positions for each session cell in a grid layout.
+  // Groups add a GROUP_HEADER_H gap before their first row.
+  // Returns: cells array (for rendering + hit testing), total canvas height, column count.
 
   const cellLayout = useMemo(() => {
     const availableW = containerWidth - 4; // slight padding
@@ -300,6 +337,9 @@ export default function HeatMapView({ complexity, tierData, vectorResults, onSes
   }, []);
 
   // ── Canvas render ────────────────────────────────────────────────────────
+  // Redraws the entire canvas when layout, data, or hover/selection changes.
+  // Two passes: 1) group headers as labeled bars, 2) individual cells with
+  // heat color fill, hover/selection borders, critical dots, and abbreviations.
 
   useEffect(() => {
     const canvas = canvasRef.current;

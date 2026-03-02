@@ -55,6 +55,25 @@ interface Props {
 
 // ── Component ────────────────────────────────────────────────────────────────
 
+/**
+ * UMAPView -- 2D scatter plot of V3 dimensionality reduction projections.
+ * Renders sessions as colored dots on an HTML Canvas with D3 zoom/pan,
+ * quadtree-based hover hit-testing, and multiple interaction modes.
+ *
+ * Color modes: cluster, complexity, wave, criticality.
+ * Scale modes: local, balanced, global (from V3 projections).
+ *
+ * Interaction features:
+ *   - Hover: nearest-neighbor detection via d3.quadtree, glow ring + label
+ *   - Click: opens detail panel with cluster, complexity, wave, criticality info
+ *   - Search: text search with fly-to animation (zoom transition to target point)
+ *   - Rectangle select: drag to lasso multiple points, shown in summary panel
+ *   - Filter dimension: highlight only high/low complexity, critical, independent,
+ *     or specific wave sessions (dims non-matching points to 10% opacity)
+ *   - Focus pulse: animated ring on the fly-to target session
+ *   - Onboarding overlay: first-visit guide (dismissed to localStorage)
+ *   - Zoom controls: +/- buttons and 1:1 reset
+ */
 export default function UMAPView({ vectorResults, onSessionSelect }: Props) {
   // Canvas / container refs
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -1013,6 +1032,7 @@ export default function UMAPView({ vectorResults, onSessionSelect }: Props) {
 
 // ── Detail row sub-component ─────────────────────────────────────────────────
 
+/** Single key-value row in the session detail panel with colored value text. */
 function DetailRow({ label, value, color }: { label: string; value: string; color: string }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

@@ -2,6 +2,25 @@
 
 Groups sessions into gravity groups based on composite weighted similarity,
 identifies independent sessions that can be migrated without coordination.
+
+Algorithm:
+  1. Independence Detection — scan each session against 6 criteria (zero upstream,
+     zero downstream, zero write conflicts, zero chain involvement, minimal shared
+     tables, zero staleness). Sessions meeting ALL criteria are "fully independent";
+     those meeting 4+ with low similarity are "near-independent". Both types can be
+     migrated without coordination overhead.
+  2. Cluster Remaining — convert similarity matrix to distance, sweep K values
+     (2 to target+5) using silhouette score to find optimal K.
+  3. Gravity Groups — for each cluster, compute the medoid (most central member),
+     identify core tables (shared by >50% of members), and measure cohesion
+     (intra-group similarity) vs coupling (inter-group similarity).
+
+Independence Criteria (vectorized):
+  - Shared-table counting uses binary matrix multiplication: O(n*t) instead of O(n^2).
+  - Max similarity check uses vectorized numpy operations.
+
+Output: ConcentrationResult with gravity groups, independent sessions,
+optimal K, and silhouette score.
 """
 
 from __future__ import annotations
@@ -98,6 +117,15 @@ class ConcentrationVector:
         features: list[SessionFeatures],
         similarity_matrix,
     ) -> ConcentrationResult:
+        """Run concentration analysis: independence detection + gravity group clustering.
+
+        Args:
+            features: Per-session feature vectors from FeatureMatrixBuilder.
+            similarity_matrix: Pairwise similarity (n x n numpy array) from orchestrator.
+
+        Returns:
+            ConcentrationResult with gravity groups and independent sessions.
+        """
         if np is None:
             raise ImportError("numpy is required for ConcentrationVector. Install it with: pip install numpy")
         if KMeans is None:

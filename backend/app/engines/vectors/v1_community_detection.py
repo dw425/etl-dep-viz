@@ -3,6 +3,20 @@
 Uses NetworkX's built-in Louvain implementation with configurable resolution
 to detect communities at macro (0.3), meso (1.0), and micro (3.0) scales.
 Builds a supernode graph for the L1 enterprise constellation view.
+
+Algorithm:
+  1. Build undirected weighted graph from the pairwise similarity matrix
+     (edges where Jaccard > 0.05; sparse adjacency edges added if graph is too sparse).
+  2. Run Louvain community detection at three resolution scales:
+     - Macro (0.3): few large communities — enterprise-level grouping
+     - Meso (1.0): moderate communities — default Louvain behavior
+     - Micro (3.0): many small communities — fine-grained clusters
+  3. Assign each session a (macro, meso, micro) community triple.
+  4. Build a supernode graph: each macro community becomes a node, with edges
+     weighted by average inter-community similarity.
+
+Output: CommunityResult with assignments, per-scale community dicts, modularity
+scores, and the supernode graph for L1 rendering.
 """
 
 from __future__ import annotations
@@ -60,6 +74,14 @@ class CommunityDetectionVector:
         session_ids: list[str],
         adjacency: Any | None = None,
     ) -> CommunityResult:
+        """Run multi-resolution Louvain community detection.
+
+        Args:
+            similarity_matrix: Pairwise Jaccard similarity (n x n numpy array).
+            session_ids: Session ID list matching matrix indices.
+            adjacency: Optional sparse adjacency matrix to supplement graph edges
+                       when the similarity graph is too sparse (< n edges).
+        """
         if np is None:
             raise ImportError("numpy is required for CommunityDetectionVector. Install it with: pip install numpy")
         n = len(session_ids)

@@ -40,6 +40,12 @@ const STATUS_LABELS: Record<string, string> = {
   skipped_duplicate: 'Duplicate',
 };
 
+/**
+ * ParseAuditDashboard -- displays per-file parse results from the parse
+ * coordinator audit trail. Shows summary cards (total files, parsed OK,
+ * errors, duplicates, sessions), a timing waterfall bar per file, and
+ * an error detail section for failed files.
+ */
 export default function ParseAuditDashboard({ audit }: ParseAuditDashboardProps) {
   if (!audit) {
     return (
@@ -138,6 +144,7 @@ export default function ParseAuditDashboard({ audit }: ParseAuditDashboardProps)
   );
 }
 
+/** Colored summary card with large number and label. */
 function SummaryCard({ label, value, color }: { label: string; value: number; color: string }) {
   return (
     <div style={{

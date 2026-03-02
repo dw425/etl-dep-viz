@@ -6,13 +6,23 @@
 import { useCallback, useState } from 'react';
 import type { LayerContext, DrillFilter } from '../types/vectors';
 
+/** Snapshot of the navigation state exposed by useNavigation(). */
 export interface NavigationState {
+  /** Full stack of layer contexts from L1 (bottom) to current (top). */
   stack: LayerContext[];
+  /** The layer number at the top of the stack (1-6). */
   currentLayer: number;
+  /** Navigation params for the current layer (e.g. groupId, sessionId). */
   currentParams: Record<string, string>;
+  /** Active drill-through filter criteria. */
   filter: DrillFilter;
 }
 
+/**
+ * Core navigation hook for the 6-layer progressive disclosure system.
+ * Manages a stack of LayerContext entries supporting drill-down, drill-up,
+ * drill-home, and jump-to operations. Also produces breadcrumb labels.
+ */
 export function useNavigation() {
   const [state, setState] = useState<NavigationState>({
     stack: [{ layer: 1, params: {} }],
@@ -91,6 +101,7 @@ export function useNavigation() {
   };
 }
 
+/** Derives a human-readable breadcrumb label from a LayerContext. */
 function _layerLabel(ctx: LayerContext): string {
   switch (ctx.layer) {
     case 1: return 'Enterprise';

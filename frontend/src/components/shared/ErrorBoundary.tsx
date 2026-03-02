@@ -1,12 +1,26 @@
+/**
+ * ErrorBoundary — catches uncaught React rendering errors in child components.
+ *
+ * Displays either a custom fallback or a default "Something went wrong" card
+ * with a "Try Again" button that resets the error state.
+ * Logs the error and component stack to the console via componentDidCatch.
+ */
+
 import React, { Component } from 'react';
 
+/** Props for the ErrorBoundary component. */
 interface Props {
+  /** Child components to render when no error has occurred. */
   children: React.ReactNode;
+  /** Optional custom fallback UI to display on error (default: built-in error card). */
   fallback?: React.ReactNode;
 }
 
+/** Internal error state tracked by the boundary. */
 interface State {
+  /** Whether an error has been caught. */
   hasError: boolean;
+  /** The caught error object, if any. */
   error: Error | null;
 }
 

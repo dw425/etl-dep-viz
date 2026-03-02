@@ -31,6 +31,13 @@ const VIEW_GROUPS = [
   { name: 'Navigation', desc: '6-layer progressive drill-down and flow walking' },
 ];
 
+/**
+ * Full-screen help overlay listing keyboard shortcuts, available views grouped by category,
+ * and a "Getting Started" guide. Opens with '?' key; closes on Escape, '?', or backdrop click.
+ * @param onClose - Callback to dismiss the overlay
+ * @param views - List of available views with id, label, icon, and group
+ * @param theme - Theme colors for consistent styling
+ */
 export default function HelpOverlay({ onClose, views, theme: T }: Props) {
   // Close on Escape
   useEffect(() => {

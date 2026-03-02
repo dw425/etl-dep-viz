@@ -19,6 +19,12 @@ interface Props {
   onLoadUpload: (id: number) => void;
 }
 
+/**
+ * UserProfileView -- user profile page showing display name (editable),
+ * quick stats (uploads, sessions parsed, member since), upload history
+ * table with load/delete actions, and activity log with timestamped entries.
+ * Uses localStorage UUID for anonymous identification (no login required).
+ */
 export default function UserProfileView({ onLoadUpload }: Props) {
   const [profile, setProfile] = useState<Record<string, unknown>>({});
   const [displayName, setDisplayName] = useState('');

@@ -19,20 +19,39 @@ logger = logging.getLogger("edv.projects")
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
 
+# ── Request Models ────────────────────────────────────────────────────────
+
+
 class ProjectCreate(BaseModel):
+    """Request body for creating a new project."""
     name: str
     description: str | None = None
     user_id: str | None = None
 
 
 class ProjectUpdate(BaseModel):
+    """Request body for updating a project (partial update — all fields optional)."""
     name: str | None = None
     description: str | None = None
 
 
+# ── CRUD Endpoints ────────────────────────────────────────────────────────
+
+
 @router.get("")
 def list_projects(user_id: str | None = None, db: Session = Depends(get_db)):
-    """List all projects, optionally filtered by user_id."""
+    """List all projects (most recently updated first), optionally filtered by user_id.
+
+    Each project includes an upload_count computed from the Upload table so the
+    dashboard can show how many analyses belong to each project.
+
+    Args:
+        user_id: Optional filter for a specific user's projects.
+        db: SQLAlchemy session (injected).
+
+    Returns:
+        List of project summary dicts with id, name, description, upload_count, etc.
+    """
     q = db.query(Project).order_by(Project.updated_at.desc())
     if user_id:
         q = q.filter(Project.user_id == user_id)
@@ -53,7 +72,15 @@ def list_projects(user_id: str | None = None, db: Session = Depends(get_db)):
 
 @router.post("")
 def create_project(body: ProjectCreate, db: Session = Depends(get_db)):
-    """Create a new project."""
+    """Create a new project container.
+
+    Args:
+        body: ProjectCreate with name, optional description and user_id.
+        db: SQLAlchemy session (injected).
+
+    Returns:
+        Created project dict with id, name, description, user_id, created_at.
+    """
     project = Project(
         name=body.name,
         description=body.description,
@@ -73,7 +100,18 @@ def create_project(body: ProjectCreate, db: Session = Depends(get_db)):
 
 @router.get("/{project_id}")
 def get_project(project_id: int, db: Session = Depends(get_db)):
-    """Get a project with its uploads."""
+    """Get a project with its uploads (most recent first).
+
+    Args:
+        project_id: DB primary key.
+        db: SQLAlchemy session (injected).
+
+    Returns:
+        Project dict with nested uploads list.
+
+    Raises:
+        HTTPException(404): Project not found.
+    """
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(404, "Project not found")
@@ -108,7 +146,19 @@ def get_project(project_id: int, db: Session = Depends(get_db)):
 
 @router.put("/{project_id}")
 def update_project(project_id: int, body: ProjectUpdate, db: Session = Depends(get_db)):
-    """Update project name/description."""
+    """Update project name and/or description. Bumps updated_at timestamp.
+
+    Args:
+        project_id: DB primary key.
+        body: ProjectUpdate with optional name and description.
+        db: SQLAlchemy session (injected).
+
+    Returns:
+        Updated project dict.
+
+    Raises:
+        HTTPException(404): Project not found.
+    """
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(404, "Project not found")
@@ -123,7 +173,21 @@ def update_project(project_id: int, body: ProjectUpdate, db: Session = Depends(g
 
 @router.delete("/{project_id}")
 def delete_project(project_id: int, db: Session = Depends(get_db)):
-    """Delete a project and all associated uploads (CASCADE)."""
+    """Delete a project and all associated uploads (CASCADE).
+
+    SQLAlchemy cascading deletes automatically remove all uploads, their
+    per-view materialized table rows, and vector results.
+
+    Args:
+        project_id: DB primary key.
+        db: SQLAlchemy session (injected).
+
+    Returns:
+        {'deleted': True} on success.
+
+    Raises:
+        HTTPException(404): Project not found.
+    """
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(404, "Project not found")

@@ -6,6 +6,11 @@
 import React from 'react';
 import { useNavigationContext } from './NavigationProvider';
 
+/**
+ * Renders a sticky breadcrumb bar showing the layer navigation path (L1 > L2 > L3 > ...).
+ * Each segment except the last is clickable to navigate back to that layer.
+ * Hidden when there is only one entry (i.e. at the root L1 level).
+ */
 export default function Breadcrumb() {
   const { breadcrumbs, jumpTo } = useNavigationContext();
 

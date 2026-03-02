@@ -1,29 +1,45 @@
-"""Minimal configuration for ETL Dependency Visualizer."""
+"""Application configuration for ETL Dependency Visualizer.
+
+All settings are loaded from environment variables with the ``EDV_`` prefix
+(e.g. ``EDV_LOG_LEVEL=DEBUG``).  Pydantic-settings handles type coercion and
+default values so the app works out-of-the-box with sensible defaults.
+"""
 
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    cors_origins: list[str] = ["*"]
-    max_upload_mb: int = 10240
-    database_url: str = "sqlite:///./etl_dep_viz.db"
-    vector_timeout_seconds: int = 1800
-    log_level: str = "INFO"
-    max_sessions_for_phase3: int = 15000
-    parse_timeout_seconds: int = 1800
-    log_buffer_size: int = 2000
+    """Central configuration consumed by all backend modules.
 
-    # AI Chat / Vector DB settings
-    embedding_mode: str = "local"               # "local" or "openai"
-    embedding_model: str = "all-MiniLM-L6-v2"   # sentence-transformers model
-    chroma_persist_dir: str = "./chroma_data"
-    llm_provider: str = "anthropic"             # "anthropic" or "openai"
-    llm_api_key: str = ""                       # User-provided API key
-    llm_model: str = "claude-sonnet-4-20250514"
-    auto_index_on_parse: bool = True
+    Attributes are grouped into three sections: server/infra, analysis tuning,
+    and AI/chat integration.  Override any value by setting the corresponding
+    ``EDV_<UPPER_NAME>`` environment variable.
+    """
+
+    # ── Server & Infrastructure ───────────────────────────────────────────
+    cors_origins: list[str] = ["*"]                 # Allowed CORS origins; ["*"] = unrestricted
+    max_upload_mb: int = 10240                      # Max upload body size in megabytes (default 10 GB)
+    database_url: str = "sqlite:///./etl_dep_viz.db"  # SQLAlchemy connection string (SQLite default)
+    log_level: str = "INFO"                         # Python logging level name
+    log_buffer_size: int = 2000                     # Ring-buffer capacity for /api/health/logs
+
+    # ── Analysis Tuning ───────────────────────────────────────────────────
+    vector_timeout_seconds: int = 1800              # Hard timeout for the vector orchestrator (30 min)
+    parse_timeout_seconds: int = 1800               # Hard timeout for XML/JSON parse (30 min)
+    max_sessions_for_phase3: int = 15000            # Session count threshold for enabling Phase 3 vectors
+
+    # ── AI Chat / Vector DB ───────────────────────────────────────────────
+    embedding_mode: str = "local"               # "local" (sentence-transformers) or "openai"
+    embedding_model: str = "all-MiniLM-L6-v2"   # sentence-transformers model name
+    chroma_persist_dir: str = "./chroma_data"    # ChromaDB persistence directory
+    llm_provider: str = "anthropic"             # LLM backend: "anthropic" or "openai"
+    llm_api_key: str = ""                       # User-provided API key (keep empty for local-only)
+    llm_model: str = "claude-sonnet-4-20250514"  # Model identifier for chat completions
+    auto_index_on_parse: bool = True            # Automatically index parsed data into ChromaDB
 
     class Config:
         env_prefix = "EDV_"
 
 
+# Module-level singleton used throughout the application
 settings = Settings()

@@ -1,9 +1,24 @@
 """Vector Orchestrator — runs analysis vectors in dependency order.
 
-Phases:
-  Phase 1: Feature extraction + V1 (community) + V4 (SCC/waves) + V11 (complexity)
-  Phase 2: V2 (hierarchical) + V3 (UMAP) + V9 (wave function) + V10 (concentration)
-  Phase 3: V5 (affinity) + V6 (spectral) + V7 (HDBSCAN) + V8 (ensemble)
+Coordinates the execution of 11 analysis vectors (V1-V11) across three phases,
+respecting inter-vector dependencies and sharing precomputed feature matrices.
+
+Phase Architecture (dependency-ordered):
+  Phase 1 (Core):     Feature extraction + V11 (complexity) + V1 (community) + V4 (SCC/waves)
+                      V11 runs first because V4 wave plan uses complexity scores for hour estimates.
+  Phase 2 (Advanced): V2 (hierarchical) + V3 (UMAP) + V9 (wave function) + V10 (concentration)
+                      V9 depends on V11 complexity scores. V3 produces UMAP coords for V7.
+  Phase 3 (Ensemble): V5 (affinity) + V6 (spectral) + V7 (HDBSCAN) + V8 (ensemble consensus)
+                      V8 aggregates cluster assignments from V1, V5, V6, V7.
+
+Shared State:
+  - Feature matrices (dense, adjacency, similarity) are built once in Phase 1
+    and cached in results['_matrices'] for reuse across phases.
+  - The _matrices key is removed before serialization in run_all().
+
+Incremental Mode:
+  - run_incremental() runs only specified vectors plus their transitive dependencies,
+    reusing cached results from a previous run.
 """
 
 from __future__ import annotations
@@ -53,17 +68,33 @@ _VECTOR_RESULT_KEYS: dict[str, str] = {
 
 
 class VectorOrchestrator:
-    """Orchestrate analysis vector execution with timing instrumentation."""
+    """Orchestrate analysis vector execution with timing instrumentation.
+
+    Usage:
+        orch = VectorOrchestrator()
+        results = orch.run_all(tier_data)  # Full 3-phase run
+        # or
+        r1 = orch.run_phase1(tier_data)
+        r2 = orch.run_phase2(tier_data, r1)  # SSE can stream between phases
+        r3 = orch.run_phase3(tier_data, r2)
+    """
 
     def __init__(self):
         self._timings: dict[str, float] = {}
-        self._computed: set[str] = set()  # Track which vectors have been computed
-        self._cached_results: dict[str, Any] = {}  # Cache per-vector results
+        self._computed: set[str] = set()
+        self._cached_results: dict[str, Any] = {}
 
     def _build_matrices(self, tier_data: dict[str, Any], results: dict[str, Any] | None = None):
         """Build or retrieve cached feature matrices.
 
-        Returns (features, builder, dense, adjacency, similarity).
+        Returns:
+            (features, builder, dense, adjacency, similarity) tuple where:
+            - features: list[SessionFeatures] — per-session feature profiles
+            - builder: FeatureMatrixBuilder — matrix construction helper
+            - dense: np.ndarray (n x 16) — min-max normalized feature matrix
+            - adjacency: scipy.sparse — directed session-to-session edge weights
+            - similarity: np.ndarray (n x n) — pairwise Jaccard similarity on table sets
+
         Caches matrices in results['_matrices'] to avoid redundant rebuilds across phases.
         """
         # Reuse cached matrices if available
@@ -292,10 +323,16 @@ class VectorOrchestrator:
         vectors: list[str],
         previous_results: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Run only the specified vectors (plus dependencies), reusing cached results.
+        """Run only the specified vectors (plus transitive dependencies), reusing cached results.
 
-        If previous_results is provided, vectors whose result keys already exist
-        are skipped unless explicitly listed in `vectors`.
+        Args:
+            tier_data: Parse output (sessions, tables, connections).
+            vectors: List of vector keys to run (e.g., ['v1_community', 'v8_ensemble']).
+            previous_results: Results from a prior run to reuse.
+
+        Dependency resolution expands the requested set to include prerequisite
+        vectors not already present in previous_results. Execution follows
+        phase ordering (Phase 1 -> 2 -> 3) regardless of request order.
         """
         results = dict(previous_results or {})
 
@@ -366,7 +403,11 @@ class VectorOrchestrator:
         dense: Any,
         tier_data: dict,
     ) -> None:
-        """Execute a single vector and store result in results dict."""
+        """Execute a single vector and store result in results dict.
+
+        Dispatches to the correct vector engine based on vec_key string.
+        Some vectors require outputs from earlier vectors (e.g., V4 needs V11 scores).
+        """
         if vec_key == 'v11_complexity':
             v11 = ComplexityAnalyzer()
             r = v11.run(features)
@@ -450,10 +491,14 @@ class VectorOrchestrator:
         tier_data: dict[str, Any],
         resolutions: list[float] | None = None,
     ) -> dict[str, Any]:
-        """Sweep V1 community detection resolution parameter.
+        """Sweep V1 Louvain resolution parameter to visualize sensitivity.
 
-        Returns community assignments and modularity at each resolution,
-        for charting sensitivity curves.
+        Runs community detection at each resolution value and reports
+        community count + modularity, letting users find the resolution
+        that best balances granularity vs cohesion for their data.
+
+        Returns:
+            Dict with 'resolutions' (list of per-resolution stats) and 'session_count'.
         """
         if resolutions is None:
             resolutions = [0.1, 0.3, 0.5, 0.8, 1.0, 1.5, 2.0, 3.0, 5.0]

@@ -9,17 +9,25 @@ import type { TierMapResult } from '../../types/tiermap';
 import TierFilterSidebar, { type TierFilters, getDefaultTierFilters, applyTierFilters } from '../shared/TierFilterSidebar';
 
 interface Props {
+  /** Full tier map result containing sessions, tables, and connections */
   data: TierMapResult;
 }
 
+/** A group of sessions that share similar table footprints */
 interface DuplicateGroup {
   id: string;
   matchType: 'exact' | 'near' | 'partial';
+  /** Canonical fingerprint string (only meaningful for exact matches) */
   fingerprint: string;
   sessions: Array<{ id: string; name: string; full: string; sources: string[]; targets: string[]; lookups: string[] }>;
+  /** Average Jaccard similarity within the group (1.0 for exact) */
   similarity: number;
 }
 
+/**
+ * Build a canonical fingerprint from a session's sorted source/target/lookup table lists.
+ * Two sessions with identical fingerprints are exact duplicates.
+ */
 function computeFingerprint(s: any): string {
   const sources = [...(s.sources || [])].sort().join(',');
   const targets = [...(s.targets || [])].sort().join(',');
@@ -27,6 +35,10 @@ function computeFingerprint(s: any): string {
   return `${sources}|${targets}|${lookups}`;
 }
 
+/**
+ * Compute Jaccard similarity between two sets: |A intersect B| / |A union B|.
+ * Returns 1 when both sets are empty (vacuous equality).
+ */
 function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
   if (a.size === 0 && b.size === 0) return 1;
   const intersection = new Set([...a].filter(x => b.has(x)));
@@ -34,10 +46,26 @@ function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
   return union.size > 0 ? intersection.size / union.size : 0;
 }
 
+/** Combine all table references (sources + targets + lookups) into a single set for Jaccard comparison. */
 function computeTableSet(s: any): Set<string> {
   return new Set([...(s.sources || []), ...(s.targets || []), ...(s.lookups || [])]);
 }
 
+/**
+ * DuplicatePipelines -- detects and displays duplicate/near-duplicate ETL sessions
+ * using a 3-phase matching algorithm:
+ *
+ *   Phase 1 (Exact):   Group sessions by identical sorted table fingerprints
+ *                       (sources|targets|lookups). Any group with 2+ members is exact.
+ *   Phase 2 (Near):    For remaining sessions, compute pairwise Jaccard similarity
+ *                       on the full table set. Jaccard >= 0.7 = near match.
+ *   Phase 3 (Partial): Jaccard >= 0.4 but < 0.7 = partial match.
+ *
+ * Capped at 2000 sessions for the O(n^2) Jaccard phase to stay interactive.
+ *
+ * Left sidebar: paginated group list with match-type filter tabs (all/exact/near/partial).
+ * Right detail: per-session card showing reads, writes, and lookups.
+ */
 export default function DuplicatePipelines({ data }: Props) {
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
   const [filterType, setFilterType] = useState<'all' | 'exact' | 'near' | 'partial'>('all');

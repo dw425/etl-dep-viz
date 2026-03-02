@@ -71,7 +71,21 @@ def upsert_user(
 
 @router.get("/{user_id}")
 def get_user(user_id: str, db: Session = Depends(get_db)):
-    """Get user profile + aggregate upload stats."""
+    """Get user profile + aggregate upload stats.
+
+    Computes upload_count and total_sessions across all of the user's uploads
+    for the dashboard summary card.
+
+    Args:
+        user_id: The browser-generated UUID.
+        db: SQLAlchemy session (injected).
+
+    Returns:
+        Dict with user_id, display_name, timestamps, upload_count, total_sessions.
+
+    Raises:
+        HTTPException(404): User not found.
+    """
     user = db.query(UserProfile).filter(UserProfile.id == user_id).first()
     if not user:
         raise HTTPException(404, "User not found")
@@ -102,7 +116,16 @@ def get_user_uploads(
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
 ):
-    """List user's uploads with parse_duration_ms."""
+    """List user's uploads (most recent first) with parse_duration_ms.
+
+    Args:
+        user_id: The browser-generated UUID.
+        limit: Max results (1-200, default 50).
+        db: SQLAlchemy session (injected).
+
+    Returns:
+        List of upload summary dicts.
+    """
     rows = (
         db.query(Upload)
         .filter(Upload.user_id == user_id)
@@ -133,7 +156,19 @@ def get_user_activity(
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
 ):
-    """Get activity log for a user."""
+    """Get activity log for a user (most recent first).
+
+    Activity events are logged by the frontend via POST /{user_id}/activity
+    and include actions like 'upload', 'view_change', 'export', etc.
+
+    Args:
+        user_id: The browser-generated UUID.
+        limit: Max results (1-200, default 50).
+        db: SQLAlchemy session (injected).
+
+    Returns:
+        List of activity event dicts with id, action, target_filename, details, created_at.
+    """
     rows = (
         db.query(ActivityLog)
         .filter(ActivityLog.user_id == user_id)
@@ -159,7 +194,16 @@ def log_activity(
     data: dict = Body(...),
     db: Session = Depends(get_db),
 ):
-    """Append an activity event and bump the user's last_active timestamp."""
+    """Append an activity event and bump the user's last_active timestamp.
+
+    Args:
+        user_id: The browser-generated UUID.
+        data: JSON body with 'action' (string), optional 'target_filename', optional 'details' (dict).
+        db: SQLAlchemy session (injected).
+
+    Returns:
+        Dict with logged=True and the new entry's id.
+    """
     entry = ActivityLog(
         user_id=user_id,
         action=data.get("action", "unknown"),

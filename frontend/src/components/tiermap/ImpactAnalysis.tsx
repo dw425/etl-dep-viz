@@ -42,6 +42,11 @@ interface Props {
 const DEPTH_COLORS = ['#3B82F6', '#A855F7', '#F59E0B', '#EF4444', '#10B981', '#EC4899', '#F97316', '#06B6D4'];
 const ITEMS_PER_GROUP = 50;
 
+/**
+ * ImpactAnalysis -- forward-trace impact analysis view. Given a source session,
+ * displays all downstream sessions and tables affected by a failure, grouped by
+ * hop depth. Uses progressive "show more" expansion per depth group.
+ */
 export default function ImpactAnalysis({ tierData, selectedSession, onSessionSelect }: Props) {
   const [sessionId, setSessionId] = useState(selectedSession || '');
   const [impactData, setImpactData] = useState<ImpactData | null>(null);

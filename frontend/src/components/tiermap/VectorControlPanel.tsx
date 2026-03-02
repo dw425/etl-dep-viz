@@ -22,6 +22,15 @@ const PHASE_LABELS: Record<number, { label: string; desc: string; vectors: strin
   3: { label: 'Full', desc: '+ V5 Affinity + V6 Spectral + V7 HDBSCAN + V8 Ensemble', vectors: 'V1-V11' },
 };
 
+/**
+ * VectorControlPanel -- phase selector for running vector analysis (1/2/3).
+ * Shows phase descriptions, a "Run" button with loading spinner, and a
+ * loaded-vectors status list with per-vector timing readout.
+ *
+ * Phase 1 (Core): V1 Community + V4 Waves + V11 Complexity
+ * Phase 2 (Advanced): + V2 Lineage + V3 UMAP + V9 Cascade + V10 Concentration
+ * Phase 3 (Full): + V5 Affinity + V6 Spectral + V7 HDBSCAN + V8 Ensemble
+ */
 export default function VectorControlPanel({ tierData, vectorResults, onVectorResults, uploadId, onToast }: Props) {
   const [phase, setPhase] = useState<1 | 2 | 3>(1);
   const [loading, setLoading] = useState(false);

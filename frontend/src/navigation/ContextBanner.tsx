@@ -6,6 +6,11 @@
 import React from 'react';
 import { useNavigationContext } from './NavigationProvider';
 
+/**
+ * Renders a per-layer summary strip below the breadcrumb, showing key statistics
+ * for the current navigation context (e.g. session count, wave count at L1;
+ * group name at L2; scope at L3; session name at L4).
+ */
 export default function ContextBanner() {
   const { currentLayer, vectorResults, tierData, currentParams } = useNavigationContext();
 
@@ -68,6 +73,7 @@ export default function ContextBanner() {
   );
 }
 
+/** Inline label: value stat pair used within the banner. */
 function Stat({ label, value }: { label: string; value: string | number }) {
   return (
     <span>

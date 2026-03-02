@@ -2,6 +2,21 @@
 
 Provides a toggle between technical names and business-friendly labels
 for sessions, tables, and domains across all 6 navigation layers.
+
+Usage:
+  1. Load mappings from a JSON upload or API call into SemanticConfig.
+  2. Create SemanticToggle(config).
+  3. Call translate_session/translate_table/translate_domain for individual lookups,
+     or apply_to_tier_data() to enrich an entire tier_data dict with business_name
+     fields (non-destructive: adds fields, does not replace technical names).
+
+Mapping Categories:
+  - domain_labels:        V2 hierarchical domain IDs -> business domain names
+  - table_glossary:       table names (case-insensitive) -> business descriptions
+  - session_descriptions: session names -> business process descriptions
+  - system_labels:        system IDs (from infrastructure.py) -> display names
+
+Unmapped names pass through unchanged (identity translation).
 """
 
 from __future__ import annotations

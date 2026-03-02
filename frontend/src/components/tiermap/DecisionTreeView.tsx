@@ -1,18 +1,35 @@
 /**
- * DecisionTreeView — Single-session deep dive showing logical execution flow
- * as a visual decision tree.
+ * DecisionTreeView -- Single-session deep dive rendering the Informatica mapping
+ * as a visual decision tree (DAG) using D3 tree layout.
+ *
+ * @description
+ * Shows the internal structure of one ETL session: sources, transforms, routers,
+ * filters, joiners, lookups, aggregators, and targets arranged left-to-right as
+ * a tree. Each node is shape/color-coded by type. Clicking a node shows its
+ * fields, expressions, conditions, and metadata in a detail panel.
  *
  * Layout (three-panel):
- *   Left  (240px) — Session picker with search, tier badge, complexity badge, transform count
+ *   Left  (240px) — Session picker with search, tier/complexity badges, transform count
  *   Center (flex)  — SVG decision tree with D3 zoom/pan, horizontal left-to-right flow
- *   Right (280px)  — Node detail panel: click any tree node to see full details
+ *   Right (280px)  — Node detail panel: fields, expressions, join/filter conditions
  *
- * Data flow:
- *   1. Sessions from tierData listed and filtered by search (capped at 50)
- *   2. Selecting a session calls getFlowData() to fetch mapping detail
- *   3. buildDecisionTree() constructs a DAG from instances + connectors
- *   4. D3 tree layout renders nodes by type with shape/color coding
- *   5. Click/hover interactions populate the right detail panel
+ * Tree construction algorithm (buildDecisionTree):
+ *   1. Parse instances from mapping_detail, classify each by type
+ *   2. Build a directed edge list from connectors (from_instance → to_instance)
+ *   3. Topological sort via Kahn's algorithm to determine execution order
+ *   4. Group source instances into a virtual root; connect transforms via edges
+ *   5. Attach orphan nodes (no parents) to the nearest upstream by topo order
+ *   6. D3 d3.tree() computes the (x,y) layout; SVG renders nodes and curved links
+ *
+ * Node types and their visual encoding:
+ *   source_group — green circle   | transform — blue rounded-rect
+ *   router       — amber diamond  | filter    — orange triangle
+ *   joiner       — purple hexagon | lookup    — cyan pentagon
+ *   aggregator   — pink octagon   | target    — red square
+ *
+ * @param tierData - Full TierMapResult for session listing
+ * @param vectorResults - Optional vector data for complexity badges
+ * @param uploadId - Current upload ID for API calls
  */
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
@@ -159,7 +176,20 @@ function topoSort(nodeIds: string[], edges: { from: string; to: string }[]): str
   return sorted;
 }
 
-/** Build the decision tree from mapping_detail data */
+/**
+ * Build a tree structure from the Informatica mapping_detail.
+ *
+ * Steps:
+ *   1. Create TreeNodes from each instance, classifying by type
+ *   2. Deduplicate connectors into instance-level edges
+ *   3. Collapse multiple source instances into grouped source nodes
+ *   4. Topological sort (Kahn's) to assign execution order
+ *   5. Wire children based on edge direction; attach orphans
+ *   6. Return virtual root containing the full tree
+ *
+ * @param md - Raw mapping_detail object from the flow API
+ * @returns Root TreeNode, or null if no instances exist
+ */
 function buildDecisionTree(md: Record<string, unknown>): TreeNode | null {
   const instances = (md.instances as Record<string, unknown>[]) || [];
   const connectors = (md.connectors as Record<string, unknown>[]) || [];

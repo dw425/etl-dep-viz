@@ -7,32 +7,53 @@
 import React, { useMemo, useState } from 'react';
 import { useNavigationContext } from '../navigation/NavigationProvider';
 
+/** A single instance (source, target, transform, lookup, or mapplet) within a mapping. */
 interface Instance {
+  /** Instance name as it appears in the workflow XML. */
   name: string;
+  /** High-level type: "source", "target", "mapplet", or transformation category. */
   type: string;
+  /** Name of the underlying transformation definition. */
   transformation_name: string;
+  /** Transformation subtype (e.g. "Expression", "Lookup Procedure", "Filter"). */
   transformation_type: string;
 }
 
+/** A field-level connector between two instances (column lineage edge). */
 interface Connector {
+  /** Source instance name. */
   from_instance: string;
+  /** Source field/port name. */
   from_field: string;
+  /** Target instance name. */
   to_instance: string;
+  /** Target field/port name. */
   to_field: string;
 }
 
+/** A field (port) within a transformation, with optional expression logic. */
 interface TransformField {
+  /** Parent transformation name. */
   transform: string;
+  /** Field/port name. */
   name: string;
+  /** Data type (e.g. "string", "integer", "decimal"). */
   datatype: string;
+  /** Precision/scale string (e.g. "10,2"). */
   precision: string;
+  /** Informatica expression text (empty for passthrough ports). */
   expression: string;
+  /** Port type: "INPUT", "OUTPUT", "INPUT/OUTPUT", "LOOKUP/OUTPUT". */
   porttype: string;
 }
 
+/** Full mapping detail extracted from the Informatica deep parse. */
 interface MappingDetail {
+  /** All instances in the mapping (sources, targets, transforms, lookups). */
   instances: Instance[];
+  /** Field-level connectors between instances (column lineage). */
   connectors: Connector[];
+  /** All ports/fields across all transformations. */
   fields: TransformField[];
 }
 
@@ -44,6 +65,7 @@ const TYPE_COLORS: Record<string, { bg: string; border: string; text: string; la
   mapplet:   { bg: 'bg-cyan-500/10',   border: 'border-cyan-500/30',   text: 'text-cyan-400',   label: 'MAPPLET' },
 };
 
+/** Classifies an instance into one of: source, target, mapplet, lookup, or transform. */
 function getNodeType(inst: Instance): string {
   const t = inst.type?.toLowerCase() || '';
   const tt = inst.transformation_type?.toLowerCase() || '';
@@ -54,6 +76,11 @@ function getNodeType(inst: Instance): string {
   return 'transform';
 }
 
+/**
+ * Vertical pipeline view for a single session's mapping: Source (green) ->
+ * Transforms (blue chain) -> Target (purple), with Lookups branching off (orange).
+ * Each instance is expandable to show fields, expressions, and column lineage connectors.
+ */
 export default function L5_MappingPipeline() {
   const { currentParams, tierData, drillUp, drillDown } = useNavigationContext();
   const sessionId = currentParams.sessionId || '';
@@ -167,6 +194,7 @@ export default function L5_MappingPipeline() {
   );
 }
 
+/** Dashed vertical arrow separating pipeline sections. */
 function Arrow() {
   return (
     <div className="flex justify-center">
@@ -177,6 +205,7 @@ function Arrow() {
   );
 }
 
+/** Renders a group of same-type instances (sources, transforms, targets, or lookups). */
 function PipelineSection({
   label, items, color, expandedNode, setExpandedNode, getFields, getConnections, showLineage,
 }: {

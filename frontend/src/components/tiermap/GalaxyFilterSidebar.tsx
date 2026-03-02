@@ -49,6 +49,7 @@ const TABLE_TYPES: { key: string; label: string; color: string }[] = [
   { key: 'source', label: 'Source', color: '#10B981' },
 ];
 
+/** Build default GalaxyFilters from the data: all tiers, all connection types, full transform range, all table types enabled. */
 export function getDefaultFilters(data: TierMapResult): GalaxyFilters {
   const tiers = new Set(data.sessions.map(s => s.tier));
   const connTypes = new Set(data.connections.map(c => c.type));
@@ -67,6 +68,7 @@ export function getDefaultFilters(data: TierMapResult): GalaxyFilters {
   };
 }
 
+/** Apply GalaxyFilters to a TierMapResult, returning a new result with only matching sessions, connections, and tables. */
 export function applyGalaxyFilters(data: TierMapResult, filters: GalaxyFilters): TierMapResult {
   let sessions = data.sessions.filter(s => {
     if (!filters.tiers.has(s.tier)) return false;
@@ -96,6 +98,13 @@ export function applyGalaxyFilters(data: TierMapResult, filters: GalaxyFilters):
   return { ...data, sessions, tables, connections };
 }
 
+/**
+ * GalaxyFilterSidebar -- full filter/slicer sidebar for the Galaxy Map view.
+ * Provides collapsible sections for tier filter, connection type filter, session
+ * filters (conflicts only, min transforms, min connections), table type filter,
+ * and display toggles (show edges, show labels). Renders as a compact "Filters (N/M)"
+ * button when collapsed, and a 260px-wide glass-effect sidebar when expanded.
+ */
 export default function GalaxyFilterSidebar({ data, filters, onFiltersChange, visible, onToggle }: Props) {
   const [expandedSections, setExpandedSections] = useState<Set<string>>(
     new Set(['tiers', 'connections', 'sessions'])
@@ -388,6 +397,7 @@ export default function GalaxyFilterSidebar({ data, filters, onFiltersChange, vi
   );
 }
 
+/** Collapsible filter section with uppercase title header and expand/collapse chevron. */
 function FilterSection({ title, expanded, onToggle, children }: {
   title: string; expanded: boolean; onToggle: () => void; children: React.ReactNode;
 }) {
@@ -410,6 +420,7 @@ function FilterSection({ title, expanded, onToggle, children }: {
   );
 }
 
+/** Pill-shaped toggle switch with label (used for show edges / show labels display options). */
 function ToggleOption({ label, active, onChange }: { label: string; active: boolean; onChange: () => void }) {
   return (
     <div

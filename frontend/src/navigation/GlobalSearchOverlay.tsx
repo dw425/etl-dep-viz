@@ -8,20 +8,33 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import type { TierMapResult, TierSession, TierTable } from '../types/tiermap';
 
+/** A single match in the global search results. */
 interface SearchResult {
+  /** Object category: session, table, or view. */
   type: 'session' | 'table' | 'view';
+  /** Unique identifier for routing/selection. */
   id: string;
+  /** Display name shown in the results list. */
   label: string;
+  /** Secondary detail text (e.g. "Tier 3 | 5R 2L"). */
   detail: string;
+  /** Tier level for sessions and tables (used for visual hints). */
   tier?: number;
 }
 
+/** Props for the GlobalSearchOverlay component. */
 interface GlobalSearchOverlayProps {
+  /** Whether the overlay is visible. */
   open: boolean;
+  /** Callback to close the overlay (Esc, backdrop click). */
   onClose: () => void;
+  /** Current tier data for searching sessions and tables. */
   data?: TierMapResult | null;
+  /** Callback when a session result is selected. */
   onSelectSession?: (sessionId: string) => void;
+  /** Callback when a table result is selected. */
   onSelectTable?: (tableName: string) => void;
+  /** Callback when a view result is selected. */
   onSelectView?: (viewId: string) => void;
 }
 
@@ -37,6 +50,12 @@ const VIEW_OPTIONS = [
   { id: 'waves', label: 'Wave Plan', detail: 'Migration wave planning' },
 ];
 
+/**
+ * Ctrl+K-style global search overlay used from DependencyApp.
+ * Shows view shortcuts when empty, and session/table/view matches when typing.
+ * Supports keyboard navigation (arrow keys, Enter, Esc) and mouse selection.
+ * Results are capped at 30 to keep the list manageable.
+ */
 export default function GlobalSearchOverlay({
   open,
   onClose,

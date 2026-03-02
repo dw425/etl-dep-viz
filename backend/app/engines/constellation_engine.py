@@ -1,7 +1,30 @@
 """Constellation Engine — cluster sessions with selectable algorithms.
 
 Produces 2D layout coordinates + chunk metadata for the constellation map view.
-Supports 6 clustering algorithms selectable at runtime.
+Supports 7 clustering algorithms selectable at runtime.
+
+6-Phase Pipeline (build_constellation):
+  A. Fingerprints — build frozenset of all tables per session for Jaccard similarity.
+  B. Similarity Graph — inverted index (table→sessions) to find co-referencing pairs.
+     Edge added when Jaccard(tables_a, tables_b) >= 0.1. Tables referenced by >500
+     sessions are excluded to avoid O(n^2) explosion on ubiquitous tables.
+  C. Clustering — dispatch to selected algorithm (louvain, tier, components,
+     label_prop, greedy_mod, process_group, table_gravity).
+  D. Layout — Fruchterman-Reingold spring layout (NetworkX), normalized to [0,1].
+     For very dense graphs (>200K edges), only the strongest-weight edges are kept.
+  E. Chunk Metadata — per-cluster summary: pivot tables, tier range, conflict/chain
+     counts, color assignment from a 12-color palette.
+  F. Cross-Chunk Edges — detect connections whose endpoints lie in different clusters,
+     used for inter-cluster edge rendering in the frontend.
+
+Algorithms:
+  1. Louvain       — modularity-based, auto-tuned resolution sweep (0.5-4.0)
+  2. Tier Groups   — group by execution tier number
+  3. Components    — natural connected components of the similarity graph
+  4. Label Prop    — async label propagation (fast, semi-random)
+  5. Greedy Mod    — agglomerative greedy modularity maximization
+  6. Process Group — group by NiFi process group / Informatica workflow name
+  7. Table Gravity — cluster around most-referenced anchor tables
 """
 
 from __future__ import annotations
@@ -49,7 +72,11 @@ def build_constellation(
     Args:
         tier_data: Output of infa_engine.analyze() or nifi_tier_engine.analyze().
         algorithm: One of 'louvain', 'tier', 'components', 'label_prop',
-                   'greedy_mod', 'process_group'.
+                   'greedy_mod', 'process_group', 'table_gravity'.
+
+    Returns:
+        Dict with algorithm, chunks[], points[], cross_chunk_edges[], and stats.
+        Each point has (x, y) in [0,1] range for frontend rendering.
     """
     sessions = tier_data.get('sessions', [])
     if not sessions:
@@ -145,7 +172,12 @@ def _build_fingerprints(sessions: list[dict]) -> dict[str, frozenset]:
 
 
 def _build_similarity_graph(fingerprints: dict[str, frozenset]) -> nx.Graph:
-    """Build undirected similarity graph. Edge if Jaccard >= 0.1."""
+    """Build undirected similarity graph via inverted index. Edge if Jaccard >= 0.1.
+
+    Uses an inverted index (table -> sessions) to avoid O(n^2) pairwise comparison.
+    Tables referenced by >max_share sessions are skipped as they create too many
+    edges without adding useful clustering signal (e.g., audit tables).
+    """
     inv: dict[str, set[str]] = defaultdict(set)
     for sid, tables in fingerprints.items():
         for t in tables:
@@ -206,7 +238,12 @@ def _cluster(
 def _cluster_louvain(
     G: nx.Graph, sessions: list[dict], fingerprints: dict[str, frozenset],
 ) -> list[set[str]]:
-    """Louvain community detection with auto-tuned resolution."""
+    """Louvain community detection with auto-tuned resolution.
+
+    Sweeps resolution values [0.5, 0.8, 1.0, 1.3, 1.8, 2.5, 4.0] and picks the
+    first that produces 8-200 clusters, or the closest to 50 if none fit.
+    Singletons are merged into their nearest neighbor's community.
+    """
     if G.number_of_edges() == 0:
         return [{n} for n in G.nodes()]
 
@@ -332,7 +369,15 @@ def _cluster_process_group(
 def _cluster_table_gravity(
     G: nx.Graph, sessions: list[dict], fingerprints: dict[str, frozenset],
 ) -> list[set[str]]:
-    """Cluster sessions around the most commonly referenced tables (gravity anchors)."""
+    """Cluster sessions around the most commonly referenced tables (gravity anchors).
+
+    Steps:
+      1. Rank tables by global reference count.
+      2. Select anchor tables (ref count >= 0.5% of total sessions, up to 100).
+      3. Assign each session to its highest-ranked anchor table.
+      4. Unassigned sessions go to the cluster with most table overlap.
+      5. Tiny clusters (<3 members) merge into nearest large cluster.
+    """
     from collections import Counter
 
     # Step 1: Count global table references across all sessions
@@ -509,7 +554,13 @@ def _compute_layout(
     communities: list[set[str]],
     all_ids: list[str],
 ) -> dict[str, tuple[float, float]]:
-    """Fruchterman-Reingold layout normalized to [0,1]."""
+    """Fruchterman-Reingold spring layout normalized to [0.05, 0.95].
+
+    Iteration count scales inversely with n to keep runtime bounded:
+    50 iters for <1K, 30 for <5K, 15 for <10K, 10 for 10K+.
+    For very dense graphs (>200K edges), only the strongest edges are kept.
+    Nodes missing from the layout (disconnected) are placed near their community centroid.
+    """
     n = len(all_ids)
     iterations = 50 if n < 1000 else 30 if n < 5000 else 15 if n < 10000 else 10
 

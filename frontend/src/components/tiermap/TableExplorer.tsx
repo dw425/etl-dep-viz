@@ -13,14 +13,20 @@ interface Props {
   data: TierMapResult;
 }
 
+/** Aggregated profile for a single table showing all session references. */
 interface TableProfile {
   name: string;
   id: string;
+  /** Table type: 'conflict' | 'chain' | 'independent' | 'source' */
   type: string;
   tier: number;
+  /** Sessions that write to this table */
   writers: string[];
+  /** Sessions that read from this table */
   readers: string[];
+  /** Sessions that use this table as a lookup */
   lookupUsers: string[];
+  /** Total reference count (writers + readers + lookupUsers) */
   totalRefs: number;
 }
 
@@ -31,6 +37,12 @@ const TYPE_COLORS: Record<string, string> = {
   source: '#10B981',
 };
 
+/**
+ * TableExplorer -- table-centric explorer view. Left sidebar shows top 100
+ * tables ranked by total reference count (readers + writers + lookups).
+ * Right detail panel shows per-table breakdown: writers, readers, and
+ * lookup users, with conflict badges for write-write conflicts.
+ */
 export default function TableExplorer({ data }: Props) {
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -188,6 +200,7 @@ export default function TableExplorer({ data }: Props) {
   );
 }
 
+/** Compact count badge (e.g., "3R", "2W", "1L") with color coding. */
 function Badge({ count, label, color }: { count: number; label: string; color: string }) {
   return (
     <span style={{ fontSize: 9, padding: '2px 5px', borderRadius: 4, background: `${color}15`, color, fontWeight: 600 }}>
@@ -205,6 +218,7 @@ function Stat({ label, value, color }: { label: string; value: string; color?: s
   );
 }
 
+/** Expandable list of session references for a given relationship type (writes/reads/lookups). */
 function RefSection({ label, icon, color, items }: { label: string; icon: string; color: string; items: string[] }) {
   if (items.length === 0) return null;
   return (

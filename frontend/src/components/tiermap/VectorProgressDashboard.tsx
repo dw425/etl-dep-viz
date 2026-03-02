@@ -45,6 +45,15 @@ const VECTOR_NAMES: Record<string, string> = {
   v11_complexity: 'V11 Complexity Scoring',
 };
 
+/**
+ * VectorProgressDashboard -- timing waterfall for the 3-phase vector analysis
+ * pipeline. Groups vectors by phase (Core / Advanced / Ensemble) and renders
+ * a proportional bar for each vector's elapsed time, color-coded by phase.
+ * Shows summary counts (completed / 11) and total elapsed time.
+ *
+ * If no explicit `analysisTimings` are passed, timing data is derived from
+ * the `_elapsed_ms` property on each vector result object.
+ */
 export default function VectorProgressDashboard({
   vectorResults,
   analysisTimings,

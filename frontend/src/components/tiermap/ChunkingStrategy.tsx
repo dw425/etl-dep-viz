@@ -50,6 +50,12 @@ const CATEGORY_LABELS: Record<string, { label: string; color: string }> = {
   custom: { label: 'Custom', color: '#F59E0B' },
 };
 
+/**
+ * ChunkingStrategy -- data harmonization screen where users choose a
+ * clustering algorithm (Louvain, tier-based, table gravity, etc.) before
+ * proceeding to constellation visualization. Also provides one-click
+ * triggers for vector analysis (Phase 1) and AI index building.
+ */
 export default function ChunkingStrategy({ tierData, constellation, vectorResults, uploadId, onRecluster, onProceed, onVectorResults }: Props) {
   const [selected, setSelected] = useState<AlgorithmKey>('louvain');
   const [loading, setLoading] = useState(false);
@@ -252,6 +258,7 @@ export default function ChunkingStrategy({ tierData, constellation, vectorResult
   );
 }
 
+/** Centered stat card with large number and small label. */
 function StatCard({ label, value }: { label: string; value: number }) {
   return (
     <div style={{ padding: '10px 16px', borderRadius: 8, background: '#111827', border: '1px solid #1e293b', textAlign: 'center' }}>

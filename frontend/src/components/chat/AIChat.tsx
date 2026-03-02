@@ -11,37 +11,66 @@ import { chatIndexStatus, chatIndexUpload, chatQuery, chatReindex } from '../../
 
 /* ── Types ──────────────────────────────────────────────────────────────── */
 
+/** A single message in the chat conversation history. */
 interface ChatMessage {
+  /** Message author: "user" or "assistant". */
   role: 'user' | 'assistant';
+  /** Message text content. */
   content: string;
+  /** AI-classified intent of the question (e.g. "complexity_query", "lineage_query"). */
   intent?: string;
+  /** Sessions referenced in the AI response (shown in the right panel). */
   referenced_sessions?: SessionRef[];
+  /** Tables referenced in the AI response (shown in the right panel). */
   referenced_tables?: TableRef[];
+  /** Follow-up question suggestions from the AI. */
   suggested_questions?: string[];
+  /** ISO timestamp of when the message was created. */
   timestamp: string;
 }
 
+/** A session referenced by an AI response, displayed in the right context panel. */
 interface SessionRef {
+  /** Full session name (e.g. "wf_DAILY_LOAD.s_FACT_ORDERS"). */
   name: string;
+  /** Short session name for display (e.g. "s_FACT_ORDERS"). */
   short_name: string;
+  /** Tier level (1-5). */
   tier: number;
+  /** V11 complexity score (0-100), if available. */
   complexity?: number;
 }
 
+/** A table referenced by an AI response, displayed in the right context panel. */
 interface TableRef {
+  /** Table name (e.g. "DW_OWNER.FACT_ORDERS"). */
   name: string;
+  /** Table type: "conflict", "chain", "independent", "source". */
   type: string;
 }
 
+/** Props for the AIChat component. */
 interface AIChatProps {
+  /** Current upload ID (null if no upload loaded). */
   uploadId: number | null;
+  /** Current tier data (null if no data loaded). */
   tierData: TierMapResult | null;
+  /** Callback to navigate to a view with params (e.g. explorer with session filter). */
   onNavigate?: (view: string, params: Record<string, unknown>) => void;
+  /** Callback to show a toast notification. */
   onToast?: (message: string, severity: 'error' | 'warning' | 'info' | 'success') => void;
 }
 
 /* ── Component ──────────────────────────────────────────────────────────── */
 
+/**
+ * Main AI chat interface with a two-panel layout:
+ * - Left: conversation panel with message history, typing indicator, input bar, and starter questions
+ * - Right: context sidebar showing sessions/tables referenced by the last AI response
+ *
+ * Workflow: upload must be indexed first (chatIndexUpload), then the user can ask questions
+ * which are answered via RAG (chatQuery). Re-indexing with vector data enriches responses.
+ */
 export default function AIChat({ uploadId, tierData, onNavigate, onToast }: AIChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -56,6 +85,7 @@ export default function AIChat({ uploadId, tierData, onNavigate, onToast }: AICh
     if (uploadId) checkIndexStatus();
   }, [uploadId]);
 
+  /** Checks whether the current upload has been indexed and updates local state. */
   async function checkIndexStatus() {
     if (!uploadId) return;
     try {
@@ -67,6 +97,7 @@ export default function AIChat({ uploadId, tierData, onNavigate, onToast }: AICh
     }
   }
 
+  /** Triggers the AI vector index build for the current upload. */
   async function buildIndex() {
     if (!uploadId) return;
     setIndexing(true);
@@ -96,6 +127,7 @@ export default function AIChat({ uploadId, tierData, onNavigate, onToast }: AICh
     }
   }
 
+  /** Sends the current input as a user message and fetches the AI response. */
   async function sendMessage() {
     if (!input.trim() || !uploadId || loading) return;
 

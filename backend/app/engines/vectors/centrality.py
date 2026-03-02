@@ -1,6 +1,14 @@
 """Centrality metrics — PageRank, betweenness, degree, k-core.
 
 Computes composite importance scores for semantic zoom filtering.
+Used to rank sessions by structural importance in the dependency graph,
+enabling the frontend to progressively reveal nodes as users zoom in.
+
+Composite Score Formula (weighted average of 4 normalized metrics):
+  0.35 * PageRank        — probability of random walk visiting this node
+  0.25 * Betweenness     — fraction of shortest paths passing through this node
+  0.20 * Degree          — fraction of total nodes this node connects to
+  0.20 * K-Core          — deepest core decomposition layer containing this node
 """
 
 from __future__ import annotations
@@ -21,8 +29,13 @@ def compute_centrality_metrics(
 ) -> dict[str, Any]:
     """Compute centrality metrics for each session.
 
+    Args:
+        adjacency: Sparse CSR adjacency matrix from FeatureMatrixBuilder.
+        session_ids: Ordered session ID list matching matrix row indices.
+
     Returns:
-        Dict with per-metric session scores and a composite importance score.
+        Dict with 'metrics' (per-metric raw scores keyed by session_id)
+        and 'composite' (weighted importance score per session_id, 0-1 range).
     """
     if sparse is None:
         raise ImportError("scipy is required for compute_centrality_metrics. Install it with: pip install scipy")

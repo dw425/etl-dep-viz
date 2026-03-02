@@ -1,6 +1,23 @@
 /**
- * ConcentrationView — gravity groups as supernodes with independent sessions zone.
- * Shows group profiles with cohesion/coupling metrics.
+ * ConcentrationView -- V10 Concentration analysis results viewer.
+ *
+ * Visualizes gravity groups (clusters of tightly coupled sessions) and
+ * independent sessions (safe to migrate without coordination).
+ *
+ * Layout:
+ *   Top     — summary stats: group count, independent count, optimal K, silhouette score
+ *   Left    — selectable group list + independent sessions toggle
+ *   Right   — GroupProfile (metrics, core tables, session list) or IndependentList
+ *
+ * Key concepts:
+ *   - Gravity group: sessions clustered by shared table dependencies (V10 engine)
+ *   - Medoid: the most central session in a group
+ *   - Cohesion: intra-group similarity (higher = tighter cluster)
+ *   - Coupling: inter-group dependency (lower = more isolated)
+ *   - Independent sessions: "full" (no shared deps) or "partial" (weak deps)
+ *
+ * @param concentration  - V10 result with gravity_groups, independent_sessions, silhouette
+ * @param onSessionSelect - Callback when a session is clicked in the group or independent list
  */
 
 import React, { useState } from 'react';
@@ -16,6 +33,13 @@ interface Props {
   onSessionSelect?: (sessionId: string) => void;
 }
 
+/**
+ * ConcentrationView -- V10 concentration analysis results viewer. Displays
+ * gravity groups (clusters of tightly coupled sessions) and independent
+ * sessions (safe to migrate without coordination). Left panel shows a
+ * selectable group list; right panel shows GroupProfile (metrics, core
+ * tables, session list) or IndependentList depending on selection.
+ */
 export default function ConcentrationView({ concentration, onSessionSelect }: Props) {
   const [selectedGroup, setSelectedGroup] = useState<number | null>(null);
   const [showIndependent, setShowIndependent] = useState(false);
@@ -86,6 +110,7 @@ export default function ConcentrationView({ concentration, onSessionSelect }: Pr
   );
 }
 
+/** Detail card for a single gravity group: session count, cohesion, coupling, core tables, and clickable session list. */
 function GroupProfile({ group, colorIdx, onSessionSelect }: { group: GravityGroup; colorIdx: number; onSessionSelect?: (sid: string) => void }) {
   return (
     <div className="space-y-3">
@@ -140,6 +165,7 @@ function GroupProfile({ group, colorIdx, onSessionSelect }: { group: GravityGrou
   );
 }
 
+/** Scrollable list of independent sessions with independence type badge (full/partial) and confidence percentage. */
 function IndependentList({ sessions, onSessionSelect }: { sessions: IndependentSession[]; onSessionSelect?: (sid: string) => void }) {
   return (
     <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
@@ -168,6 +194,7 @@ function IndependentList({ sessions, onSessionSelect }: { sessions: IndependentS
   );
 }
 
+/** Compact stat badge showing a large value and small label (used in the summary bar). */
 function SumStat({ label, value }: { label: string; value: number | string }) {
   return (
     <div>

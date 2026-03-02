@@ -7,15 +7,23 @@
 
 import { useCallback, useEffect, useRef } from 'react';
 
+/** Subset of app state that is reflected in URL query parameters for deep linking. */
 export interface UrlState {
+  /** Current view ID (e.g. "tier", "galaxy", "explorer"). */
   view?: string;
+  /** Upload ID for restoring a specific dataset. */
   upload?: string;
+  /** Layer number (1-6) for the progressive disclosure system. */
   layer?: string;
+  /** Session ID for direct session navigation. */
   session?: string;
+  /** Active search query text. */
   search?: string;
+  /** Chunk selector state. */
   chunk?: string;
 }
 
+/** Reads the current URL query parameters and extracts known state keys. */
 function parseUrlState(): UrlState {
   const params = new URLSearchParams(window.location.search);
   const state: UrlState = {};
@@ -28,6 +36,7 @@ function parseUrlState(): UrlState {
   return state;
 }
 
+/** Constructs a URL string from a UrlState object. Returns bare pathname if no params. */
 function buildUrl(state: UrlState): string {
   const params = new URLSearchParams();
   if (state.view) params.set('view', state.view);
@@ -40,6 +49,12 @@ function buildUrl(state: UrlState): string {
   return qs ? `?${qs}` : window.location.pathname;
 }
 
+/**
+ * Hook that syncs application state with URL query parameters for deep linking.
+ * Reads initial state from the URL on mount and listens for popstate (back/forward).
+ * Provides updateUrl() to push state changes to the URL without page reload.
+ * @param onStateChange - Optional callback invoked when URL state changes via browser navigation
+ */
 export function useUrlState(
   onStateChange?: (state: UrlState) => void,
 ) {

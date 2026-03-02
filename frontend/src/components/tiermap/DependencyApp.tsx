@@ -1,12 +1,33 @@
 /**
- * DependencyApp — Master layout with 15-view tab bar, file upload, persistence,
- * vector analysis, 6-layer navigation, drill-through, and export.
+ * DependencyApp -- Top-level application shell orchestrating 25 views, file upload,
+ * vector analysis, 6-layer navigation, drill-through filtering, and data export.
+ *
+ * @description
+ * This is the root component for the entire ETL dependency visualization app.
+ * It manages all top-level state (tier data, constellation, vectors, project,
+ * upload, theme) and delegates rendering to lazy-loaded view components.
  *
  * Layout:
- *   Top bar    — tab navigation, right-panel toggles, upload/export actions
- *   Stats bar  — session/table/conflict counts from parsed data
- *   Main area  — active view (left) + optional right sidebar panel
- *   Overlays   — help modal, log viewer modal, onboarding tour
+ *   Top bar    — 4-section tab strip (Core | Harmonize | Vector | Nav),
+ *                right-panel toggles (Vectors, Drill, Export), upload actions
+ *   Stats bar  — session/table/conflict/connection counts from parsed data
+ *   Main area  — active view component (left) + optional right sidebar panel
+ *   Overlays   — help modal, log viewer, parse progress, onboarding tour
+ *
+ * Data lifecycle:
+ *   1. User uploads XML/ZIP → SSE stream parses files → TierMapResult stored
+ *   2. TierMapResult is passed to all core views (tier, galaxy, explorer, etc.)
+ *   3. User runs constellation analysis → ConstellationResult stored
+ *   4. User runs vector analysis (3-phase) → VectorResults stored
+ *   5. Vector views consume VectorResults; drill-through panel cross-filters
+ *
+ * Persistence:
+ *   - localStorage: last upload ID, last view, theme, project ID, pinned sessions
+ *   - URL state: synced via useUrlState for shareable deep links
+ *   - SQLite (via API): parsed data, vector results, projects
+ *
+ * @see VIEWS array for the complete list of tab definitions
+ * @see ViewId type for all valid tab identifiers
  */
 
 import { lazy, Suspense, useState, useCallback, useEffect, useRef, useMemo } from 'react';

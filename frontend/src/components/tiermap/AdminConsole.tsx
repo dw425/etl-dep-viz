@@ -24,6 +24,13 @@ interface AdminConsoleProps {
   onLoadUpload?: (uploadId: number) => void;
 }
 
+/**
+ * AdminConsole -- project and upload management dashboard.
+ *
+ * Displays all projects with their uploads, plus orphan uploads not belonging
+ * to any project. Supports cascade delete (project -> uploads -> analysis data)
+ * and a "Clear All Data" nuclear option. Stats bar shows aggregate counts.
+ */
 export default function AdminConsole({ onToast, onLoadUpload }: AdminConsoleProps) {
   const [projects, setProjects] = useState<ProjectDetail[]>([]);
   const [orphanUploads, setOrphanUploads] = useState<UploadSummary[]>([]);
@@ -292,6 +299,7 @@ export default function AdminConsole({ onToast, onLoadUpload }: AdminConsoleProp
   );
 }
 
+/** Colored stat badge for the summary bar. */
 function Stat({ label, value, color }: { label: string; value: number; color: string }) {
   return (
     <div>
@@ -301,6 +309,7 @@ function Stat({ label, value, color }: { label: string; value: number; color: st
   );
 }
 
+/** Single upload row with filename, metadata, and Load/Delete action buttons. */
 function UploadRow({ upload, onLoad, onDelete }: {
   upload: { id: number; filename: string; platform?: string; session_count: number; created_at: string | null };
   onLoad: () => void;

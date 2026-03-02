@@ -132,12 +132,29 @@ class ComplexityAnalysisResult:
 
 
 class ComplexityAnalyzer:
-    """V11: 8-dimension complexity analysis for ETL sessions."""
+    """V11: 8-dimension complexity analysis for ETL sessions.
+
+    Pipeline:
+      1. Extract raw dimension values (D1-D8) for each session from SessionFeatures.
+      2. Percentile-normalize each dimension across the population (outlier-resistant).
+      3. Compute weighted composite score (0-100) using configurable dimension weights.
+      4. Assign bucket (Simple/Medium/Complex/Very Complex) and hours estimate.
+      5. Aggregate stats: mean, median, std dev, bucket distribution, total hours.
+    """
 
     def __init__(self, config: ComplexityConfig | None = None):
         self.config = config or ComplexityConfig()
 
     def run(self, features: list[SessionFeatures]) -> ComplexityAnalysisResult:
+        """Score all sessions across 8 complexity dimensions.
+
+        Args:
+            features: Per-session feature vectors from FeatureMatrixBuilder.
+
+        Returns:
+            ComplexityAnalysisResult with per-session scores, bucket distribution,
+            aggregate stats, and total hours estimates.
+        """
         if not features:
             return ComplexityAnalysisResult()
 

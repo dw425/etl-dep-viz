@@ -8,6 +8,7 @@ import { useNavigation, type NavigationState } from './useNavigation';
 import type { TierMapResult } from '../types/tiermap';
 import type { VectorResults, DrillFilter } from '../types/vectors';
 
+/** Full context shape provided to all children via useNavigationContext(). */
 interface NavigationContextType extends NavigationState {
   drillDown: (layer: number, params?: Record<string, string>) => void;
   drillUp: () => void;
@@ -30,6 +31,11 @@ interface ProviderProps {
   onVectorResults?: (data: VectorResults) => void;
 }
 
+/**
+ * Top-level provider that composes the useNavigation hook with tier data and vector results state.
+ * Syncs from parent props when initial values change, and propagates vector result updates
+ * upward via onVectorResults callback.
+ */
 export function NavigationProvider({ children, initialTierData, initialVectorResults, onVectorResults }: ProviderProps) {
   const nav = useNavigation();
   const [tierData, setTierData] = React.useState<TierMapResult | null>(initialTierData ?? null);
@@ -59,6 +65,10 @@ export function NavigationProvider({ children, initialTierData, initialVectorRes
   );
 }
 
+/**
+ * Hook to consume the NavigationContext. Must be called within a NavigationProvider.
+ * @throws Error if called outside of NavigationProvider
+ */
 export function useNavigationContext() {
   const ctx = useContext(NavigationContext);
   if (!ctx) throw new Error('useNavigationContext must be used within NavigationProvider');

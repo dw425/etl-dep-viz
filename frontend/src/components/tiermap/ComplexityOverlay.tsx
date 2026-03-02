@@ -1,6 +1,21 @@
 /**
- * ComplexityOverlay — color-coded complexity badges on tier diagram sessions.
- * Shows score card with 8-dimension breakdown and bucket distribution bar chart.
+ * ComplexityOverlay -- V11 complexity analysis results viewer.
+ *
+ * Displays the output of the V11 Complexity Scoring vector engine:
+ *   1. Bucket distribution bar — proportional segments for Simple/Medium/Complex/Very Complex
+ *   2. Aggregate stats — mean, median, std dev, estimated migration hours
+ *   3. Selected session detail — 8-dimension breakdown (D1-D8) with normalized bar charts
+ *   4. Session list — sortable by score or name, color-coded by bucket
+ *
+ * The 8 complexity dimensions are:
+ *   D1 Transform Volume, D2 Diversity, D3 Risk, D4 IO Volume,
+ *   D5 Lookup Intensity, D6 Coupling, D7 Structural Depth, D8 External Reads
+ *
+ * Dimension bars use a 4-tier color scale: green (<25) -> amber -> orange -> red (>75).
+ *
+ * @param complexity       - V11 complexity result containing scores and distribution
+ * @param selectedSessionId - Currently selected session (highlights in list + shows detail)
+ * @param onSessionSelect  - Callback when user clicks a session row
  */
 
 import React, { useMemo, useState } from 'react';

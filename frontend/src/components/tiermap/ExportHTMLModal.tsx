@@ -34,6 +34,13 @@ interface Props {
   };
 }
 
+/**
+ * ExportHTMLModal -- modal dialog for selecting which views to include in a
+ * self-contained HTML report export. Shows a 2-column checkbox grid of available
+ * views (some gated by data availability), with Select All / Deselect All toggle
+ * and a count-aware Export button. Views requiring constellation or complexity
+ * data are disabled (greyed out with "no data" label) when that data is absent.
+ */
 export default function ExportHTMLModal({ onExport, onClose, hasConstellation, hasComplexity, theme: T }: Props) {
   const [selected, setSelected] = useState<Set<string>>(() => {
     const initial = new Set<string>();

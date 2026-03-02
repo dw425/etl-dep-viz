@@ -10,6 +10,12 @@ interface Props {
   onRemove?: (tagId: string) => void;
 }
 
+/**
+ * Renders a small colored pill badge for an active tag.
+ * Shows the tag label and an optional "x" remove button.
+ * @param tag - The ActiveTag to display
+ * @param onRemove - Optional callback to delete the tag (shows remove button when provided)
+ */
 export default function TagBadge({ tag, onRemove }: Props) {
   const bgColor = tag.color ? `${tag.color}20` : '#3B82F620';
   const textColor = tag.color ?? '#3B82F6';

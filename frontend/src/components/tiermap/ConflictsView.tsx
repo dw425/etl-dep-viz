@@ -14,28 +14,44 @@ import {
 } from './constants';
 import TierFilterSidebar, { type TierFilters, getDefaultTierFilters, applyTierFilters } from '../shared/TierFilterSidebar';
 
+/** Number of items per "page" for progressive loading of conflict/chain lists */
 const PAGE_SIZE = 100;
 
 interface Props {
+  /** Full tier map result containing sessions, tables, and connections */
   data: TierMapResult;
 }
 
+/**
+ * ConflictsView displays two categories of data quality issues:
+ * 1. Write-Write Conflicts -- tables targeted by multiple sessions (potential race conditions)
+ * 2. Read-After-Write Chains -- tables where readers depend on writer output (ordering constraints)
+ *
+ * Both sections use progressive "show more" pagination to avoid rendering thousands of DOM nodes.
+ */
 const ConflictsView: React.FC<Props> = ({ data }) => {
   const [tierFilters, setTierFilters] = useState<TierFilters>(getDefaultTierFilters);
+
+  // ── Derived data pipeline ──────────────────────────────────────────────────
+  // Each step memoizes its result and only recomputes when its direct dependency changes.
   const filteredData = useMemo(() => applyTierFilters(data, tierFilters), [data, tierFilters]);
   const sessionData = useMemo(() => buildSessionData(filteredData), [filteredData]);
   const writeConflicts = useMemo(() => deriveWriteConflicts(sessionData), [sessionData]);
   const readAfterWrite = useMemo(() => deriveReadAfterWrite(sessionData), [sessionData]);
 
+  /** Table -> writers[] entries for write-write conflicts */
   const conflictEntries = useMemo(
     () => Object.entries(writeConflicts),
     [writeConflicts],
   );
+  /** Table -> {writers[], readers[]} entries for read-after-write chains */
   const rawEntries = useMemo(
     () => Object.entries(readAfterWrite),
     [readAfterWrite],
   );
 
+  // ── Progressive pagination ──────────────────────────────────────────────────
+  // Starts at page 1; each "show more" click increments by 1, revealing PAGE_SIZE more items.
   const [conflictPage, setConflictPage] = useState(1);
   const [chainPage, setChainPage] = useState(1);
   const visibleConflicts = conflictEntries.slice(0, conflictPage * PAGE_SIZE);

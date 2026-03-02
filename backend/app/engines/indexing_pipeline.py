@@ -4,13 +4,18 @@ Three-stage pipeline:
   Stage 1 (0-30% progress)  — DocumentGenerator converts tier_data into structured
                                text documents (sessions, tables, chains, groups, env).
   Stage 2 (30-80% progress) — EmbeddingEngine converts document text into float vectors.
+                               This is the bottleneck stage (model inference).
   Stage 3 (80-100% progress)— VectorStore writes vectors + metadata to ChromaDB.
+                               Batched at 5000 docs/call.
 
 The optional `progress_fn(stage, pct, message)` callback is wired to SSE events
 so the frontend can show a live progress bar during indexing.
 
-Call `reindex_with_vectors` after the V1-V11 vector engines have run to regenerate
-documents enriched with complexity scores, wave assignments, and community labels.
+Indexing is called twice in the full pipeline:
+  1. After parse — initial index with basic session/table/chain documents.
+  2. After vector analysis (reindex_with_vectors) — re-generates documents enriched
+     with V11 complexity scores, V4 wave assignments, V1 community labels, and V10
+     gravity groups. The old ChromaDB collection is replaced entirely.
 """
 
 from __future__ import annotations

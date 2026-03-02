@@ -16,6 +16,12 @@ interface Props {
 
 const STORAGE_PREFIX = 'edv-drill-filter-';
 
+/**
+ * DrillThroughPanel -- multi-dimension filter sidebar for slicing the session
+ * population by V1-V11 vector analysis dimensions (complexity bucket, wave number,
+ * criticality tier, community, independence status). Persists filter state to
+ * localStorage keyed by uploadId so filters survive page reloads.
+ */
 export default function DrillThroughPanel({ vectorResults, filter, onFilterChange, matchingCount, uploadId }: Props) {
   // Restore persisted filters on mount (Item 72)
   useEffect(() => {
@@ -224,6 +230,7 @@ export default function DrillThroughPanel({ vectorResults, filter, onFilterChang
   );
 }
 
+/** Collapsible filter section with title header and toggle chevron. */
 function FilterSection({
   title,
   expanded,

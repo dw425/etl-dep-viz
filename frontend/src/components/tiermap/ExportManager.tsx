@@ -14,6 +14,12 @@ interface Props {
 
 type ExportFormat = 'json' | 'csv';
 
+/**
+ * ExportManager -- per-layer export panel for tier data, wave plans, complexity
+ * reports, environment summaries, and full vector results. Supports JSON and
+ * CSV formats. Each export row shows a label, description, and format buttons.
+ * Downloads are triggered via programmatic Blob URL creation.
+ */
 export default function ExportManager({ tierData, vectorResults }: Props) {
   const [exporting, setExporting] = useState<string | null>(null);
 
@@ -177,6 +183,7 @@ export default function ExportManager({ tierData, vectorResults }: Props) {
   );
 }
 
+/** Single export row with label, description, primary format button, and optional alt format button. */
 function ExportRow({
   label,
   description,

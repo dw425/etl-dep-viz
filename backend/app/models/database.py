@@ -1,4 +1,24 @@
-"""SQLAlchemy models + engine setup for upload persistence."""
+"""SQLAlchemy ORM models and engine setup for the ETL Dependency Visualizer.
+
+This module defines the complete data model (26 tables) organized into:
+
+  1. **Core entities** -- Project, Upload, UserProfile, ActivityLog
+  2. **Foundation records** -- SessionRecord, TableRecord, ConnectionRecord,
+     ConnectionProfileRecord (normalized parse output)
+  3. **Per-view materialized tables** (``Vw*``) -- pre-computed data for each
+     frontend visualization tab so views query dedicated tables for fast,
+     independent rendering
+  4. **Constellation tables** -- VwConstellationChunks/Points/Edges
+  5. **Vector analysis tables** -- VwComplexityScores, VwWaveAssignments,
+     VwUmapCoords, VwCommunities, VwWaveFunction, VwConcentrationGroups/Members,
+     VwEnsemble
+
+All ``Vw*`` tables are keyed by ``upload_id`` with ``CASCADE`` deletes, so
+removing an Upload automatically cleans up every derived table.
+
+Engine and session factory are created at module import time using
+``settings.database_url`` (SQLite by default).
+"""
 
 import json
 import logging
@@ -13,18 +33,25 @@ logger = logging.getLogger(__name__)
 
 
 class Base(DeclarativeBase):
+    """SQLAlchemy declarative base for all ORM models in the application."""
     pass
 
 
+# ── Core Entities ──────────────────────────────────────────────────────────
+
 class Project(Base):
-    """Top-level project container — groups uploads and all derived data."""
+    """Top-level project container -- groups uploads and all derived data.
+
+    Deleting a Project cascades to all its Uploads (and transitively to every
+    view/vector table that references those uploads).
+    """
 
     __tablename__ = "projects"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(256), nullable=False)
     description = Column(Text, nullable=True)
-    user_id = Column(String(64), nullable=True)
+    user_id = Column(String(64), nullable=True)          # localStorage UUID of creator
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
@@ -32,50 +59,67 @@ class Project(Base):
 
 
 class Upload(Base):
-    """Stores parsed tier_data + constellation results so users don't re-parse."""
+    """Persisted parse result -- stores tier data, constellation clusters, and
+    vector analysis results as JSON blobs so users never need to re-parse.
+
+    JSON accessor pairs (``set_*`` / ``get_*``) handle serialization with
+    ``default=str`` to safely encode datetimes and other non-JSON types.
+    """
 
     __tablename__ = "uploads"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=True)
     filename = Column(String(512), nullable=False, default="unknown")
-    platform = Column(String(64), nullable=False, default="mixed")
+    platform = Column(String(64), nullable=False, default="mixed")   # "informatica", "nifi", or "mixed"
     session_count = Column(Integer, nullable=False, default=0)
-    tier_data_json = Column(Text, nullable=False)         # JSON blob
-    constellation_json = Column(Text, nullable=True)      # JSON blob (may be null if not yet clustered)
-    vector_results_json = Column(Text, nullable=True)     # JSON blob for cached vector analysis
-    algorithm = Column(String(64), nullable=True)
-    parse_duration_ms = Column(Integer, nullable=True)
-    user_id = Column(String(64), nullable=True)
+    tier_data_json = Column(Text, nullable=False)         # Full parse output (sessions, tables, connections)
+    constellation_json = Column(Text, nullable=True)      # Clustering result (null until first recluster)
+    vector_results_json = Column(Text, nullable=True)     # Cached vector analysis output (V1-V11)
+    algorithm = Column(String(64), nullable=True)         # Constellation algorithm name
+    parse_duration_ms = Column(Integer, nullable=True)    # Wall-clock parse time for diagnostics
+    user_id = Column(String(64), nullable=True)           # localStorage UUID of uploader
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     project = relationship("Project", back_populates="uploads")
 
     def set_tier_data(self, data: dict) -> None:
+        """Serialize and store the tier data dict as a JSON blob."""
         self.tier_data_json = json.dumps(data, default=str)
 
     def get_tier_data(self) -> dict:
+        """Deserialize the tier data JSON blob into a dict."""
         return json.loads(self.tier_data_json) if self.tier_data_json else {}
 
     def set_constellation(self, data: dict) -> None:
+        """Serialize and store the constellation clustering result."""
         self.constellation_json = json.dumps(data, default=str)
 
     def get_constellation(self) -> dict | None:
+        """Deserialize the constellation JSON blob, or return None if unset."""
         return json.loads(self.constellation_json) if self.constellation_json else None
 
     def set_vector_results(self, data: dict) -> None:
+        """Serialize and store the vector analysis results (V1-V11)."""
         self.vector_results_json = json.dumps(data, default=str)
 
     def get_vector_results(self) -> dict | None:
+        """Deserialize the vector results JSON blob, or return None if unset."""
         return json.loads(self.vector_results_json) if self.vector_results_json else None
 
 
+# ── Engine & Session Factory ───────────────────────────────────────────────
+# check_same_thread=False is required for SQLite when used with FastAPI's
+# async request handlers, since the DB session may be created and closed on
+# different threads.
 engine = create_engine(settings.database_url, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 
+# ── User & Activity Tracking ───────────────────────────────────────────────
+
 class UserProfile(Base):
-    """Local user profile (no auth — localStorage UUID)."""
+    """Local user profile -- no authentication; identified by a localStorage UUID."""
 
     __tablename__ = "user_profiles"
 
@@ -86,7 +130,10 @@ class UserProfile(Base):
 
 
 class ActivityLog(Base):
-    """Timestamped activity log entries."""
+    """Timestamped activity log for auditing user actions.
+
+    Actions include: upload, download, recluster, analyze, delete, export.
+    """
 
     __tablename__ = "activity_log"
 
@@ -94,20 +141,28 @@ class ActivityLog(Base):
     user_id = Column(String(64), nullable=True)
     action = Column(String(64), nullable=False)  # upload|download|recluster|analyze|delete|export
     target_filename = Column(String(512), nullable=True)
-    details_json = Column(Text, nullable=True)
+    details_json = Column(Text, nullable=True)   # Arbitrary JSON payload for action context
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     def set_details(self, data: dict) -> None:
+        """Serialize action-specific details into the JSON column."""
         self.details_json = json.dumps(data, default=str)
 
     def get_details(self) -> dict | None:
+        """Deserialize the details JSON blob, or return None if unset."""
         return json.loads(self.details_json) if self.details_json else None
 
 
-# ── Normalized relational models (Wave 5) ─────────────────────────────────────
+# ── Foundation Records (Normalized Parse Output) ──────────────────────────────
+# These four tables store the core parsed data in normalized form, replacing
+# the need to deserialize the large tier_data_json blob for every query.
 
 class SessionRecord(Base):
-    """Normalized session record — one row per parsed ETL session."""
+    """One row per parsed ETL session (mapping/workflow/task).
+
+    Columns like ``sources_json``, ``targets_json``, and ``lookups_json``
+    store denormalized lists to avoid an extra join for common lookups.
+    """
 
     __tablename__ = "session_records"
 
@@ -137,7 +192,11 @@ class SessionRecord(Base):
 
 
 class TableRecord(Base):
-    """Normalized table record — one row per table in the dependency graph."""
+    """One row per table in the dependency graph.
+
+    The ``type`` column classifies tables as: source, chain, conflict, or
+    independent -- which drives colour coding in several frontend views.
+    """
 
     __tablename__ = "table_records"
 
@@ -158,7 +217,12 @@ class TableRecord(Base):
 
 
 class ConnectionRecord(Base):
-    """Normalized connection record — one row per edge in the dependency graph."""
+    """One row per directed edge in the dependency graph.
+
+    ``conn_type`` values: write_conflict, write_clean, read_after_write,
+    chain, source_read, lookup_read.  Direction semantics vary by type --
+    see MEMORY.md for the canonical definitions.
+    """
 
     __tablename__ = "connection_records"
 
@@ -176,7 +240,11 @@ class ConnectionRecord(Base):
 
 
 class ConnectionProfileRecord(Base):
-    """Connection profile — database connection metadata from parsed XML."""
+    """Database connection profile extracted from parsed XML/JSON.
+
+    Stores JDBC connection strings, DB types, and subtypes so the
+    Infrastructure view can map sessions to their target systems.
+    """
 
     __tablename__ = "connection_profiles"
 
@@ -191,8 +259,10 @@ class ConnectionProfileRecord(Base):
 
 
 # ── Per-View Materialized Tables ─────────────────────────────────────────────
-# Each visualization view gets its own dedicated table(s), populated during
-# parse/analysis so views query their own table for fast, independent rendering.
+# Each frontend visualization tab gets its own dedicated table(s), populated by
+# data_populator.py during parse/analysis.  This avoids heavy JSON
+# deserialization on every page load and lets each view query only the columns
+# it needs.  All tables use upload_id FK with CASCADE delete.
 
 class VwTierLayout(Base):
     """Materialized view: Tier Diagram node positions."""
@@ -452,7 +522,14 @@ class VwConstellationEdges(Base):
 # ── Vector Analysis Materialized Tables ───────────────────────────────────────
 
 class VwComplexityScores(Base):
-    """Materialized view: V11 complexity scores per session."""
+    """Materialized view: V11 complexity scores per session.
+
+    Each session is scored across 8 complexity dimensions (d1-d8):
+      d1=transforms, d2=sources, d3=targets, d4=lookups,
+      d5=tier_depth, d6=connections, d7=ext_reads, d8=workflow_size.
+    Both raw and min-max-normalized values are stored.  The ``bucket``
+    column classifies sessions as low/medium/high/critical.
+    """
 
     __tablename__ = "vw_complexity_scores"
 
@@ -461,8 +538,9 @@ class VwComplexityScores(Base):
     session_id = Column(String(64), nullable=False)
     name = Column(String(512), nullable=False)
     tier = Column(Float, nullable=True)
-    overall_score = Column(Float, default=0.0)
-    bucket = Column(String(16), nullable=True)  # 'low', 'medium', 'high', 'critical'
+    overall_score = Column(Float, default=0.0)         # Weighted composite 0.0-1.0
+    bucket = Column(String(16), nullable=True)         # 'low', 'medium', 'high', 'critical'
+    # Raw dimension values (pre-normalization)
     d1_raw = Column(Float, default=0.0)
     d2_raw = Column(Float, default=0.0)
     d3_raw = Column(Float, default=0.0)
@@ -471,6 +549,7 @@ class VwComplexityScores(Base):
     d6_raw = Column(Float, default=0.0)
     d7_raw = Column(Float, default=0.0)
     d8_raw = Column(Float, default=0.0)
+    # Normalized dimension values (0.0-1.0)
     d1_norm = Column(Float, default=0.0)
     d2_norm = Column(Float, default=0.0)
     d3_norm = Column(Float, default=0.0)
@@ -479,9 +558,9 @@ class VwComplexityScores(Base):
     d6_norm = Column(Float, default=0.0)
     d7_norm = Column(Float, default=0.0)
     d8_norm = Column(Float, default=0.0)
-    hours_low = Column(Float, default=0.0)
-    hours_high = Column(Float, default=0.0)
-    top_drivers_json = Column(Text, nullable=True)
+    hours_low = Column(Float, default=0.0)       # Effort estimate lower bound (hours)
+    hours_high = Column(Float, default=0.0)      # Effort estimate upper bound (hours)
+    top_drivers_json = Column(Text, nullable=True)  # JSON list of top complexity drivers
 
     __table_args__ = (
         Index("ix_vwcomplexity_upload", "upload_id"),
@@ -490,7 +569,12 @@ class VwComplexityScores(Base):
 
 
 class VwWaveAssignments(Base):
-    """Materialized view: V4 wave plan assignments per session."""
+    """Materialized view: V4 wave plan assignments per session.
+
+    Sessions are assigned to migration waves based on their dependency
+    ordering.  Sessions in the same SCC (strongly connected component)
+    share an ``scc_group_id`` and ``is_cycle`` is set to 1.
+    """
 
     __tablename__ = "vw_wave_assignments"
 
@@ -506,7 +590,11 @@ class VwWaveAssignments(Base):
 
 
 class VwUmapCoords(Base):
-    """Materialized view: V3 UMAP 2D coordinates per session."""
+    """Materialized view: V3 UMAP 2D coordinates per session.
+
+    Stores three scale variants (local, balanced, global) controlled by the
+    ``scale`` column.  Each variant produces different neighborhood emphasis.
+    """
 
     __tablename__ = "vw_umap_coords"
 
@@ -522,7 +610,11 @@ class VwUmapCoords(Base):
 
 
 class VwCommunities(Base):
-    """Materialized view: V1 community assignments (macro/meso/micro)."""
+    """Materialized view: V1 community assignments (macro/meso/micro).
+
+    Three hierarchical community levels detected by Louvain modularity:
+    macro (coarse), meso (mid-level), and micro (fine-grained).
+    """
 
     __tablename__ = "vw_communities"
 
@@ -537,7 +629,13 @@ class VwCommunities(Base):
 
 
 class VwWaveFunction(Base):
-    """Materialized view: V9 wave function simulation scores."""
+    """Materialized view: V9 wave function (failure propagation) scores.
+
+    Models how a failure in one session propagates through the dependency
+    graph.  ``blast_radius`` measures downstream impact, ``chain_depth``
+    counts the longest failure propagation path, and ``amplification_factor``
+    captures fan-out multiplier effects.
+    """
 
     __tablename__ = "vw_wave_function"
 
@@ -555,7 +653,12 @@ class VwWaveFunction(Base):
 
 
 class VwConcentrationGroups(Base):
-    """Materialized view: V10 concentration analysis groups."""
+    """Materialized view: V10 concentration analysis groups.
+
+    Groups of sessions that share a common set of core tables.
+    ``cohesion`` measures intra-group similarity; ``coupling`` measures
+    inter-group dependency strength.
+    """
 
     __tablename__ = "vw_concentration_groups"
 
@@ -572,7 +675,12 @@ class VwConcentrationGroups(Base):
 
 
 class VwConcentrationMembers(Base):
-    """Materialized view: V10 concentration group members."""
+    """Materialized view: V10 concentration group members.
+
+    Each row maps a session to its concentration group.  The ``medoid``
+    flag marks the most representative session; ``independence_type``
+    classifies the session's role (e.g. 'core', 'peripheral').
+    """
 
     __tablename__ = "vw_concentration_members"
 
@@ -588,7 +696,12 @@ class VwConcentrationMembers(Base):
 
 
 class VwEnsemble(Base):
-    """Materialized view: V8 ensemble consensus clustering."""
+    """Materialized view: V8 ensemble consensus clustering.
+
+    Combines community assignments from multiple vectors (V1, V3, V10) into
+    a single consensus cluster.  ``is_contested`` flags sessions where the
+    source vectors disagree, and ``consensus_score`` quantifies agreement.
+    """
 
     __tablename__ = "vw_ensemble"
 
@@ -603,12 +716,19 @@ class VwEnsemble(Base):
     __table_args__ = (Index("ix_vwensemble_upload", "upload_id"),)
 
 
+# ── Schema Migrations ─────────────────────────────────────────────────────
+
 def _migrate_db() -> None:
-    """Add missing columns to existing databases (lightweight ALTER TABLE migration)."""
+    """Add missing columns to existing databases (lightweight ALTER TABLE migration).
+
+    SQLite does not support DROP COLUMN or column type changes, so migrations
+    are additive only.  Each migration checks for column existence before
+    issuing ALTER TABLE to make the function idempotent.
+    """
     from sqlalchemy import text as sa_text
     insp = inspect(engine)
     if "uploads" not in insp.get_table_names():
-        return
+        return  # Fresh DB -- tables were just created by create_all()
     existing = {col["name"] for col in insp.get_columns("uploads")}
     with engine.begin() as conn:
         if "vector_results_json" not in existing:
@@ -621,13 +741,13 @@ def _migrate_db() -> None:
             conn.execute(sa_text("ALTER TABLE uploads ADD COLUMN user_id VARCHAR(64)"))
             logger.info("Migrated: added user_id column to uploads")
 
-    # Migrate uploads for project_id
+    # Migrate uploads for project_id (added when Project support was introduced)
     if "project_id" not in existing:
         with engine.begin() as conn:
             conn.execute(sa_text("ALTER TABLE uploads ADD COLUMN project_id INTEGER REFERENCES projects(id)"))
             logger.info("Migrated: added project_id column to uploads")
 
-    # Migrate session_records for V3 columns
+    # Migrate session_records for V3 columns (ext_reads, lookup_count, etc.)
     if "session_records" in insp.get_table_names():
         sr_cols = {col["name"] for col in insp.get_columns("session_records")}
         with engine.begin() as conn:
@@ -642,14 +762,29 @@ def _migrate_db() -> None:
                     logger.info("Migrated: added %s column to session_records", col_name)
 
 
+# ── Public API ────────────────────────────────────────────────────────────
+
 def init_db() -> None:
-    """Create tables if they don't exist, then run lightweight migrations."""
+    """Create all tables if they don't exist, then run additive migrations.
+
+    Called once during application startup (see ``main.py`` lifespan hook).
+    Safe to call repeatedly -- ``create_all`` is a no-op for existing tables.
+    """
     Base.metadata.create_all(bind=engine)
     _migrate_db()
 
 
 def get_db():
-    """FastAPI dependency — yields a DB session."""
+    """FastAPI dependency that provides a scoped DB session.
+
+    Usage in a router::
+
+        @router.get("/example")
+        def example(db: Session = Depends(get_db)):
+            ...
+
+    The session is closed automatically after the request completes.
+    """
     db = SessionLocal()
     try:
         yield db

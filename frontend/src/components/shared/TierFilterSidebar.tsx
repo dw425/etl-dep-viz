@@ -17,16 +17,26 @@ const CONN_TYPES = Object.entries(connTypes).map(([key, cfg]) => ({
   color: cfg.color,
 }));
 
+/** Active filter state managed by TierFilterSidebar. */
 export interface TierFilters {
+  /** Tier numbers currently hidden (unchecked). */
   hiddenTiers: Set<number>;
+  /** Text search query filtering sessions by name. */
   search: string;
+  /** Connection types currently hidden (unchecked). */
   hiddenConnTypes: Set<string>;
 }
 
+/** Returns the default (no-filter) state: all tiers/connections visible, empty search. */
 export function getDefaultTierFilters(): TierFilters {
   return { hiddenTiers: new Set(), search: '', hiddenConnTypes: new Set() };
 }
 
+/**
+ * Applies tier, search, and connection-type filters to a TierMapResult.
+ * Returns a new result with filtered sessions, tables, and connections.
+ * Connections are pruned to only include those between surviving nodes.
+ */
 export function applyTierFilters(data: TierMapResult, filters: TierFilters): TierMapResult {
   let sessions = data.sessions;
   let tables = data.tables;
@@ -64,6 +74,14 @@ interface Props {
   compact?: boolean;
 }
 
+/**
+ * Collapsible sidebar with tier checkboxes, connection-type toggles, and a text search input.
+ * Used by multiple views (TierDiagram, ConstellationCanvas, etc.) for consistent filtering.
+ * @param data - Unfiltered tier data (used to compute tier/connection counts)
+ * @param filters - Current filter state
+ * @param onChange - Callback when any filter changes
+ * @param compact - If true, starts collapsed as a small "Tier Filter" button
+ */
 export default function TierFilterSidebar({ data, filters, onChange, compact }: Props) {
   const [expanded, setExpanded] = useState(!compact);
 

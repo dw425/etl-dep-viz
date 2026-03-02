@@ -13,6 +13,7 @@ const L4 = lazy(() => import('../layers/L4_SessionBlueprint'));
 const L5 = lazy(() => import('../layers/L5_MappingPipeline'));
 const L6 = lazy(() => import('../layers/L6_ObjectDetail'));
 
+/** Spinner fallback shown while a layer component is being lazy-loaded. */
 const Loading = () => (
   <div className="flex items-center justify-center h-64 text-gray-500">
     <div className="flex flex-col items-center gap-3">
@@ -22,6 +23,11 @@ const Loading = () => (
   </div>
 );
 
+/**
+ * Switches between layer components (L1-L6) based on the current navigation layer.
+ * Each layer is lazy-loaded via React.lazy and wrapped in Suspense with a spinner fallback.
+ * The key={currentLayer} ensures a fresh mount + CSS opacity transition on layer changes.
+ */
 export default function LayerContainer() {
   const { currentLayer } = useNavigationContext();
 

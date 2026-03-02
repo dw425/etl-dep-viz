@@ -1,14 +1,31 @@
 /**
- * TierDiagram.tsx -- Tier bands with session/table cards, SVG Bezier curves,
- * and a right sidebar with tier visibility, node detail, connection density,
- * session search, session filters, and cluster filters.
+ * TierDiagram -- Horizontal tier bands with session/table cards and SVG Bezier
+ * connection curves. Includes a right sidebar for tier visibility, node detail,
+ * connection density, search, filters, and cluster selection.
  *
- * Scalable to 13K+ sessions via:
- *  - Auto-collapse tiers with many sessions
- *  - Per-tier pagination (show first PAGE_SIZE, expandable)
- *  - Connection limiting (only draw for hov/sel when total > CONN_LIMIT)
- *  - Debounced SVG recalc on scroll/resize
- *  - Isolation mode: selecting a node shows only its direct connections
+ * @description
+ * The classic "tier diagram" view: sessions and tables grouped into horizontal
+ * bands by their computed dependency tier. SVG Bezier curves show connections
+ * between nodes. Clicking a node activates isolation mode (only its direct
+ * connections shown), and the sidebar populates with node detail.
+ *
+ * Scalability strategies for 13K+ sessions:
+ *   - Auto-collapse: tiers with > AUTO_COLLAPSE_THRESHOLD sessions start collapsed
+ *   - Per-tier pagination: only render first PAGE_SIZE items, expandable
+ *   - Connection limiting: when total connections > CONN_LIMIT, only draw
+ *     connections for the hovered/selected node (not all connections)
+ *   - Debounced SVG recalc: Bezier curve positions recomputed on scroll/resize
+ *     via requestAnimationFrame to avoid layout thrashing
+ *   - Isolation mode: selecting a node filters to its direct neighbors only
+ *
+ * SVG connection rendering:
+ *   Lines between session/table cards are computed by reading each card's DOM
+ *   position (via ref callbacks), then drawing horizontal Bezier curves styled
+ *   by connection type (write=red, read=green, chain=purple, lookup=amber).
+ *   Lines are grouped by (from, to) pair so overlapping connections merge.
+ *
+ * @param data - Full TierMapResult with sessions, tables, connections, stats
+ * @param chunks - Optional constellation chunks for cluster filter badges
  */
 
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
@@ -224,6 +241,9 @@ const TierDiagram: React.FC<Props> = ({ data, chunks }) => {
   );
 
   /* ── SVG recalc ──────────────────────────────────────────────────────── */
+  // Reads DOM positions of every rendered card via nodeRefs, computes SVG
+  // Bezier curves for each active connection. Groups overlapping connections
+  // by (from,to) pair to offset parallel lines. Called on mount, scroll, and resize.
 
   const recalc = useCallback(() => {
     if (!containerRef.current) return;

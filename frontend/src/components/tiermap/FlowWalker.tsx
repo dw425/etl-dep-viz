@@ -21,21 +21,32 @@ import { getFlowData } from '../../api/client';
 const SqlViewer = lazy(() => import('../shared/SqlViewer'));
 const ExpressionViewer = lazy(() => import('../shared/ExpressionViewer'));
 
+/** Session entry in the upstream/downstream chain, linked via a shared table. */
 interface FlowSession {
   session_id: string;
   name: string;
   tier: number;
+  /** The shared table that forms the dependency between sessions */
   via_table?: string;
 }
 
+/** Full flow data response from POST /api/layers/flow/{sessionId}. */
 interface FlowData {
+  /** Session metadata (name, tier, transforms, sources/targets/lookups) */
   session: Record<string, unknown>;
+  /** Sessions that feed data into this session */
   upstream: FlowSession[];
+  /** Sessions that consume this session's output */
   downstream: FlowSession[];
+  /** Deep Informatica parse results: instances, connectors, fields, SQL, conditions */
   mapping_detail: Record<string, unknown> | null;
+  /** All tables referenced by this session with relation type */
   tables_touched: Record<string, unknown>[];
+  /** V11 complexity score and bucket for this session */
   complexity: Record<string, unknown> | null;
+  /** V4 wave assignment info */
   wave_info: Record<string, unknown> | null;
+  /** Strongly connected component membership */
   scc: Record<string, unknown> | null;
   upstream_count: number;
   downstream_count: number;
@@ -47,6 +58,15 @@ interface Props {
   uploadId?: number | null;
 }
 
+/**
+ * FlowWalkerView -- three-panel end-to-end flow exploration view.
+ *
+ * Left panel: session browser + upstream/downstream dependency chain.
+ * Center panel: mapping pipeline (source -> transforms -> target) with
+ *   expandable transform cards showing SQL overrides, join/filter conditions,
+ *   lookup configs, and field-level detail.
+ * Right panel: session metadata, complexity score, tables, parameters, pre/post SQL.
+ */
 export default function FlowWalkerView({ tierData, vectorResults, uploadId }: Props) {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [flowData, setFlowData] = useState<FlowData | null>(null);

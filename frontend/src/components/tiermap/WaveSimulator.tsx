@@ -48,6 +48,11 @@ interface TreeNode {
   collapseCount?: number;
 }
 
+/**
+ * Build a tree of TreeNode objects from the hop_breakdown dictionary.
+ * Each hop layer becomes a set of child nodes under the previous layer.
+ * Nodes beyond `maxVisible` are collapsed into a single "+N more" placeholder.
+ */
 function buildTreeFromHops(
   hopBreakdown: Record<string, string[]>,
   sourceSession: string,
@@ -124,6 +129,7 @@ interface LayoutNode {
   children: LayoutNode[];
 }
 
+/** Recursively assign x/y positions to tree nodes using a leaf-count-weighted horizontal distribution. */
 function layoutTree(root: TreeNode, width: number, height: number): LayoutNode {
   // Count max depth
   function maxDepth(node: TreeNode): number {
@@ -168,6 +174,11 @@ function layoutTree(root: TreeNode, width: number, height: number): LayoutNode {
   return doLayout(root, 20, width - 20, 24);
 }
 
+/**
+ * MiniCascadeTree -- SVG tree visualization of the cascade hop breakdown.
+ * Renders the source session as root with children fanning out per hop layer.
+ * Collapse nodes ("+ N more") appear when the tree exceeds 50 visible nodes.
+ */
 function MiniCascadeTree({
   whatIf,
   width = 600,
@@ -263,6 +274,12 @@ function MiniCascadeTree({
 
 // ── Simulation Results Panel ───────────────────────────────────────────────
 
+/**
+ * SimulationResults -- detail panel for a single What-If cascade result.
+ * Displays blast radius, max depth, hop layers, the mini cascade tree,
+ * cumulative impact summary bar (affected sessions + cascading tables),
+ * and an amplitude decay bar chart.
+ */
 function SimulationResults({
   whatIf,
   tierData,
@@ -412,6 +429,18 @@ function SimulationResults({
 
 // ── Main Component ─────────────────────────────────────────────────────────
 
+/**
+ * WaveSimulator -- "What-If" failure cascade simulator. Users select a session
+ * from a searchable/sortable picker (by criticality, blast radius, or name)
+ * to simulate what happens if it fails. Results show blast radius, cascade depth,
+ * hop breakdown, mini SVG cascade tree, and amplitude decay chart.
+ *
+ * Features:
+ *   - Comparison mode: side-by-side cascade results for two sessions with delta badge
+ *   - Onboarding banner (dismissed to localStorage)
+ *   - Criticality color coding (green/amber/orange/red by tier)
+ *   - Cascading table count derived from connection graph
+ */
 export default function WaveSimulator({ tierData, waveFunction, onSessionSelect }: Props) {
   const [selectedSession, setSelectedSession] = useState<string | null>(null);
   const [whatIf, setWhatIf] = useState<WhatIfResult | null>(null);

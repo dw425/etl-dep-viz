@@ -2,6 +2,23 @@
 
 Uses spectral embedding as an alternative 2D layout and sklearn's
 SpectralClustering on the similarity matrix.
+
+Algorithm:
+  1. Build unnormalized graph Laplacian L = D - W (degree matrix minus similarity).
+  2. Compute eigenvalues of L; the largest gap between consecutive eigenvalues
+     (eigengap heuristic) indicates the optimal number of clusters K.
+  3. Run sklearn SpectralClustering with that K on the similarity matrix.
+  4. Compute 2D spectral embedding from the 2nd and 3rd smallest eigenvectors
+     of the normalized Laplacian for visualization.
+
+Scaling Strategy:
+  - Below LARGE_N_THRESHOLD (5000): full dense eigendecomposition.
+  - Above: sparse eigensolver (scipy.sparse.linalg.eigsh) for eigengap,
+    sampled spectral embedding, and KMeans on the sample with nearest-neighbor
+    assignment for unsampled sessions (Nystrom approximation).
+
+Output: SpectralResult with cluster assignments, optimal K, eigengap scores,
+and 2D spectral embedding coordinates.
 """
 
 from __future__ import annotations
@@ -58,6 +75,12 @@ class SpectralClusteringVector:
         similarity_matrix,
         session_ids: list[str],
     ) -> SpectralResult:
+        """Run spectral clustering with eigengap-based K selection.
+
+        Args:
+            similarity_matrix: Non-negative pairwise similarity (n x n numpy array).
+            session_ids: Session ID list matching matrix indices.
+        """
         if np is None:
             raise ImportError("numpy is required for SpectralClusteringVector. Install it with: pip install numpy")
         if SpectralClustering is None:

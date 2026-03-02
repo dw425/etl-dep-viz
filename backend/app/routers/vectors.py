@@ -29,12 +29,23 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/vectors", tags=["vectors"])
 
 
+# ── Cache Utilities ───────────────────────────────────────────────────────
+
+
 def _compute_cache_key(tier_data: dict, phase: int = 3, params: dict | None = None) -> str:
     """Content-addressed cache key: SHA-256 of (session IDs + connections + phase + params).
 
     Sorting IDs before hashing ensures the key is order-independent, so the
     same logical dataset always produces the same cache key regardless of
     the order sessions appear in the JSON body.
+
+    Args:
+        tier_data: The tier data dict containing sessions and connections.
+        phase: Vector analysis phase (1-3).
+        params: Extra parameters that affect the result (e.g., selected vectors).
+
+    Returns:
+        16-character hex string — short enough for URLs, long enough to avoid collisions.
     """
     session_ids = sorted(s.get('id', '') for s in tier_data.get('sessions', []))
     conn_keys = sorted(
@@ -50,6 +61,9 @@ def _compute_cache_key(tier_data: dict, phase: int = 3, params: dict | None = No
     return hashlib.sha256(key_data.encode()).hexdigest()[:16]
 
 
+# ── Core Analysis Endpoints ───────────────────────────────────────────────
+
+
 @router.post("/analyze")
 async def analyze_vectors(
     tier_data: dict[str, Any] = Body(...),
@@ -57,11 +71,23 @@ async def analyze_vectors(
     upload_id: int | None = Query(None, description="Upload ID to cache results"),
     db: Session = Depends(get_db),
 ):
-    """Run analysis vectors on tier map data.
+    """Run analysis vectors on tier map data (synchronous, no SSE).
 
-    Phase 1: V1 (community), V4 (SCC/waves), V11 (complexity)
-    Phase 2: + V2, V3, V9, V10
-    Phase 3: + V5, V6, V7, V8 (full ensemble)
+    Phase 1 (Core):     V1 community detection, V4 SCC/wave plan, V11 complexity
+    Phase 2 (Advanced): + V2 partition quality, V3 centrality, V9 UMAP, V10 concentration
+    Phase 3 (All):      + V5 affinity, V6 spectral, V7 HDBSCAN, V8 ensemble consensus
+
+    Each phase depends on the previous: Phase 2 needs Phase 1's communities as
+    input features, Phase 3 needs Phase 2's results for ensemble voting.
+
+    Args:
+        tier_data: Tier data dict with sessions, connections, tables.
+        phase: Which phase to run up to (1=core only, 2=+advanced, 3=full).
+        upload_id: Optional — if provided, results are cached against this upload.
+        db: SQLAlchemy session (injected).
+
+    Returns:
+        Dict keyed by vector name (e.g. v1_communities, v4_wave_plan, v11_complexity).
     """
     sessions = tier_data.get("sessions", [])
     if not sessions:
@@ -106,9 +132,23 @@ async def analyze_vectors(
     return result
 
 
+# ── Cached Results ────────────────────────────────────────────────────────
+
+
 @router.get("/results/{upload_id}")
 def get_cached_vectors(upload_id: int, db: Session = Depends(get_db)):
-    """Retrieve cached vector results for an upload."""
+    """Retrieve cached vector results for an upload.
+
+    Args:
+        upload_id: DB primary key of the upload whose vectors to retrieve.
+        db: SQLAlchemy session (injected).
+
+    Returns:
+        Full vector results dict (all phases that have been computed).
+
+    Raises:
+        HTTPException(404): Upload not found or no vector results cached.
+    """
     upload = db.query(Upload).filter(Upload.id == upload_id).first()
     if not upload:
         raise HTTPException(404, "Upload not found")
@@ -118,13 +158,31 @@ def get_cached_vectors(upload_id: int, db: Session = Depends(get_db)):
     return results
 
 
+# ── SSE Streaming Analysis ────────────────────────────────────────────────
+
+
 @router.post("/analyze-stream")
 async def analyze_vectors_stream(
     tier_data: dict[str, Any] = Body(...),
     upload_id: int | None = Query(None),
     db: Session = Depends(get_db),
 ):
-    """Run all vector analysis phases with SSE progress streaming."""
+    """Run all vector analysis phases with SSE progress streaming.
+
+    Returns text/event-stream with progress events as each phase completes:
+      data: {"phase":"v1_community","percent":5}
+      data: {"phase":"phase1_complete","percent":33}
+      ...
+      data: {"phase":"complete","percent":100,"result":{...}}
+
+    Args:
+        tier_data: Tier data dict with sessions, connections, tables.
+        upload_id: Optional — if provided, final results are cached.
+        db: SQLAlchemy session (injected).
+
+    Returns:
+        StreamingResponse (text/event-stream) with JSON progress events.
+    """
     sessions = tier_data.get("sessions", [])
     if not sessions:
         raise HTTPException(400, "tier_data must contain at least one session")
@@ -185,9 +243,22 @@ async def analyze_vectors_stream(
     )
 
 
+# ── Single-Vector Convenience Endpoints ───────────────────────────────────
+
+
 @router.post("/wave-plan")
 async def get_wave_plan(tier_data: dict[str, Any] = Body(...)):
-    """Get migration wave plan (V4) from tier data."""
+    """Get migration wave plan (V4) from tier data.
+
+    Runs Phase 1 (which includes V4 topological sort) and returns only the
+    v4_wave_plan slice. Convenience shortcut for clients that only need waves.
+
+    Args:
+        tier_data: Tier data dict with sessions and connections.
+
+    Returns:
+        V4 wave plan dict with waves, scc_groups, and execution ordering.
+    """
     sessions = tier_data.get("sessions", [])
     if not sessions:
         raise HTTPException(400, "tier_data must contain at least one session")
@@ -199,7 +270,17 @@ async def get_wave_plan(tier_data: dict[str, Any] = Body(...)):
 
 @router.post("/complexity")
 async def get_complexity(tier_data: dict[str, Any] = Body(...)):
-    """Get complexity breakdown (V11) from tier data."""
+    """Get complexity breakdown (V11) from tier data.
+
+    Runs Phase 1 (which includes V11 complexity scoring) and returns only
+    the v11_complexity slice. Convenience shortcut for the complexity view.
+
+    Args:
+        tier_data: Tier data dict with sessions and connections.
+
+    Returns:
+        V11 complexity dict with per-session scores, buckets, and effort estimates.
+    """
     sessions = tier_data.get("sessions", [])
     if not sessions:
         raise HTTPException(400, "tier_data must contain at least one session")
@@ -209,12 +290,30 @@ async def get_complexity(tier_data: dict[str, Any] = Body(...)):
     return result.get("v11_complexity", {})
 
 
+# ── What-If Simulation ────────────────────────────────────────────────────
+
+
 @router.post("/what-if/{session_id}")
 async def what_if_simulation(
     session_id: str,
     tier_data: dict[str, Any] = Body(...),
 ):
-    """Run what-if failure simulation for a session (V9 wave function)."""
+    """Run what-if failure simulation for a session (V9 wave function).
+
+    Simulates removing `session_id` from the dependency graph and propagating
+    the cascade to identify all downstream sessions that would be affected.
+
+    Args:
+        session_id: The session to simulate failure for.
+        tier_data: Full tier data (sessions + connections) for graph context.
+
+    Returns:
+        V9 what-if result: blast radius, affected sessions, cascade depth.
+
+    Raises:
+        HTTPException(404): session_id not found in tier_data.
+        HTTPException(501): V9 module not installed.
+    """
     sessions = tier_data.get("sessions", [])
     if not sessions:
         raise HTTPException(400, "tier_data must contain at least one session")
@@ -251,7 +350,12 @@ async def what_if_simulation(
 
 @router.get("/config")
 async def get_vector_config():
-    """Return available vectors, their phases, and configurable parameters."""
+    """Return available vectors, their phases, and configurable parameters.
+
+    Used by the frontend to render the vector configuration panel, showing
+    which vectors are available, which phase they belong to, and whether
+    they are required (Phase 1 core vectors) or optional.
+    """
     return {
         'phases': [
             {
@@ -301,6 +405,17 @@ async def analyze_selective(
 
     If vectors list is empty, runs all vectors for the specified phase.
     If vectors are specified, only runs those (plus their dependencies).
+    Phase 1 always runs because all later vectors depend on its outputs.
+
+    Args:
+        tier_data: Tier data dict with sessions, connections, tables.
+        vectors: List of vector keys to keep in the output (empty = all).
+        phase: Max phase to run (1-3).
+        upload_id: Optional — if provided, results are cached.
+        db: SQLAlchemy session (injected).
+
+    Returns:
+        Filtered dict of vector results, plus _cache_key and _elapsed_ms metadata.
     """
     sessions = tier_data.get("sessions", [])
     if not sessions:
@@ -354,7 +469,18 @@ async def analyze_selective(
 async def sweep_resolution(
     tier_data: dict[str, Any] = Body(...),
 ):
-    """Sweep V1 community detection resolution to show parameter sensitivity."""
+    """Sweep V1 community detection resolution to show parameter sensitivity.
+
+    Runs V1 at multiple resolution values to show how the number of detected
+    communities changes with the resolution parameter. Useful for choosing
+    the best resolution for a given dataset.
+
+    Args:
+        tier_data: Tier data dict with sessions and connections.
+
+    Returns:
+        List of {resolution, community_count, modularity} for each sweep point.
+    """
     sessions = tier_data.get("sessions", [])
     if not sessions:
         raise HTTPException(400, "tier_data must contain at least one session")
@@ -377,7 +503,18 @@ async def analyze_incremental(
     """Incrementally run only specified vectors, reusing previous results.
 
     Automatically resolves vector dependencies so prerequisite vectors
-    are computed if their results aren't already cached.
+    are computed if their results aren't already cached. Previously cached
+    results are loaded from the upload row and merged with freshly computed
+    vectors, avoiding redundant work when only one vector needs re-running.
+
+    Args:
+        tier_data: Tier data dict with sessions, connections, tables.
+        vectors: List of vector keys to (re-)compute.
+        upload_id: Optional — used to load previous results and persist merged output.
+        db: SQLAlchemy session (injected).
+
+    Returns:
+        Merged dict of old + new vector results, plus _elapsed_ms metadata.
     """
     sessions = tier_data.get("sessions", [])
     if not sessions:

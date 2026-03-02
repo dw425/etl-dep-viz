@@ -42,7 +42,17 @@ router = APIRouter()
 
 
 def _classify_file(content: bytes) -> Literal['informatica', 'nifi']:
-    """Classify a single XML file as Informatica or NiFi."""
+    """Classify a single XML file as Informatica or NiFi by sniffing header content.
+
+    Args:
+        content: Raw XML bytes of the file.
+
+    Returns:
+        'informatica' if any Informatica-specific XML tags are found in the
+        first 5 KB; 'nifi' otherwise (NiFi is the default assumption).
+    """
+    # Only inspect the first 5KB — enough to find XML root/header elements
+    # without reading multi-MB files fully into a string
     head = content[:5000].decode('utf-8', errors='replace').lower()
     if 'informatica' in head or '<folder ' in head or '<mapping ' in head:
         return 'informatica'
@@ -52,7 +62,15 @@ def _classify_file(content: bytes) -> Literal['informatica', 'nifi']:
 
 
 def _detect_platform(raw_list: list[bytes]) -> Literal['informatica', 'nifi']:
-    """Sniff the first few XML files to determine dominant platform."""
+    """Sniff the first few XML files to determine dominant platform.
+
+    Args:
+        raw_list: All extracted XML file byte-strings from the upload.
+
+    Returns:
+        'informatica' if any of the first 5 files matches Informatica signatures;
+        'nifi' otherwise. Checking only 5 files keeps this O(1) for large uploads.
+    """
     for content in raw_list[:5]:
         if _classify_file(content) == 'informatica':
             return 'informatica'
@@ -62,7 +80,19 @@ def _detect_platform(raw_list: list[bytes]) -> Literal['informatica', 'nifi']:
 def _split_by_platform(
     raw: list[bytes], names: list[str],
 ) -> tuple[list[bytes], list[str], list[bytes], list[str]]:
-    """Split files into (infa_raw, infa_names, nifi_raw, nifi_names)."""
+    """Split files into (infa_raw, infa_names, nifi_raw, nifi_names).
+
+    Enables mixed-platform uploads where a single ZIP contains both
+    Informatica and NiFi XML files — each platform's files are routed
+    to the correct engine for independent parsing.
+
+    Args:
+        raw: Raw XML byte-strings for each file.
+        names: Corresponding filenames.
+
+    Returns:
+        Four-tuple of (infa_raw, infa_names, nifi_raw, nifi_names).
+    """
     infa_raw, infa_names = [], []
     nifi_raw, nifi_names = [], []
     for content, name in zip(raw, names):
@@ -76,7 +106,11 @@ def _split_by_platform(
 
 
 def _get_analyzer(platform: str):
-    """Return the correct analyze function for the detected platform."""
+    """Return the correct analyze function for the detected platform.
+
+    Imports are deferred so the engine modules (and their dependencies)
+    are only loaded when actually needed.
+    """
     if platform == 'informatica':
         from app.engines.infa_engine import analyze
         return analyze
@@ -86,7 +120,15 @@ def _get_analyzer(platform: str):
 
 
 def _extract_id_num(id_str: str, prefix: str) -> int:
-    """Extract numeric suffix from an ID like 'S12' or 'T_5', safely handling bad formats."""
+    """Extract numeric suffix from an ID like 'S12' or 'T_5', safely handling bad formats.
+
+    Args:
+        id_str: The full ID string (e.g., 'S42', 'T_7').
+        prefix: Expected prefix to strip (e.g., 'S', 'T_').
+
+    Returns:
+        Integer suffix, or 0 if the ID is malformed (prevents merge crashes).
+    """
     if id_str.startswith(prefix):
         suffix = id_str[len(prefix):]
     else:
@@ -335,7 +377,22 @@ async def analyze_tier_map(
 ):
     """Upload XML files (Informatica or NiFi, or ZIPs) and receive tier diagram data.
 
-    Persists the result so it can be retrieved later without re-parsing.
+    Pipeline: extract XML -> classify platform -> run engine(s) -> persist to DB.
+    Persists the result to SQLite so it can be retrieved later without re-parsing.
+
+    Args:
+        files: One or more .xml or .zip files containing ETL definitions.
+        x_user_id: Optional user ID header for filtering uploads.
+        project_id: Optional project to associate the upload with.
+        db: SQLAlchemy session (injected).
+
+    Returns:
+        Tier data dict with sessions, tables, connections, stats, and upload_id.
+
+    Raises:
+        HTTPException(422): No files or no valid XML found.
+        HTTPException(408): Parse exceeded the scaled timeout.
+        HTTPException(429): Server already running max concurrent parses.
     """
     if not files:
         raise HTTPException(status_code=422, detail='No files uploaded.')
@@ -412,7 +469,21 @@ async def analyze_constellation(
     project_id: int | None = Query(None),
     db: Session = Depends(get_db),
 ):
-    """Upload XML files (Informatica or NiFi, or ZIPs) and receive tier data + constellation clustering."""
+    """Upload XML files and receive tier data + constellation clustering in one call.
+
+    Combines the tier-map parse pipeline with constellation graph clustering,
+    producing both the dependency graph and grouped visual clusters.
+
+    Args:
+        files: One or more .xml or .zip files.
+        algorithm: Clustering algorithm (default 'louvain').
+        x_user_id: Optional user ID for tracking.
+        project_id: Optional project association.
+        db: SQLAlchemy session (injected).
+
+    Returns:
+        Dict with upload_id, tier_data, and constellation.
+    """
     if not files:
         raise HTTPException(status_code=422, detail='No files uploaded.')
 
@@ -700,7 +771,18 @@ async def recluster_constellation(
     tier_data: dict = Body(...),
     algorithm: str = Query('louvain', description='Clustering algorithm'),
 ):
-    """Re-cluster existing tier_data with a different algorithm (no file re-upload)."""
+    """Re-cluster existing tier_data with a different algorithm (no file re-upload).
+
+    Allows users to experiment with clustering parameters without re-parsing
+    the XML files. Only the constellation layout changes; tier data is unchanged.
+
+    Args:
+        tier_data: Previously parsed tier data containing sessions and connections.
+        algorithm: Clustering algorithm to apply (e.g. 'louvain', 'leiden').
+
+    Returns:
+        Dict with the same tier_data and a new constellation result.
+    """
     if not tier_data.get('sessions'):
         raise HTTPException(status_code=422, detail='tier_data must contain sessions.')
 
@@ -712,7 +794,10 @@ async def recluster_constellation(
 
 @router.get('/tier-map/algorithms')
 async def list_algorithms():
-    """Return available clustering algorithms with display metadata."""
+    """Return available clustering algorithms with display metadata.
+
+    Used by the frontend algorithm picker dropdown to show options and descriptions.
+    """
     from app.engines.constellation_engine import ALGORITHMS
     return {'algorithms': ALGORITHMS}
 
@@ -727,7 +812,19 @@ def list_uploads(
     x_user_id: str | None = Header(None),
     db: Session = Depends(get_db),
 ):
-    """List recent uploads (most recent first). Optionally filter by user_id."""
+    """List recent uploads (most recent first). Optionally filter by X-User-Id header.
+
+    Returns lightweight metadata only (no tier_data blobs) for fast dashboard rendering.
+
+    Args:
+        limit: Max results (1-500, default 20).
+        offset: Pagination offset.
+        x_user_id: Optional header filter — only show this user's uploads.
+        db: SQLAlchemy session (injected).
+
+    Returns:
+        List of upload summary dicts with id, filename, platform, session_count, etc.
+    """
     q = db.query(Upload)
     if x_user_id:
         q = q.filter(Upload.user_id == x_user_id)
@@ -749,7 +846,19 @@ def list_uploads(
 
 @router.get('/tier-map/uploads/{upload_id}')
 def get_upload(upload_id: int, db: Session = Depends(get_db)):
-    """Retrieve a previously parsed upload by ID (no re-parsing needed)."""
+    """Retrieve a previously parsed upload by ID (no re-parsing needed).
+
+    Returns the full tier_data JSON blob plus constellation and vector_results
+    if available. This is the primary "load saved analysis" endpoint.
+
+    Args:
+        upload_id: DB primary key of the upload.
+        db: SQLAlchemy session (injected).
+
+    Returns:
+        Dict with tier_data, constellation (if available), vector_results (if available),
+        and metadata (filename, platform, session_count, algorithm, created_at).
+    """
     row = db.query(Upload).filter(Upload.id == upload_id).first()
     if not row:
         raise HTTPException(status_code=404, detail='Upload not found.')
@@ -773,7 +882,7 @@ def get_upload(upload_id: int, db: Session = Depends(get_db)):
 
 @router.delete('/tier-map/uploads/{upload_id}')
 def delete_upload(upload_id: int, db: Session = Depends(get_db)):
-    """Delete a stored upload."""
+    """Delete a stored upload and all CASCADE-dependent view/vector rows."""
     row = db.query(Upload).filter(Upload.id == upload_id).first()
     if not row:
         raise HTTPException(status_code=404, detail='Upload not found.')
@@ -793,7 +902,23 @@ def list_sessions(
     search: str | None = Query(None, description='Search by session name'),
     db: Session = Depends(get_db),
 ):
-    """Paginated session list for an upload — supports tier filter and name search."""
+    """Paginated session list for an upload — supports tier filter and name search.
+
+    Two code paths:
+      - Fast path: uses normalized SessionRecord rows (DB-level filtering).
+      - Legacy path: falls back to the JSON blob for uploads without SessionRecord rows.
+
+    Args:
+        upload_id: DB primary key of the upload.
+        offset: Pagination offset.
+        limit: Page size (1-500, default 100).
+        tier: Optional filter for a specific tier number.
+        search: Optional substring search against session name/full path.
+        db: SQLAlchemy session (injected).
+
+    Returns:
+        Dict with sessions list, total count, offset, and limit.
+    """
     from app.models.database import SessionRecord
 
     row = db.query(Upload).filter(Upload.id == upload_id).first()

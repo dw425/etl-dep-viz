@@ -14,6 +14,10 @@ const TABLE_TYPE_COLORS: Record<string, string> = {
   source: '#10B981',
 };
 
+/**
+ * Object detail dispatcher: routes to the appropriate sub-view based on objectType.
+ * Sub-views: TableDetail (6A), TransformDetail (6B), ExpressionDetail (6C).
+ */
 export default function L6_ObjectDetail() {
   const { currentParams, tierData, drillUp } = useNavigationContext();
   const objectType = currentParams.objectType || 'table';
@@ -44,6 +48,7 @@ export default function L6_ObjectDetail() {
   );
 }
 
+/** L6A: Table detail showing type, tier, readers, writers, and lookup users. */
 function TableDetail({ objectId }: { objectId: string }) {
   const { tierData, drillUp, drillDown } = useNavigationContext();
 
@@ -163,6 +168,7 @@ function TableDetail({ objectId }: { objectId: string }) {
   );
 }
 
+/** L6B: Transform detail showing input/output ports and field expressions. */
 function TransformDetail({ objectId }: { objectId: string }) {
   const { tierData, drillUp, drillDown } = useNavigationContext();
 
@@ -263,6 +269,7 @@ function TransformDetail({ objectId }: { objectId: string }) {
   );
 }
 
+/** L6C: Expression detail showing the Informatica expression text with data type info. */
 function ExpressionDetail({ objectId }: { objectId: string }) {
   const { tierData, drillUp } = useNavigationContext();
 
@@ -355,6 +362,7 @@ function ExpressionDetail({ objectId }: { objectId: string }) {
   );
 }
 
+/** Centered metric card used in the table detail header grid. */
 function MetricCard({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="text-center">

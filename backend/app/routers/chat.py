@@ -85,22 +85,25 @@ def _get_engines() -> dict:
 # ── Request/Response Models ───────────────────────────────────────────────
 
 class ChatRequest(BaseModel):
+    """Incoming chat message with optional conversation history for multi-turn context."""
     question: str
     conversation_history: list[dict] = []
 
 
 class ChatResponse(BaseModel):
+    """Structured LLM response with grounding references and follow-up suggestions."""
     answer: str
-    intent: str
-    referenced_sessions: list[dict]
-    referenced_tables: list[dict]
-    search_results_used: int
-    suggested_questions: list[str]
+    intent: str                         # Classified intent (e.g. 'search', 'explain', 'compare')
+    referenced_sessions: list[dict]     # Sessions cited in the answer
+    referenced_tables: list[dict]       # Tables cited in the answer
+    search_results_used: int            # Number of retrieved docs fed to the LLM
+    suggested_questions: list[str]      # LLM-generated follow-up questions
 
 
 class SearchRequest(BaseModel):
+    """Retrieval-only search request (no LLM call)."""
     query: str
-    doc_type: str | None = None
+    doc_type: str | None = None         # Filter by document type ('session', 'table', etc.)
     n_results: int = 10
 
 
@@ -144,7 +147,24 @@ async def index_upload(upload_id: int, db: Session = Depends(get_db)):
 
 @router.post("/reindex/{upload_id}")
 async def reindex_upload(upload_id: int, db: Session = Depends(get_db)):
-    """Re-index after vector analysis to enrich documents with V1-V11 data."""
+    """Re-index after vector analysis to enrich documents with V1-V11 data.
+
+    Should be called after running vector analysis on an already-indexed upload.
+    The enriched index includes vector insights (complexity scores, community
+    membership, wave assignments) as additional document chunks, improving
+    retrieval quality for vector-related questions.
+
+    Args:
+        upload_id: DB primary key of the upload to re-index.
+        db: SQLAlchemy session (injected).
+
+    Returns:
+        Dict with status='reindexed' and indexing stats.
+
+    Raises:
+        HTTPException(404): Upload not found.
+        HTTPException(400): No vector results available yet.
+    """
     upload = db.query(Upload).filter(Upload.id == upload_id).first()
     if not upload:
         raise HTTPException(404, "Upload not found")
@@ -237,7 +257,17 @@ async def search(upload_id: int, request: SearchRequest):
 
 @router.get("/{upload_id}/status")
 async def index_status(upload_id: int):
-    """Check if an upload is indexed and get stats."""
+    """Check if an upload is indexed and get document count.
+
+    Lightweight endpoint for the frontend to show index status badges
+    without triggering any heavy computation.
+
+    Args:
+        upload_id: DB primary key of the upload.
+
+    Returns:
+        Dict with indexed (bool) and document_count (int).
+    """
     engines = _get_engines()
     store = engines["store"]
 

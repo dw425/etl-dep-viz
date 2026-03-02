@@ -20,6 +20,11 @@ interface Props {
 
 const CAP = 8;
 
+/**
+ * Tabbed detail panel for a selected infrastructure system node.
+ * Four tabs: Overview (stats + connected systems), Sessions, Tables (grouped by schema),
+ * and Connections (named connection profiles with parsed host/port/database).
+ */
 export default function InfraDetailPanel({ system, edges, nodes, tierData, onNavigateView }: Props) {
   const [tab, setTab] = useState<Tab>('overview');
 
@@ -214,6 +219,7 @@ export default function InfraDetailPanel({ system, edges, nodes, tierData, onNav
   );
 }
 
+/** Centered stat box used in the Overview tab's 3-column grid. */
 function StatBox({ label, value }: { label: string; value: number }) {
   return (
     <div className="text-center bg-gray-700/50 rounded p-2">
@@ -223,6 +229,7 @@ function StatBox({ label, value }: { label: string; value: number }) {
   );
 }
 
+/** Collapsible section showing tables within a schema group. */
 function SchemaSection({ group }: { group: SchemaGroup }) {
   const [expanded, setExpanded] = useState(group.schema !== '(default)');
   return (

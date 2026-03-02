@@ -6,15 +6,28 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { useNavigationContext } from './NavigationProvider';
 
+/** A single search match with enough context to navigate to the object. */
 interface SearchResult {
+  /** Object category: session, table, or workflow. */
   type: 'session' | 'table' | 'workflow';
+  /** Unique identifier for the matched object. */
   id: string;
+  /** Display name shown in the result list. */
   name: string;
+  /** Secondary detail text (e.g. "Tier 3 | 12 transforms"). */
   detail?: string;
+  /** Target layer to navigate to when selected. */
   layer: number;
+  /** Navigation params passed to jumpTo(). */
   params: Record<string, string>;
 }
 
+/**
+ * Full-screen search overlay for the Layer Navigator. Searches sessions, tables,
+ * and workflow names in the current tier data. Results are grouped by type and
+ * capped at 50 to avoid rendering thousands of matches.
+ * @param onClose - Callback to close the overlay (e.g. on backdrop click or ESC)
+ */
 export default function GlobalSearch({ onClose }: { onClose: () => void }) {
   const { tierData, jumpTo } = useNavigationContext();
   const [query, setQuery] = useState('');
