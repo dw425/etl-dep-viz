@@ -17,6 +17,7 @@ import {
   parseConnectionString,
 } from './infra/infraUtils';
 import InfraCanvas from './infra/InfraCanvas';
+import type { ZoneRect } from './infra/InfraCanvas';
 import InfraDetailPanel from './infra/InfraDetailPanel';
 
 interface Props {
@@ -280,21 +281,77 @@ export default function L1A_InfrastructureTopology({ tierData, vectorResults, on
     };
   }, [tierData, connectionProfiles]);
 
-  // ── Layout: circular placement ─────────────────────────────────────────────
-  const nodePositions = useMemo(() => {
-    const positions: Record<string, { x: number; y: number }> = {};
-    const cx = 300;
-    const cy = 250;
-    const radius = 180;
+  // ── Layout: tiered zone grid (infrastructure architecture style) ────────────
+  // Environment priority order: cloud on top, on-prem middle, unknown bottom
+  const ENV_ORDER: Record<string, number> = { aws: 0, azure: 1, gcp: 2, 'on-prem': 3, unknown: 4 };
+  const ENV_LABELS: Record<string, string> = {
+    aws: 'AWS Cloud', azure: 'Azure Cloud', gcp: 'Google Cloud',
+    'on-prem': 'On-Premises', unknown: 'Unclassified',
+  };
 
-    nodes.forEach((node, i) => {
-      const angle = (2 * Math.PI * i) / nodes.length - Math.PI / 2;
-      positions[node.system_id] = {
-        x: cx + radius * Math.cos(angle),
-        y: cy + radius * Math.sin(angle),
-      };
-    });
-    return positions;
+  const { nodePositions, zones } = useMemo(() => {
+    const positions: Record<string, { x: number; y: number }> = {};
+    const zoneRects: ZoneRect[] = [];
+
+    // Group nodes by environment, sorted by priority
+    const envGroups = new Map<string, SystemNode[]>();
+    for (const node of nodes) {
+      const env = node.environment;
+      if (!envGroups.has(env)) envGroups.set(env, []);
+      envGroups.get(env)!.push(node);
+    }
+    // Sort each group by session_count descending
+    for (const group of envGroups.values()) {
+      group.sort((a, b) => b.session_count - a.session_count);
+    }
+
+    const sortedEnvs = Array.from(envGroups.keys()).sort(
+      (a, b) => (ENV_ORDER[a] ?? 5) - (ENV_ORDER[b] ?? 5)
+    );
+
+    const ZONE_PAD = 20;
+    const NODE_SPACE_X = 130;
+    const NODE_SPACE_Y = 80;
+    const ZONE_GAP = 16;
+    const CANVAS_PAD = 24;
+    let currentY = CANVAS_PAD;
+
+    for (const env of sortedEnvs) {
+      const group = envGroups.get(env)!;
+      const cols = Math.min(group.length, 4);
+      const rows = Math.ceil(group.length / cols);
+
+      const zoneW = cols * NODE_SPACE_X + ZONE_PAD * 2;
+      const zoneH = rows * NODE_SPACE_Y + ZONE_PAD * 2 + 14; // +14 for label
+
+      zoneRects.push({
+        env,
+        label: ENV_LABELS[env] ?? env,
+        x: CANVAS_PAD,
+        y: currentY,
+        w: Math.max(zoneW, 280),
+        h: zoneH,
+      });
+
+      const contentStartY = currentY + ZONE_PAD + 14;
+      const zoneActualW = Math.max(zoneW, 280);
+
+      group.forEach((node, i) => {
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        // Center the grid within the zone
+        const gridW = cols * NODE_SPACE_X;
+        const offsetX = (zoneActualW - gridW) / 2;
+        positions[node.system_id] = {
+          x: CANVAS_PAD + offsetX + col * NODE_SPACE_X + NODE_SPACE_X / 2,
+          y: contentStartY + row * NODE_SPACE_Y + NODE_SPACE_Y / 2,
+        };
+      });
+
+      currentY += zoneH + ZONE_GAP;
+    }
+
+    return { nodePositions: positions, zones: zoneRects };
   }, [nodes]);
 
   // ── Handlers ───────────────────────────────────────────────────────────────
@@ -393,11 +450,12 @@ export default function L1A_InfrastructureTopology({ tierData, vectorResults, on
       </div>
 
       {/* Center: Canvas */}
-      <div className="flex-1 bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+      <div className="flex-1 bg-gray-800 rounded-lg border border-gray-700 overflow-auto">
         <InfraCanvas
           nodes={nodes}
           edges={edges}
           nodePositions={nodePositions}
+          zones={zones}
           hoveredSystem={hoveredSystem}
           selectedSystem={selectedSystem}
           onHover={handleHover}

@@ -1,25 +1,35 @@
 /**
- * InfraCanvas — Canvas rendering + hit-testing for L1A Infrastructure Topology.
- * Draws system nodes as circles and directed/bidirectional edges with arrowheads.
+ * InfraCanvas — Canvas rendering for L1A Infrastructure Topology.
+ * Draws environment zone backgrounds, system nodes as rounded-rect cards,
+ * and directed/bidirectional edges with curved paths and arrowheads.
  */
 
 import React, { useEffect, useRef } from 'react';
 import type { SystemNode, SystemEdge } from './infraUtils';
 import { ENV_COLORS, SYSTEM_ICONS } from './infraUtils';
 
+export interface ZoneRect {
+  env: string;
+  label: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 interface Props {
   nodes: SystemNode[];
   edges: SystemEdge[];
   nodePositions: Record<string, { x: number; y: number }>;
+  zones: ZoneRect[];
   hoveredSystem: string | null;
   selectedSystem: SystemNode | null;
   onHover: (systemId: string | null) => void;
   onClick: (systemId: string | null) => void;
 }
 
-function nodeRadius(n: SystemNode): number {
-  return Math.min(Math.max(n.session_count * 2 + 15, 20), 50);
-}
+const NODE_W = 100;
+const NODE_H = 56;
 
 function drawArrowhead(ctx: CanvasRenderingContext2D, x: number, y: number, angle: number, size: number) {
   ctx.save();
@@ -27,14 +37,45 @@ function drawArrowhead(ctx: CanvasRenderingContext2D, x: number, y: number, angl
   ctx.rotate(angle);
   ctx.beginPath();
   ctx.moveTo(0, 0);
-  ctx.lineTo(-size, -size * 0.5);
-  ctx.lineTo(-size, size * 0.5);
+  ctx.lineTo(-size, -size * 0.45);
+  ctx.lineTo(-size * 0.7, 0);
+  ctx.lineTo(-size, size * 0.45);
   ctx.closePath();
   ctx.fill();
   ctx.restore();
 }
 
-export default function InfraCanvas({ nodes, edges, nodePositions, hoveredSystem, selectedSystem, onHover, onClick }: Props) {
+function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+/** Get edge connection point on the rect boundary closest to the target. */
+function edgePoint(cx: number, cy: number, tx: number, ty: number): { x: number; y: number } {
+  const hw = NODE_W / 2 + 4;
+  const hh = NODE_H / 2 + 4;
+  const dx = tx - cx;
+  const dy = ty - cy;
+  if (dx === 0 && dy === 0) return { x: cx, y: cy };
+  const absDx = Math.abs(dx);
+  const absDy = Math.abs(dy);
+  // Determine which edge to intersect
+  const scaleX = hw / (absDx || 1);
+  const scaleY = hh / (absDy || 1);
+  const scale = Math.min(scaleX, scaleY);
+  return { x: cx + dx * scale, y: cy + dy * scale };
+}
+
+export default function InfraCanvas({ nodes, edges, nodePositions, zones, hoveredSystem, selectedSystem, onHover, onClick }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -51,102 +92,133 @@ export default function InfraCanvas({ nodes, edges, nodePositions, hoveredSystem
     ctx.scale(dpr, dpr);
     ctx.clearRect(0, 0, w, h);
 
-    // Draw edges with directional arrowheads
+    // ── Draw zone backgrounds ──────────────────────────────────────────────
+    for (const zone of zones) {
+      const envColor = ENV_COLORS[zone.env] ?? ENV_COLORS.unknown;
+      // Zone background
+      roundRect(ctx, zone.x, zone.y, zone.w, zone.h, 8);
+      ctx.fillStyle = envColor + '08';
+      ctx.fill();
+      // Zone border (dashed)
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = envColor + '30';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // Zone label
+      ctx.fillStyle = envColor + '80';
+      ctx.font = 'bold 10px Inter, system-ui, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(zone.label.toUpperCase(), zone.x + 10, zone.y + 16);
+    }
+
+    // ── Draw edges with curved paths ───────────────────────────────────────
     for (const edge of edges) {
       const from = nodePositions[edge.source];
       const to = nodePositions[edge.target];
       if (!from || !to) continue;
 
-      const sourceNode = nodes.find(n => n.system_id === edge.source);
-      const targetNode = nodes.find(n => n.system_id === edge.target);
-      if (!sourceNode || !targetNode) continue;
-
-      const thickness = Math.min(Math.max(edge.session_count / 5, 1), 6);
+      const thickness = Math.min(Math.max(Math.log2(edge.session_count + 1), 1), 5);
       const isBidi = edge.direction === 'bidirectional';
-      const color = isBidi ? '#F59E0B' : '#475569';
+      const color = isBidi ? '#F59E0B' : '#64748B';
 
-      const dx = to.x - from.x;
-      const dy = to.y - from.y;
+      // Edge connection points on rect boundaries
+      const start = edgePoint(from.x, from.y, to.x, to.y);
+      const end = edgePoint(to.x, to.y, from.x, from.y);
+
+      const dx = end.x - start.x;
+      const dy = end.y - start.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist === 0) continue;
+      if (dist < 5) continue;
 
-      const ux = dx / dist;
-      const uy = dy / dist;
-      const angle = Math.atan2(dy, dx);
+      // Curve offset perpendicular to the line
+      const curvature = Math.min(dist * 0.15, 30);
+      const nx = -dy / dist;
+      const ny = dx / dist;
+      const cpx = (start.x + end.x) / 2 + nx * curvature;
+      const cpy = (start.y + end.y) / 2 + ny * curvature;
 
-      const rFrom = nodeRadius(sourceNode);
-      const rTo = nodeRadius(targetNode);
-      const startX = from.x + ux * (rFrom + 4);
-      const startY = from.y + uy * (rFrom + 4);
-      const endX = to.x - ux * (rTo + 4);
-      const endY = to.y - uy * (rTo + 4);
-
-      // Line
+      // Draw curved line
       ctx.beginPath();
-      ctx.moveTo(startX, startY);
-      ctx.lineTo(endX, endY);
+      ctx.moveTo(start.x, start.y);
+      ctx.quadraticCurveTo(cpx, cpy, end.x, end.y);
       ctx.strokeStyle = color;
       ctx.lineWidth = thickness;
+      ctx.globalAlpha = 0.7;
       ctx.stroke();
+      ctx.globalAlpha = 1;
 
       // Arrowhead at target
-      const arrowSize = Math.max(thickness * 2, 8);
+      const arrowAngle = Math.atan2(end.y - cpy, end.x - cpx);
+      const arrowSize = Math.max(thickness * 1.8, 7);
       ctx.fillStyle = color;
-      drawArrowhead(ctx, endX, endY, angle, arrowSize);
+      drawArrowhead(ctx, end.x, end.y, arrowAngle, arrowSize);
 
-      // Bidirectional: arrowhead at source too
+      // Bidirectional: arrowhead at source
       if (isBidi) {
-        drawArrowhead(ctx, startX, startY, angle + Math.PI, arrowSize);
+        const revAngle = Math.atan2(start.y - cpy, start.x - cpx);
+        drawArrowhead(ctx, start.x, start.y, revAngle, arrowSize);
       }
 
-      // Edge label
-      const midX = (startX + endX) / 2;
-      const midY = (startY + endY) / 2;
-      ctx.fillStyle = '#94A3B8';
-      ctx.font = '10px Inter, system-ui, sans-serif';
+      // Edge label at midpoint of curve
+      const labelX = (start.x + 2 * cpx + end.x) / 4;
+      const labelY = (start.y + 2 * cpy + end.y) / 4;
+      ctx.fillStyle = '#64748B';
+      ctx.font = '9px Inter, system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText(`${edge.session_count}`, midX, midY - 6);
+      ctx.fillText(`${edge.session_count}`, labelX, labelY - 4);
     }
 
-    // Draw nodes
+    // ── Draw nodes as rounded-rect cards ───────────────────────────────────
     for (const node of nodes) {
       const pos = nodePositions[node.system_id];
       if (!pos) continue;
 
-      const r = nodeRadius(node);
       const isHovered = hoveredSystem === node.system_id;
       const isSelected = selectedSystem?.system_id === node.system_id;
       const envColor = ENV_COLORS[node.environment] ?? ENV_COLORS.unknown;
 
-      // Glow for hover/selection
+      const x = pos.x - NODE_W / 2;
+      const y = pos.y - NODE_H / 2;
+
+      // Shadow
       if (isHovered || isSelected) {
-        ctx.beginPath();
-        ctx.arc(pos.x, pos.y, r + 8, 0, Math.PI * 2);
-        ctx.fillStyle = envColor + '25';
-        ctx.fill();
+        ctx.shadowColor = envColor + '40';
+        ctx.shadowBlur = 12;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 2;
       }
 
-      // Node circle
-      ctx.beginPath();
-      ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2);
-      ctx.fillStyle = isSelected ? envColor + '40' : '#1E293B';
+      // Card background
+      roundRect(ctx, x, y, NODE_W, NODE_H, 8);
+      ctx.fillStyle = isSelected ? '#1E293B' : '#0F172A';
       ctx.fill();
-      ctx.strokeStyle = envColor;
-      ctx.lineWidth = isSelected ? 3 : 2;
+      ctx.strokeStyle = isSelected ? envColor : (isHovered ? envColor + 'A0' : '#334155');
+      ctx.lineWidth = isSelected ? 2 : 1;
       ctx.stroke();
 
-      // Label
-      ctx.fillStyle = '#E2E8F0';
-      ctx.font = '12px Inter, system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(node.system_type.toUpperCase(), pos.x, pos.y + 4);
+      // Reset shadow
+      ctx.shadowColor = 'transparent';
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 0;
 
-      // Session count below
-      ctx.fillStyle = '#94A3B8';
-      ctx.font = '10px Inter, system-ui, sans-serif';
-      ctx.fillText(`${node.session_count} sess`, pos.x, pos.y + r + 14);
+      // Icon + name
+      const icon = SYSTEM_ICONS[node.system_type] ?? SYSTEM_ICONS.unknown;
+      ctx.font = '14px Inter, system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(icon, pos.x, pos.y - 6);
+
+      ctx.fillStyle = '#E2E8F0';
+      ctx.font = 'bold 10px Inter, system-ui, sans-serif';
+      ctx.fillText(node.system_type.toUpperCase(), pos.x, pos.y + 8);
+
+      // Stats line
+      ctx.fillStyle = '#64748B';
+      ctx.font = '9px Inter, system-ui, sans-serif';
+      ctx.fillText(`${node.session_count} sess \u00B7 ${node.table_count} tbl`, pos.x, pos.y + 20);
     }
-  }, [nodes, edges, nodePositions, hoveredSystem, selectedSystem]);
+  }, [nodes, edges, nodePositions, zones, hoveredSystem, selectedSystem]);
 
   const handleMouseMove = (e: React.MouseEvent) => {
     const canvas = canvasRef.current;
@@ -158,8 +230,7 @@ export default function InfraCanvas({ nodes, edges, nodePositions, hoveredSystem
     for (const node of nodes) {
       const pos = nodePositions[node.system_id];
       if (!pos) continue;
-      const r = nodeRadius(node);
-      if (Math.sqrt((mx - pos.x) ** 2 + (my - pos.y) ** 2) < r) {
+      if (Math.abs(mx - pos.x) < NODE_W / 2 && Math.abs(my - pos.y) < NODE_H / 2) {
         onHover(node.system_id);
         canvas.style.cursor = 'pointer';
         return;
@@ -173,11 +244,16 @@ export default function InfraCanvas({ nodes, edges, nodePositions, hoveredSystem
     onClick(hoveredSystem);
   };
 
+  // Compute needed height from zone extents
+  const canvasHeight = zones.length > 0
+    ? Math.max(...zones.map(z => z.y + z.h)) + 24
+    : 500;
+
   return (
     <canvas
       ref={canvasRef}
       className="w-full"
-      style={{ height: 500 }}
+      style={{ height: canvasHeight, minHeight: 400 }}
       onMouseMove={handleMouseMove}
       onClick={handleClick}
       onMouseLeave={() => onHover(null)}

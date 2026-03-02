@@ -52,28 +52,25 @@ export default function ComplexityOverlay({ complexity, selectedSessionId, onSes
       {/* Bucket Distribution */}
       <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
         <h3 className="text-sm font-medium text-gray-300 mb-3">Complexity Distribution</h3>
-        <div className="flex gap-1 h-6 rounded overflow-hidden mb-2">
+        <div className="flex gap-1 rounded overflow-hidden">
           {Object.entries(complexity.bucket_distribution).map(([bucket, count]) => {
             const pct = (count / totalSessions) * 100;
             if (pct === 0) return null;
             return (
-              <div
-                key={bucket}
-                className="transition-all"
-                style={{ width: `${pct}%`, backgroundColor: BUCKET_COLORS[bucket] }}
-                title={`${bucket}: ${count} (${Math.round(pct)}%)`}
-              />
+              <div key={bucket} className="transition-all" style={{ width: `${pct}%` }}>
+                <div
+                  className="h-6 rounded-sm"
+                  style={{ backgroundColor: BUCKET_COLORS[bucket] }}
+                  title={`${bucket}: ${count} (${Math.round(pct)}%)`}
+                />
+                <div className="flex items-center gap-1 mt-1.5 text-xs">
+                  <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: BUCKET_COLORS[bucket] }} />
+                  <span className="text-gray-400 truncate">{bucket}</span>
+                  <span className="text-gray-500 shrink-0">({count})</span>
+                </div>
+              </div>
             );
           })}
-        </div>
-        <div className="flex justify-between text-xs">
-          {Object.entries(complexity.bucket_distribution).map(([bucket, count]) => (
-            <div key={bucket} className="flex items-center gap-1">
-              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: BUCKET_COLORS[bucket] }} />
-              <span className="text-gray-400">{bucket}</span>
-              <span className="text-gray-500">({count})</span>
-            </div>
-          ))}
         </div>
       </div>
 
