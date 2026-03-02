@@ -34,6 +34,11 @@ interface ChunkSelectorProps {
   onHighlightSession?: (sessionId: string) => void;
   onFindLinked?: (sessionId: string) => void;
   onClearHighlight?: () => void;
+  // Pin management props
+  pinnedSessions?: Set<string>;
+  onPinSession?: (sessionId: string) => void;
+  onUnpinSession?: (sessionId: string) => void;
+  onFlyToSession?: (sessionId: string) => void;
 }
 
 const VIRTUAL_ITEM_HEIGHT = 120;
@@ -42,6 +47,7 @@ const VIRTUAL_OVERSCAN = 4;
 export default function ChunkSelector({
   chunks, activeChunkIds, onToggle, onSelectAll, onDeselectAll, onBack, algorithm, tableRanking,
   points, highlightedSessionIds, onHighlightSession, onFindLinked, onClearHighlight,
+  pinnedSessions, onPinSession, onUnpinSession, onFlyToSession,
 }: ChunkSelectorProps) {
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState<SortKey>('default');
@@ -456,6 +462,46 @@ export default function ChunkSelector({
           </div>
         )}
       </div>
+
+      {/* Pinned Sessions */}
+      {pinnedSessions && pinnedSessions.size > 0 && (
+        <div style={{ padding: '8px 10px', borderTop: `1px solid ${C.border}` }}>
+          <div style={{
+            fontSize: 9, fontWeight: 700, color: '#F59E0B',
+            textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6,
+          }}>
+            Pinned ({pinnedSessions.size})
+          </div>
+          {Array.from(pinnedSessions).slice(0, 8).map(sid => {
+            const pt = points?.find(p => p.session_id === sid);
+            return (
+              <div key={sid} style={{
+                display: 'flex', alignItems: 'center', gap: 4, marginBottom: 3,
+                fontSize: 8, color: C.text,
+              }}>
+                <span style={{
+                  flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  fontFamily: "'JetBrains Mono', monospace",
+                }}>
+                  {pt?.name || sid}
+                </span>
+                {onFlyToSession && (
+                  <button onClick={() => onFlyToSession(sid)} style={{
+                    background: 'transparent', border: 'none', color: '#60A5FA',
+                    cursor: 'pointer', fontSize: 8, padding: '1px 3px',
+                  }}>Go</button>
+                )}
+                {onUnpinSession && (
+                  <button onClick={() => onUnpinSession(sid)} style={{
+                    background: 'transparent', border: 'none', color: '#EF4444',
+                    cursor: 'pointer', fontSize: 8, padding: '1px 3px',
+                  }}>x</button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Footer */}
       <div style={{

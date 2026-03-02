@@ -73,6 +73,7 @@ const ImpactAnalysisView = lazy(() => import('./ImpactAnalysis'));
 const HelpOverlay = lazy(() => import('../shared/HelpOverlay'));
 const AIChat = lazy(() => import('../chat/AIChat'));
 const AdminConsole = lazy(() => import('./AdminConsole'));
+const DecisionTreeView = lazy(() => import('./DecisionTreeView'));
 
 // ── View registry ─────────────────────────────────────────────────────────────
 // ViewId is the union of all valid tab identifiers. Adding a new tab requires:
@@ -80,7 +81,8 @@ const AdminConsole = lazy(() => import('./AdminConsole'));
 type ViewId = 'tier' | 'galaxy' | 'constellation' | 'explorer' | 'conflicts' | 'order' | 'matrix'
   | 'tables' | 'duplicates' | 'chunking'
   | 'complexity' | 'waves' | 'heatmap' | 'umap' | 'simulator' | 'concentration' | 'consensus'
-  | 'layers' | 'infra' | 'profile' | 'flowwalker' | 'lineage' | 'impact' | 'chat' | 'admin';
+  | 'layers' | 'infra' | 'profile' | 'flowwalker' | 'lineage' | 'impact' | 'chat' | 'admin'
+  | 'decisiontree';
 
 // Group determines tab section: core, harmonize, vector, nav
 const VIEWS: { id: ViewId; label: string; icon: string; group?: 'core' | 'vector' | 'nav' | 'harmonize' }[] = [
@@ -106,6 +108,7 @@ const VIEWS: { id: ViewId; label: string; icon: string; group?: 'core' | 'vector
   { id: 'flowwalker', label: 'Flow', icon: '\u21C4', group: 'nav' },
   { id: 'lineage', label: 'Lineage', icon: '\u2192', group: 'nav' },
   { id: 'impact', label: 'Impact', icon: '\u26A1', group: 'nav' },
+  { id: 'decisiontree', label: 'Decision Tree', icon: '\uD83C\uDF32', group: 'nav' },
   { id: 'chat', label: 'AI Chat', icon: '\uD83D\uDCAC', group: 'nav' },
 ];
 
@@ -169,6 +172,11 @@ export function DependencyApp() {
   const [selectedChunkIds, setSelectedChunkIds] = useState<Set<string>>(new Set());
   // Session search highlight state
   const [highlightedSessionIds, setHighlightedSessionIds] = useState<Set<string>>(new Set());
+  // Pinned sessions for constellation (persisted to localStorage)
+  const [pinnedSessions, setPinnedSessions] = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('edv-constellation-pins') || '[]')); }
+    catch { return new Set(); }
+  });
   // uploadId is passed to the vector/export endpoints to avoid re-sending large tier data
   const [uploadId, setUploadId] = useState<number | null>(null);
   const [recentUploads, setRecentUploads] = useState<UploadSummary[]>([]);
@@ -383,6 +391,24 @@ export function DependencyApp() {
     }
     setHighlightedSessionIds(linked);
   }, [sessionTableMap]);
+
+  const handlePinSession = useCallback((sessionId: string) => {
+    setPinnedSessions(prev => {
+      const next = new Set(prev);
+      next.add(sessionId);
+      localStorage.setItem('edv-constellation-pins', JSON.stringify([...next]));
+      return next;
+    });
+  }, []);
+
+  const handleUnpinSession = useCallback((sessionId: string) => {
+    setPinnedSessions(prev => {
+      const next = new Set(prev);
+      next.delete(sessionId);
+      localStorage.setItem('edv-constellation-pins', JSON.stringify([...next]));
+      return next;
+    });
+  }, []);
 
   // Load projects list on mount
   useEffect(() => {
@@ -1241,6 +1267,9 @@ export function DependencyApp() {
             onHighlightSession={handleHighlightSession}
             onFindLinked={handleFindLinked}
             onClearHighlight={() => setHighlightedSessionIds(new Set())}
+            pinnedSessions={pinnedSessions}
+            onPinSession={handlePinSession}
+            onUnpinSession={handleUnpinSession}
           />
         )}
 
@@ -1248,7 +1277,7 @@ export function DependencyApp() {
                   wrapped in Suspense. Edge-to-edge views use padding=0. ── */}
         <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, color: '#64748b' }}>Loading view...</div>}>
-            <div style={{ flex: 1, overflow: 'hidden', padding: (['tier', 'matrix', 'galaxy', 'constellation', 'tables', 'duplicates'].includes(view)) ? 0 : 20 }}>
+            <div style={{ flex: 1, overflow: 'hidden', padding: (['tier', 'matrix', 'galaxy', 'constellation', 'tables', 'duplicates', 'heatmap', 'umap', 'decisiontree'].includes(view)) ? 0 : 20 }}>
               {/* ── Core views ── */}
               {view === 'tier' && scopedTierData && (
                 <ErrorBoundary><TierDiagram data={scopedTierData} chunks={constellation?.chunks} /></ErrorBoundary>
@@ -1269,6 +1298,11 @@ export function DependencyApp() {
                     algorithm={algorithm}
                     onAlgorithmChange={handleRecluster}
                     highlightedSessionIds={highlightedSessionIds}
+                    tierData={tierData}
+                    vectorResults={vectorResults}
+                    pinnedSessions={pinnedSessions}
+                    onPinSession={handlePinSession}
+                    onUnpinSession={handleUnpinSession}
                   />
                 </ErrorBoundary>
               )}
@@ -1326,13 +1360,13 @@ export function DependencyApp() {
                 ) : <VectorFallback label="Wave Plan" onRun={() => navigateView('chunking')} onRunDirect={tierData ? () => analyzeVectors(tierData, 1, uploadId ?? undefined).then(r => { setVectorResults(prev => ({ ...prev, ...r })); addToast(`Vector analysis complete: ${Object.keys(r).filter(k => k.startsWith('v')).length} vectors`, 'success'); }).catch(e => addToast(e.message)) : undefined} />
               )}
               {view === 'heatmap' && (
-                vectorResults?.v11_complexity ? (
-                  <ErrorBoundary><div style={{ overflow: 'auto', height: '100%' }}><HeatMapView complexity={vectorResults.v11_complexity} /></div></ErrorBoundary>
+                vectorResults?.v11_complexity && tierData ? (
+                  <ErrorBoundary><div style={{ overflow: 'hidden', height: '100%' }}><HeatMapView complexity={vectorResults.v11_complexity} tierData={tierData} vectorResults={vectorResults} onSessionSelect={(sid) => { navigateView('flowwalker'); }} /></div></ErrorBoundary>
                 ) : <VectorFallback label="Heat Map" onRun={() => navigateView('chunking')} onRunDirect={tierData ? () => analyzeVectors(tierData, 1, uploadId ?? undefined).then(r => { setVectorResults(prev => ({ ...prev, ...r })); addToast(`Vector analysis complete: ${Object.keys(r).filter(k => k.startsWith('v')).length} vectors`, 'success'); }).catch(e => addToast(e.message)) : undefined} />
               )}
               {view === 'umap' && (
                 vectorResults?.v3_dimensionality_reduction ? (
-                  <ErrorBoundary><div style={{ overflow: 'auto', height: '100%' }}><UMAPView vectorResults={vectorResults} /></div></ErrorBoundary>
+                  <ErrorBoundary><div style={{ overflow: 'hidden', height: '100%' }}><UMAPView vectorResults={vectorResults} onSessionSelect={() => navigateView('flowwalker')} /></div></ErrorBoundary>
                 ) : <VectorFallback label="UMAP" phase={2} onRun={() => setRightPanel('vectors')} onRunDirect={tierData ? () => analyzeVectors(tierData, 2, uploadId ?? undefined).then(r => { setVectorResults(prev => ({ ...prev, ...r })); addToast(`Vector analysis complete: ${Object.keys(r).filter(k => k.startsWith('v')).length} vectors`, 'success'); }).catch(e => addToast(e.message)) : undefined} />
               )}
               {view === 'simulator' && (
@@ -1392,6 +1426,15 @@ export function DependencyApp() {
                 <ErrorBoundary>
                   <div style={{ overflow: 'hidden', height: '100%' }}>
                     <ImpactAnalysisView tierData={tierData} />
+                  </div>
+                </ErrorBoundary>
+              )}
+
+              {/* Decision Tree */}
+              {view === 'decisiontree' && tierData && (
+                <ErrorBoundary>
+                  <div style={{ overflow: 'hidden', height: '100%' }}>
+                    <DecisionTreeView tierData={tierData} vectorResults={vectorResults} />
                   </div>
                 </ErrorBoundary>
               )}

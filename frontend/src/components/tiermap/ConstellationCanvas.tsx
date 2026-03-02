@@ -2,7 +2,9 @@
  * Constellation Canvas — HTML5 Canvas renderer for 15K session points.
  * Uses D3 zoom/pan + quadtree for O(log N) hover/click hit detection.
  * Renders cluster hulls, labels, cross-chunk edges, and critical markers.
- * Supports: multi-select, display toggles, gradient scale map, session highlight.
+ * Supports: multi-select, display toggles, gradient scale map, session highlight,
+ * semantic LOD, search/fly-to, mini-map, path tracing, proximity radar,
+ * rich hover cards, edge bundling, session pins, complexity heat overlay.
  */
 
 import React, { useRef, useEffect, useCallback, useMemo, useState } from 'react';
@@ -12,7 +14,9 @@ import type {
   ConstellationChunk,
   CrossChunkEdge,
   AlgorithmKey,
+  TierMapResult,
 } from '../../types/tiermap';
+import type { VectorResults } from '../../types/vectors';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -22,11 +26,12 @@ const CRITICAL_RING = 7;
 const HULL_ALPHA = 0.08;
 const LABEL_FONT = '12px "JetBrains Mono", monospace';
 const LABEL_FONT_SM = '9px "JetBrains Mono", monospace';
-const LABEL_ZOOM_THRESHOLD = 1.8; // hide labels when zoomed in past this
 const EDGE_ALPHA = 0.15;
-
-/** Minimum session count for a cluster to get a label at default zoom. */
 const BIG_CLUSTER_THRESHOLD = 5;
+
+// LOD zoom thresholds
+const LOD_FAR_THRESHOLD = 0.8;
+const LOD_CLOSE_THRESHOLD = 3.0;
 
 const C = {
   bg: '#080C14',
@@ -35,17 +40,17 @@ const C = {
   dim: '#475569',
 };
 
-// ── Algorithm metadata (matches backend ALGORITHMS dict) ─────────────────────
+// ── Algorithm metadata ───────────────────────────────────────────────────────
 
 const ALGO_META: Record<AlgorithmKey, { name: string; desc: string; icon: string }> = {
-  louvain:       { name: 'Louvain',              icon: '\u25CE', desc: 'Modularity-based community detection \u2014 best for densely connected table groups' },
-  tier:          { name: 'Tier Groups',           icon: '\u2261', desc: 'Group sessions by execution tier \u2014 shows pipeline depth layers' },
-  components:    { name: 'Connected Components',  icon: '\u25C7', desc: 'Natural graph islands \u2014 zero-overlap sessions become separate clusters' },
-  label_prop:    { name: 'Label Propagation',     icon: '\u21B9', desc: 'Fast iterative label spreading \u2014 good for loosely connected graphs' },
-  greedy_mod:    { name: 'Greedy Modularity',     icon: '\u25A3', desc: 'Agglomerative merge \u2014 produces fewer, larger clusters' },
-  process_group: { name: 'Process Group',         icon: '\u229E', desc: 'Group by NiFi process group / Informatica workflow' },
-  table_gravity: { name: 'Table Gravity',         icon: '\u2299', desc: 'Cluster around most referenced tables \u2014 reveals critical shared dependencies' },
-  gradient_scale:{ name: 'Gradient Scale',        icon: '\u25D0', desc: 'Density heatmap \u2014 darker = higher session concentration, with top-10 peak markers' },
+  louvain:       { name: 'Louvain',              icon: '\u25CE', desc: 'Modularity-based community detection' },
+  tier:          { name: 'Tier Groups',           icon: '\u2261', desc: 'Group sessions by execution tier' },
+  components:    { name: 'Connected Components',  icon: '\u25C7', desc: 'Natural graph islands' },
+  label_prop:    { name: 'Label Propagation',     icon: '\u21B9', desc: 'Fast iterative label spreading' },
+  greedy_mod:    { name: 'Greedy Modularity',     icon: '\u25A3', desc: 'Agglomerative merge' },
+  process_group: { name: 'Process Group',         icon: '\u229E', desc: 'Group by process group / workflow' },
+  table_gravity: { name: 'Table Gravity',         icon: '\u2299', desc: 'Cluster around most-referenced tables' },
+  gradient_scale:{ name: 'Gradient Scale',        icon: '\u25D0', desc: 'Density heatmap with peak markers' },
 };
 
 const ALGO_KEYS: AlgorithmKey[] = ['louvain', 'tier', 'components', 'label_prop', 'greedy_mod', 'process_group', 'table_gravity', 'gradient_scale'];
@@ -62,6 +67,11 @@ interface ConstellationCanvasProps {
   onAlgorithmChange?: (algo: AlgorithmKey) => void;
   reclustering?: boolean;
   highlightedSessionIds?: Set<string>;
+  tierData?: TierMapResult;
+  vectorResults?: VectorResults | null;
+  pinnedSessions?: Set<string>;
+  onPinSession?: (sessionId: string) => void;
+  onUnpinSession?: (sessionId: string) => void;
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -76,8 +86,14 @@ export default function ConstellationCanvas({
   onAlgorithmChange,
   reclustering = false,
   highlightedSessionIds = new Set(),
+  tierData,
+  vectorResults,
+  pinnedSessions = new Set(),
+  onPinSession,
+  onUnpinSession,
 }: ConstellationCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const miniMapRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const transformRef = useRef(d3.zoomIdentity);
   const hoverRef = useRef<ConstellationPoint | null>(null);
@@ -85,11 +101,31 @@ export default function ConstellationCanvas({
   const rafRef = useRef<number>(0);
   const dimsRef = useRef({ w: 800, h: 600 });
   const mousePosRef = useRef<{ x: number; y: number } | null>(null);
+  const zoomRef = useRef<d3.ZoomBehavior<HTMLCanvasElement, unknown> | null>(null);
+  const pulseRef = useRef(0);
+
   const [fisheyeEnabled, setFisheyeEnabled] = useState(false);
   const [showEdges, setShowEdges] = useState(true);
   const [showHulls, setShowHulls] = useState(true);
+  const [showHeatOverlay, setShowHeatOverlay] = useState(false);
 
-  // ── Pre-computed chunk lookup maps ────────────────────────────────────────
+  // Search state
+  const [searchTerm, setSearchTerm] = useState('');
+  const [searchFocusedId, setSearchFocusedId] = useState<string | null>(null);
+
+  // Path tracing
+  const [pathStart, setPathStart] = useState<string | null>(null);
+  const [pathEnd, setPathEnd] = useState<string | null>(null);
+  const [tracedPath, setTracedPath] = useState<string[]>([]);
+
+  // Proximity radar
+  const [radarHops, setRadarHops] = useState(2);
+  const [showRadar, setShowRadar] = useState(false);
+  const [radarSession, setRadarSession] = useState<string | null>(null);
+  const [radarResult, setRadarResult] = useState<Map<string, number>>(new Map());
+
+  // ── Pre-computed lookup maps ───────────────────────────────────────────
+
   const chunkMap = useMemo(() => {
     const m = new Map<string, ConstellationChunk>();
     for (const c of chunks) m.set(c.id, c);
@@ -102,22 +138,21 @@ export default function ConstellationCanvas({
     return m;
   }, [chunks]);
 
+  const pointMap = useMemo(() => {
+    const m = new Map<string, ConstellationPoint>();
+    for (const p of points) m.set(p.session_id, p);
+    return m;
+  }, [points]);
+
   const chunkCentroids = useMemo(() => {
     const centroids = new Map<string, { x: number; y: number; count: number }>();
     for (const p of points) {
       const c = centroids.get(p.chunk_id);
-      if (c) {
-        c.x += p.x;
-        c.y += p.y;
-        c.count += 1;
-      } else {
-        centroids.set(p.chunk_id, { x: p.x, y: p.y, count: 1 });
-      }
+      if (c) { c.x += p.x; c.y += p.y; c.count += 1; }
+      else centroids.set(p.chunk_id, { x: p.x, y: p.y, count: 1 });
     }
     const result = new Map<string, { x: number; y: number }>();
-    for (const [id, c] of centroids) {
-      result.set(id, { x: c.x / c.count, y: c.y / c.count });
-    }
+    for (const [id, c] of centroids) result.set(id, { x: c.x / c.count, y: c.y / c.count });
     return result;
   }, [points]);
 
@@ -130,32 +165,108 @@ export default function ConstellationCanvas({
     }
     const hulls = new Map<string, [number, number][]>();
     for (const [id, pts] of grouped) {
-      if (pts.length < 3) {
-        hulls.set(id, pts);
-        continue;
-      }
+      if (pts.length < 3) { hulls.set(id, pts); continue; }
       const hull = d3.polygonHull(pts);
-      if (hull) hulls.set(id, hull);
-      else hulls.set(id, pts);
+      hulls.set(id, hull || pts);
     }
     return hulls;
   }, [points]);
 
   const quadtree = useMemo(() => {
-    return d3.quadtree<ConstellationPoint>()
-      .x((d) => d.x)
-      .y((d) => d.y)
-      .addAll(points);
+    return d3.quadtree<ConstellationPoint>().x(d => d.x).y(d => d.y).addAll(points);
   }, [points]);
 
-  // ── Gradient Scale Map: KDE density computation ──────────────────────────
+  // ── Adjacency list for path tracing / proximity ────────────────────────
+
+  const adjacency = useMemo(() => {
+    if (!tierData) return new Map<string, Set<string>>();
+    const adj = new Map<string, Set<string>>();
+    const sessionNameToId = new Map<string, string>();
+    for (const s of tierData.sessions) sessionNameToId.set(s.id, s.name);
+
+    for (const conn of tierData.connections) {
+      const fromName = sessionNameToId.get(conn.from);
+      const toName = sessionNameToId.get(conn.to);
+      if (fromName && toName) {
+        if (!adj.has(fromName)) adj.set(fromName, new Set());
+        if (!adj.has(toName)) adj.set(toName, new Set());
+        adj.get(fromName)!.add(toName);
+        adj.get(toName)!.add(fromName);
+      }
+    }
+    return adj;
+  }, [tierData]);
+
+  // ── Complexity score map ───────────────────────────────────────────────
+
+  const complexityMap = useMemo(() => {
+    const m = new Map<string, number>();
+    if (vectorResults?.v11_complexity?.scores) {
+      for (const s of vectorResults.v11_complexity.scores) m.set(s.session_id, s.overall_score);
+    }
+    return m;
+  }, [vectorResults]);
+
+  const waveMap = useMemo(() => {
+    const m = new Map<string, number>();
+    if (vectorResults?.v4_wave_plan?.waves) {
+      for (const w of vectorResults.v4_wave_plan.waves) {
+        for (const sid of w.session_ids) m.set(sid, w.wave_number);
+      }
+    }
+    return m;
+  }, [vectorResults]);
+
+  const gravityMap = useMemo(() => {
+    const m = new Map<string, number>();
+    if (vectorResults?.v10_concentration?.gravity_groups) {
+      for (const g of vectorResults.v10_concentration.gravity_groups) {
+        for (const sid of g.session_ids) m.set(sid, g.group_id);
+      }
+    }
+    return m;
+  }, [vectorResults]);
+
+  // ── Complexity heat overlay KDE ────────────────────────────────────────
+
+  const heatGrid = useMemo(() => {
+    if (!showHeatOverlay || complexityMap.size === 0) return null;
+    const gridSize = 60;
+    const bandwidth = 0.05;
+    const grid = new Float64Array(gridSize * gridSize);
+    const bwCells = Math.ceil(bandwidth * gridSize * 3);
+
+    for (const p of points) {
+      const weight = (complexityMap.get(p.session_id) || 0) / 100;
+      if (weight < 0.01) continue;
+      const gx = p.x * (gridSize - 1);
+      const gy = p.y * (gridSize - 1);
+      const x0 = Math.max(0, Math.floor(gx) - bwCells);
+      const x1 = Math.min(gridSize - 1, Math.ceil(gx) + bwCells);
+      const y0 = Math.max(0, Math.floor(gy) - bwCells);
+      const y1 = Math.min(gridSize - 1, Math.ceil(gy) + bwCells);
+      for (let iy = y0; iy <= y1; iy++) {
+        for (let ix = x0; ix <= x1; ix++) {
+          const dx = (ix / (gridSize - 1) - p.x) / bandwidth;
+          const dy = (iy / (gridSize - 1) - p.y) / bandwidth;
+          grid[iy * gridSize + ix] += weight * Math.exp(-0.5 * (dx * dx + dy * dy));
+        }
+      }
+    }
+
+    let maxVal = 0;
+    for (let i = 0; i < grid.length; i++) if (grid[i] > maxVal) maxVal = grid[i];
+    return { grid, maxVal, gridSize };
+  }, [points, complexityMap, showHeatOverlay]);
+
+  // ── Gradient Scale density ─────────────────────────────────────────────
+
   const densityGrid = useMemo(() => {
     if (algorithm !== 'gradient_scale') return null;
     const gridSize = 80;
     const bandwidth = 0.04;
     const grid = new Float64Array(gridSize * gridSize);
     const bwCells = Math.ceil(bandwidth * gridSize * 3);
-
     for (const p of points) {
       const gx = p.x * (gridSize - 1);
       const gy = p.y * (gridSize - 1);
@@ -167,18 +278,12 @@ export default function ConstellationCanvas({
         for (let ix = x0; ix <= x1; ix++) {
           const dx = (ix / (gridSize - 1) - p.x) / bandwidth;
           const dy = (iy / (gridSize - 1) - p.y) / bandwidth;
-          const kernel = Math.exp(-0.5 * (dx * dx + dy * dy));
-          grid[iy * gridSize + ix] += kernel;
+          grid[iy * gridSize + ix] += Math.exp(-0.5 * (dx * dx + dy * dy));
         }
       }
     }
-
     let maxDensity = 0;
-    for (let i = 0; i < grid.length; i++) {
-      if (grid[i] > maxDensity) maxDensity = grid[i];
-    }
-
-    // Find local maxima (peaks)
+    for (let i = 0; i < grid.length; i++) if (grid[i] > maxDensity) maxDensity = grid[i];
     const rawPeaks: Array<{ x: number; y: number; density: number }> = [];
     const threshold = maxDensity * 0.15;
     for (let iy = 1; iy < gridSize - 1; iy++) {
@@ -196,12 +301,97 @@ export default function ConstellationCanvas({
       }
     }
     rawPeaks.sort((a, b) => b.density - a.density);
-    const peaks = rawPeaks.slice(0, 10);
-
-    return { grid, maxDensity, peaks, gridSize };
+    return { grid, maxDensity, peaks: rawPeaks.slice(0, 10), gridSize };
   }, [points, algorithm]);
 
-  // ── Drawing ───────────────────────────────────────────────────────────────
+  // ── Search results ─────────────────────────────────────────────────────
+
+  const searchResults = useMemo(() => {
+    if (!searchTerm.trim()) return [];
+    const q = searchTerm.toLowerCase();
+    return points.filter(p => p.name.toLowerCase().includes(q) || p.session_id.toLowerCase().includes(q)).slice(0, 20);
+  }, [searchTerm, points]);
+
+  // ── BFS for path tracing ───────────────────────────────────────────────
+
+  useEffect(() => {
+    if (!pathStart || !pathEnd || pathStart === pathEnd) { setTracedPath([]); return; }
+    // BFS from pathStart to pathEnd using session names
+    const startPt = pointMap.get(pathStart);
+    const endPt = pointMap.get(pathEnd);
+    if (!startPt || !endPt) { setTracedPath([]); return; }
+
+    const queue: string[][] = [[startPt.name]];
+    const visited = new Set([startPt.name]);
+    const targetName = endPt.name;
+
+    while (queue.length > 0) {
+      const path = queue.shift()!;
+      const current = path[path.length - 1];
+      if (current === targetName) {
+        // Convert names back to session_ids
+        const nameToId = new Map(points.map(p => [p.name, p.session_id]));
+        setTracedPath(path.map(n => nameToId.get(n) || n));
+        return;
+      }
+      const neighbors = adjacency.get(current);
+      if (neighbors) {
+        for (const n of neighbors) {
+          if (!visited.has(n)) {
+            visited.add(n);
+            queue.push([...path, n]);
+          }
+        }
+      }
+    }
+    setTracedPath([]);
+  }, [pathStart, pathEnd, adjacency, pointMap, points]);
+
+  // ── BFS for proximity radar ────────────────────────────────────────────
+
+  useEffect(() => {
+    if (!showRadar || !radarSession) { setRadarResult(new Map()); return; }
+    const pt = pointMap.get(radarSession);
+    if (!pt) { setRadarResult(new Map()); return; }
+
+    const result = new Map<string, number>();
+    const nameToId = new Map(points.map(p => [p.name, p.session_id]));
+    const queue: [string, number][] = [[pt.name, 0]];
+    const visited = new Set([pt.name]);
+
+    while (queue.length > 0) {
+      const [current, hop] = queue.shift()!;
+      const sid = nameToId.get(current);
+      if (sid) result.set(sid, hop);
+      if (hop >= radarHops) continue;
+      const neighbors = adjacency.get(current);
+      if (neighbors) {
+        for (const n of neighbors) {
+          if (!visited.has(n)) {
+            visited.add(n);
+            queue.push([n, hop + 1]);
+          }
+        }
+      }
+    }
+    setRadarResult(result);
+  }, [showRadar, radarSession, radarHops, adjacency, pointMap, points]);
+
+  // ── Edge bundles ───────────────────────────────────────────────────────
+
+  const edgeBundles = useMemo(() => {
+    const bundles = new Map<string, { from: string; to: string; count: number }>();
+    for (const edge of crossChunkEdges) {
+      const key = [edge.from_chunk, edge.to_chunk].sort().join('|');
+      const existing = bundles.get(key);
+      if (existing) existing.count += edge.count;
+      else bundles.set(key, { from: edge.from_chunk, to: edge.to_chunk, count: edge.count });
+    }
+    return Array.from(bundles.values());
+  }, [crossChunkEdges]);
+
+  // ── Drawing ────────────────────────────────────────────────────────────
+
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -212,6 +402,7 @@ export default function ConstellationCanvas({
     const { w, h } = dimsRef.current;
     const t = transformRef.current;
     const hover = hoverRef.current;
+    const k = t.k; // zoom level
 
     const pad = 40;
     const cw = w - pad * 2;
@@ -222,434 +413,624 @@ export default function ConstellationCanvas({
     ctx.save();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    // Clear
     ctx.fillStyle = C.bg;
     ctx.fillRect(0, 0, w, h);
 
     const hasFilter = selectedChunkIds.size > 0;
     const hasHighlight = highlightedSessionIds.size > 0;
     const isGradient = algorithm === 'gradient_scale';
+    const isRadarActive = showRadar && radarResult.size > 0;
+    const hasTracedPath = tracedPath.length > 1;
+    const tracedSet = new Set(tracedPath);
+    const focusedPt = searchFocusedId ? pointMap.get(searchFocusedId) : null;
 
-    // ── GRADIENT SCALE MAP MODE ──────────────────────────────────────────
+    // ── Complexity heat overlay ──────────────────────────────────────────
+    if (showHeatOverlay && heatGrid && !isGradient) {
+      const { grid, maxVal, gridSize } = heatGrid;
+      const cellW = cw / gridSize;
+      const cellH = ch / gridSize;
+      for (let iy = 0; iy < gridSize; iy++) {
+        for (let ix = 0; ix < gridSize; ix++) {
+          const val = grid[iy * gridSize + ix];
+          if (val < maxVal * 0.02) continue;
+          const norm = val / maxVal;
+          const px = sx(ix / (gridSize - 1)) - cellW * k / 2;
+          const py = sy(iy / (gridSize - 1)) - cellH * k / 2;
+          const r = Math.round(34 + norm * (239 - 34));
+          const g = Math.round(197 + norm * (68 - 197));
+          const b = Math.round(94 + norm * (68 - 94));
+          ctx.fillStyle = `rgba(${r},${g},${b},${0.08 + norm * 0.25})`;
+          ctx.fillRect(px, py, cellW * k + 1, cellH * k + 1);
+        }
+      }
+    }
+
+    // ── GRADIENT SCALE MAP MODE ─────────────────────────────────────────
     if (isGradient && densityGrid) {
       const { grid, maxDensity, peaks, gridSize } = densityGrid;
       const cellW = cw / gridSize;
       const cellH = ch / gridSize;
       const densityThreshold = maxDensity * 0.01;
-
-      // Draw density cells
       for (let iy = 0; iy < gridSize; iy++) {
         for (let ix = 0; ix < gridSize; ix++) {
           const val = grid[iy * gridSize + ix];
           if (val < densityThreshold) continue;
           const norm = val / maxDensity;
-          const lightness = 90 - norm * 65; // 90% (sparse) → 25% (dense)
-          const alpha = 0.15 + norm * 0.6; // 0.15 → 0.75
-          const px = sx(ix / (gridSize - 1)) - cellW * t.k / 2;
-          const py = sy(iy / (gridSize - 1)) - cellH * t.k / 2;
+          const lightness = 90 - norm * 65;
+          const alpha = 0.15 + norm * 0.6;
+          const px = sx(ix / (gridSize - 1)) - cellW * k / 2;
+          const py = sy(iy / (gridSize - 1)) - cellH * k / 2;
           ctx.fillStyle = `hsla(220, 80%, ${lightness}%, ${alpha})`;
-          ctx.fillRect(px, py, cellW * t.k + 1, cellH * t.k + 1);
+          ctx.fillRect(px, py, cellW * k + 1, cellH * k + 1);
         }
       }
-
-      // Draw session dots (dimmed, uniform gray)
       for (const p of points) {
-        const px = sx(p.x);
-        const py = sy(p.y);
         ctx.beginPath();
-        ctx.arc(px, py, DOT_RADIUS * 0.8, 0, Math.PI * 2);
+        ctx.arc(sx(p.x), sy(p.y), DOT_RADIUS * 0.8, 0, Math.PI * 2);
         ctx.fillStyle = 'rgba(148, 163, 184, 0.3)';
         ctx.fill();
-        if (p.critical) {
-          ctx.beginPath();
-          ctx.arc(px, py, CRITICAL_RING * 0.7, 0, Math.PI * 2);
-          ctx.strokeStyle = 'rgba(239, 68, 68, 0.4)';
-          ctx.lineWidth = 1;
-          ctx.stroke();
-        }
       }
-
-      // Draw top-10 peak markers (red pins)
       for (let i = 0; i < peaks.length; i++) {
         const peak = peaks[i];
         const px = sx(peak.x);
-        const py = sx !== undefined ? sy(peak.y) : 0;
-        const rank = i + 1;
+        const py = sy(peak.y);
         const headR = 10 - i * 0.4;
-        const brightness = 1.0 - i * 0.04;
-
-        // Pin stem
-        ctx.beginPath();
-        ctx.moveTo(px, py);
-        ctx.lineTo(px, py + 12);
-        ctx.strokeStyle = `rgba(239, 68, 68, ${brightness * 0.6})`;
-        ctx.lineWidth = 2;
-        ctx.stroke();
-
-        // Pin head
-        ctx.beginPath();
-        ctx.arc(px, py, headR, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(239, 68, 68, ${brightness * 0.8})`;
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-
-        // Rank number
-        ctx.fillStyle = '#fff';
-        ctx.font = `bold ${headR > 7 ? 9 : 7}px "JetBrains Mono", monospace`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(String(rank), px, py);
+        const br = 1.0 - i * 0.04;
+        ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px, py + 12);
+        ctx.strokeStyle = `rgba(239, 68, 68, ${br * 0.6})`; ctx.lineWidth = 2; ctx.stroke();
+        ctx.beginPath(); ctx.arc(px, py, headR, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(239, 68, 68, ${br * 0.8})`; ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = 1.5; ctx.stroke();
+        ctx.fillStyle = '#fff'; ctx.font = `bold ${headR > 7 ? 9 : 7}px "JetBrains Mono", monospace`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(i + 1), px, py);
       }
-
-      // Density legend (bottom-right, above zoom controls)
-      const legendX = w - 140;
-      const legendY = h - 80;
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
-      roundRect(ctx, legendX - 8, legendY - 6, 120, 36, 6);
-      ctx.fill();
+      const legendX = w - 140; const legendY = h - 80;
+      ctx.fillStyle = 'rgba(15,23,42,0.85)'; roundRect(ctx, legendX - 8, legendY - 6, 120, 36, 6); ctx.fill();
       const grad = ctx.createLinearGradient(legendX, 0, legendX + 100, 0);
-      grad.addColorStop(0, 'hsl(220, 80%, 85%)');
-      grad.addColorStop(1, 'hsl(220, 80%, 25%)');
-      ctx.fillStyle = grad;
-      roundRect(ctx, legendX, legendY, 100, 12, 3);
-      ctx.fill();
-      ctx.font = '8px "JetBrains Mono", monospace';
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'top';
-      ctx.fillStyle = C.muted;
-      ctx.fillText('Low', legendX, legendY + 16);
-      ctx.textAlign = 'right';
-      ctx.fillText('High', legendX + 100, legendY + 16);
-      ctx.textAlign = 'center';
-      ctx.fillText(`${peaks.length} peaks`, legendX + 50, legendY + 16);
-
+      grad.addColorStop(0, 'hsl(220,80%,85%)'); grad.addColorStop(1, 'hsl(220,80%,25%)');
+      ctx.fillStyle = grad; roundRect(ctx, legendX, legendY, 100, 12, 3); ctx.fill();
+      ctx.font = '8px "JetBrains Mono", monospace'; ctx.fillStyle = C.muted;
+      ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText('Low', legendX, legendY + 16);
+      ctx.textAlign = 'right'; ctx.fillText('High', legendX + 100, legendY + 16);
     } else {
-      // ── NORMAL MODE ────────────────────────────────────────────────────
+      // ── NORMAL MODE ───────────────────────────────────────────────────
 
-      // Draw cluster hulls
-      if (showHulls) {
-        for (const [chunkId, hull] of chunkHulls) {
-          if (hull.length < 3) continue;
-          const color = chunkColorMap.get(chunkId) || '#3B82F6';
-          const isSelected = !hasFilter || selectedChunkIds.has(chunkId);
-          const hullAlpha = isSelected ? HULL_ALPHA : HULL_ALPHA * 0.15;
-          const strokeAlpha = isSelected ? 0.2 : 0.04;
-          ctx.beginPath();
-          ctx.moveTo(sx(hull[0][0]), sy(hull[0][1]));
-          for (let i = 1; i < hull.length; i++) {
-            ctx.lineTo(sx(hull[i][0]), sy(hull[i][1]));
-          }
-          ctx.closePath();
-          ctx.fillStyle = hexToRgba(color, hullAlpha);
-          ctx.fill();
-          if (isSelected) {
-            ctx.strokeStyle = hexToRgba(color, strokeAlpha + (selectedChunkIds.has(chunkId) ? 0.4 : 0));
-            ctx.lineWidth = selectedChunkIds.has(chunkId) ? 2 : 1;
-            ctx.stroke();
-          }
-        }
-      }
-
-      // Draw cross-chunk edges
-      if (showEdges) {
-        for (const edge of crossChunkEdges) {
-          if (hasFilter && !selectedChunkIds.has(edge.from_chunk) && !selectedChunkIds.has(edge.to_chunk)) continue;
-          const from = chunkCentroids.get(edge.from_chunk);
-          const to = chunkCentroids.get(edge.to_chunk);
-          if (!from || !to) continue;
-          const edgeAlpha = hasFilter
-            ? (selectedChunkIds.has(edge.from_chunk) || selectedChunkIds.has(edge.to_chunk) ? 0.4 : 0.03)
-            : EDGE_ALPHA;
-          ctx.beginPath();
-          ctx.moveTo(sx(from.x), sy(from.y));
-          ctx.lineTo(sx(to.x), sy(to.y));
-          ctx.strokeStyle = `rgba(148, 163, 184, ${edgeAlpha})`;
-          ctx.lineWidth = Math.min(edge.count * 0.3, 3);
-          ctx.stroke();
-        }
-      }
-
-      // ── Determine which clusters are "big" (enough to label) ──
       const totalSess = points.length;
-      const labelThreshold = totalSess > 500
-        ? Math.max(BIG_CLUSTER_THRESHOLD, Math.ceil(totalSess * 0.005))
-        : BIG_CLUSTER_THRESHOLD;
-
+      const labelThreshold = totalSess > 500 ? Math.max(BIG_CLUSTER_THRESHOLD, Math.ceil(totalSess * 0.005)) : BIG_CLUSTER_THRESHOLD;
       const chunkSizeMap = new Map<string, number>();
       for (const chunk of chunks) chunkSizeMap.set(chunk.id, chunk.session_count);
 
-      // Draw dots
-      for (const p of points) {
-        const px = sx(p.x);
-        const py = sy(p.y);
-        const color = chunkColorMap.get(p.chunk_id) || '#3B82F6';
-        const isHover = hover && hover.session_id === p.session_id;
-        const isInSelected = !hasFilter || selectedChunkIds.has(p.chunk_id);
-        const isHighlighted = hasHighlight ? highlightedSessionIds.has(p.session_id) : null;
-        const cSize = chunkSizeMap.get(p.chunk_id) || 1;
-        const baseR = cSize >= labelThreshold
-          ? DOT_RADIUS + Math.min(Math.log2(cSize) * 0.4, 2)
-          : DOT_RADIUS;
-
-        // If highlight mode active and this point is NOT highlighted, dim it
-        if (isHighlighted === false) {
-          ctx.beginPath();
-          ctx.arc(px, py, baseR * 0.5, 0, Math.PI * 2);
-          ctx.fillStyle = 'rgba(100, 116, 139, 0.08)';
-          ctx.fill();
-          continue;
+      // ── LOD: FAR — Supernode bubbles ──
+      if (k < LOD_FAR_THRESHOLD) {
+        // Draw hulls dimly
+        if (showHulls) {
+          for (const [chunkId, hull] of chunkHulls) {
+            if (hull.length < 3) continue;
+            const color = chunkColorMap.get(chunkId) || '#3B82F6';
+            const isSelected = !hasFilter || selectedChunkIds.has(chunkId);
+            ctx.beginPath();
+            ctx.moveTo(sx(hull[0][0]), sy(hull[0][1]));
+            for (let i = 1; i < hull.length; i++) ctx.lineTo(sx(hull[i][0]), sy(hull[i][1]));
+            ctx.closePath();
+            ctx.fillStyle = hexToRgba(color, isSelected ? 0.04 : 0.01);
+            ctx.fill();
+          }
         }
 
-        // If highlighted, draw amber ring
-        if (isHighlighted === true) {
-          ctx.beginPath();
-          ctx.arc(px, py, baseR + 4, 0, Math.PI * 2);
-          ctx.strokeStyle = 'rgba(245, 158, 11, 0.8)';
-          ctx.lineWidth = 2;
-          ctx.stroke();
-        }
-
-        const r = isHover ? DOT_RADIUS_HOVER : (isInSelected ? baseR : baseR * 0.6);
-
-        // Critical marker ring
-        if (p.critical && isInSelected) {
-          ctx.beginPath();
-          ctx.arc(px, py, CRITICAL_RING, 0, Math.PI * 2);
-          ctx.strokeStyle = 'rgba(239, 68, 68, 0.5)';
-          ctx.lineWidth = 1.5;
-          ctx.stroke();
-        }
-
-        ctx.beginPath();
-        ctx.arc(px, py, r, 0, Math.PI * 2);
-        ctx.fillStyle = isHover ? '#ffffff' : color;
-        ctx.globalAlpha = isInSelected ? (cSize >= labelThreshold ? 1.0 : 0.6) : 0.08;
-        ctx.fill();
-        ctx.globalAlpha = 1.0;
-
-        if (isHover) {
-          ctx.strokeStyle = color;
-          ctx.lineWidth = 2;
-          ctx.stroke();
-        }
-      }
-
-      // Draw cluster labels
-      if (t.k < LABEL_ZOOM_THRESHOLD) {
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
+        // Draw supernode bubbles at centroids
         for (const chunk of chunks) {
-          const isThisSelected = selectedChunkIds.has(chunk.id);
-          if (!isThisSelected && chunk.session_count < labelThreshold) continue;
-          if (hasFilter && !isThisSelected) continue;
           const centroid = chunkCentroids.get(chunk.id);
           if (!centroid) continue;
-          const lx = sx(centroid.x);
-          const ly = sy(centroid.y);
+          const isSelected = !hasFilter || selectedChunkIds.has(chunk.id);
+          if (hasFilter && !isSelected) continue;
+          const cx = sx(centroid.x);
+          const cy = sy(centroid.y);
+          const r = Math.max(8, Math.sqrt(chunk.session_count) * 2.5);
+          const color = chunk.color;
 
+          ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
+          ctx.fillStyle = hexToRgba(color, 0.3); ctx.fill();
+          ctx.strokeStyle = hexToRgba(color, 0.6); ctx.lineWidth = 1.5; ctx.stroke();
+
+          // Label
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.font = '10px "JetBrains Mono", monospace';
+          ctx.fillStyle = hexToRgba(color, 0.9);
           const label = chunk.label.split(':')[0];
-          const countLabel = `${chunk.session_count} sessions`;
-          ctx.font = LABEL_FONT;
-          const tw = ctx.measureText(label).width + 16;
-          const pillH = 32;
-          ctx.fillStyle = isThisSelected ? 'rgba(8, 12, 20, 0.9)' : 'rgba(8, 12, 20, 0.75)';
-          roundRect(ctx, lx - tw / 2, ly - pillH / 2 - 4, tw, pillH, 6);
-          ctx.fill();
-          if (isThisSelected) {
-            ctx.strokeStyle = hexToRgba(chunk.color, 0.6);
-            ctx.lineWidth = 1.5;
+          ctx.fillText(label.slice(0, 14), cx, cy - 5);
+          ctx.font = '8px "JetBrains Mono", monospace';
+          ctx.fillStyle = hexToRgba(color, 0.6);
+          ctx.fillText(`${chunk.session_count}`, cx, cy + 7);
+        }
+
+        // Draw bundled edges between supernodes
+        if (showEdges) {
+          for (const bundle of edgeBundles) {
+            const from = chunkCentroids.get(bundle.from);
+            const to = chunkCentroids.get(bundle.to);
+            if (!from || !to) continue;
+            if (hasFilter && !selectedChunkIds.has(bundle.from) && !selectedChunkIds.has(bundle.to)) continue;
+            const fx = sx(from.x); const fy = sy(from.y);
+            const tx = sx(to.x); const ty = sy(to.y);
+            const mx = (fx + tx) / 2;
+            const my = (fy + ty) / 2;
+            const dx = tx - fx; const dy = ty - fy;
+            const perpX = -dy * 0.15; const perpY = dx * 0.15;
+            ctx.beginPath();
+            ctx.moveTo(fx, fy);
+            ctx.quadraticCurveTo(mx + perpX, my + perpY, tx, ty);
+            ctx.strokeStyle = `rgba(148, 163, 184, ${Math.min(0.4, bundle.count * 0.05)})`;
+            ctx.lineWidth = Math.min(Math.sqrt(bundle.count) * 0.5, 4);
             ctx.stroke();
           }
+        }
+      } else {
+        // ── LOD: MEDIUM & CLOSE ─────────────────────────────────────────
 
-          ctx.fillStyle = hexToRgba(chunk.color, isThisSelected ? 1.0 : 0.9);
-          ctx.font = LABEL_FONT;
-          ctx.fillText(label, lx, ly - 6);
+        // Draw cluster hulls
+        if (showHulls) {
+          for (const [chunkId, hull] of chunkHulls) {
+            if (hull.length < 3) continue;
+            const color = chunkColorMap.get(chunkId) || '#3B82F6';
+            const isSelected = !hasFilter || selectedChunkIds.has(chunkId);
+            const hullAlpha = isSelected ? HULL_ALPHA : HULL_ALPHA * 0.15;
+            ctx.beginPath();
+            ctx.moveTo(sx(hull[0][0]), sy(hull[0][1]));
+            for (let i = 1; i < hull.length; i++) ctx.lineTo(sx(hull[i][0]), sy(hull[i][1]));
+            ctx.closePath();
+            ctx.fillStyle = hexToRgba(color, hullAlpha);
+            ctx.fill();
+            if (isSelected) {
+              ctx.strokeStyle = hexToRgba(color, 0.2 + (selectedChunkIds.has(chunkId) ? 0.4 : 0));
+              ctx.lineWidth = selectedChunkIds.has(chunkId) ? 2 : 1;
+              ctx.stroke();
+            }
+          }
+        }
 
-          ctx.font = LABEL_FONT_SM;
-          ctx.fillStyle = hexToRgba(chunk.color, isThisSelected ? 0.8 : 0.6);
-          ctx.fillText(countLabel, lx, ly + 10);
+        // Draw edges (bundled curves)
+        if (showEdges) {
+          for (const bundle of edgeBundles) {
+            const from = chunkCentroids.get(bundle.from);
+            const to = chunkCentroids.get(bundle.to);
+            if (!from || !to) continue;
+            if (hasFilter && !selectedChunkIds.has(bundle.from) && !selectedChunkIds.has(bundle.to)) continue;
+            const fx = sx(from.x); const fy = sy(from.y);
+            const tx = sx(to.x); const ty = sy(to.y);
+            const mx = (fx + tx) / 2;
+            const my = (fy + ty) / 2;
+            const dx = tx - fx; const dy = ty - fy;
+            const perpX = -dy * 0.12; const perpY = dx * 0.12;
+            const edgeAlpha = hasFilter
+              ? (selectedChunkIds.has(bundle.from) || selectedChunkIds.has(bundle.to) ? 0.35 : 0.03)
+              : EDGE_ALPHA;
+            ctx.beginPath();
+            ctx.moveTo(fx, fy);
+            ctx.quadraticCurveTo(mx + perpX, my + perpY, tx, ty);
+            ctx.strokeStyle = `rgba(148, 163, 184, ${edgeAlpha})`;
+            ctx.lineWidth = Math.min(Math.sqrt(bundle.count) * 0.5, 3);
+            ctx.stroke();
+          }
+        }
+
+        // ── Proximity radar circles ──
+        if (isRadarActive && radarSession) {
+          const radarPt = pointMap.get(radarSession);
+          if (radarPt) {
+            const rpx = sx(radarPt.x);
+            const rpy = sy(radarPt.y);
+            for (let hop = radarHops; hop >= 1; hop--) {
+              const radius = hop * 40 * k;
+              ctx.beginPath(); ctx.arc(rpx, rpy, radius, 0, Math.PI * 2);
+              const hopColor = hop === 1 ? 'rgba(239,68,68,0.12)' : hop === 2 ? 'rgba(249,115,22,0.08)' : 'rgba(234,179,8,0.05)';
+              ctx.fillStyle = hopColor; ctx.fill();
+              ctx.strokeStyle = hop === 1 ? 'rgba(239,68,68,0.3)' : 'rgba(249,115,22,0.2)';
+              ctx.lineWidth = 1; ctx.stroke();
+            }
+          }
+        }
+
+        // Draw dots
+        for (const p of points) {
+          const px = sx(p.x);
+          const py = sy(p.y);
+          const color = chunkColorMap.get(p.chunk_id) || '#3B82F6';
+          const isHover = hover && hover.session_id === p.session_id;
+          const isInSelected = !hasFilter || selectedChunkIds.has(p.chunk_id);
+          const isHighlighted = hasHighlight ? highlightedSessionIds.has(p.session_id) : null;
+          const isPinned = pinnedSessions.has(p.session_id);
+          const isFocused = searchFocusedId === p.session_id;
+          const isInPath = hasTracedPath && tracedSet.has(p.session_id);
+          const isRadarHit = isRadarActive ? radarResult.get(p.session_id) : undefined;
+          const cSize = chunkSizeMap.get(p.chunk_id) || 1;
+          const baseR = cSize >= labelThreshold ? DOT_RADIUS + Math.min(Math.log2(cSize) * 0.4, 2) : DOT_RADIUS;
+
+          // Radar dimming: if radar active and NOT in radar, dim heavily
+          if (isRadarActive && isRadarHit === undefined) {
+            ctx.beginPath(); ctx.arc(px, py, baseR * 0.4, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(100, 116, 139, 0.05)'; ctx.fill();
+            continue;
+          }
+
+          // Highlight dimming
+          if (isHighlighted === false) {
+            ctx.beginPath(); ctx.arc(px, py, baseR * 0.5, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(100, 116, 139, 0.08)'; ctx.fill();
+            continue;
+          }
+
+          // Path tracing: dim non-path points when tracing
+          if (hasTracedPath && !isInPath && !isHover) {
+            ctx.beginPath(); ctx.arc(px, py, baseR * 0.4, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(100, 116, 139, 0.06)'; ctx.fill();
+            continue;
+          }
+
+          // Highlighted amber ring
+          if (isHighlighted === true) {
+            ctx.beginPath(); ctx.arc(px, py, baseR + 4, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(245, 158, 11, 0.8)'; ctx.lineWidth = 2; ctx.stroke();
+          }
+
+          // Pinned session: amber diamond
+          if (isPinned) {
+            ctx.save();
+            ctx.translate(px, py - baseR - 5);
+            ctx.rotate(Math.PI / 4);
+            ctx.fillStyle = 'rgba(245, 158, 11, 0.9)';
+            ctx.fillRect(-3, -3, 6, 6);
+            ctx.restore();
+          }
+
+          // Focused (search result) — pulsing ring
+          if (isFocused) {
+            const pulse = Math.sin(pulseRef.current * 3) * 0.3 + 0.7;
+            ctx.beginPath(); ctx.arc(px, py, baseR + 8, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(245, 158, 11, ${pulse})`;
+            ctx.lineWidth = 2.5; ctx.stroke();
+          }
+
+          const r = isHover ? DOT_RADIUS_HOVER : (isInSelected ? baseR : baseR * 0.6);
+
+          // Critical marker
+          if (p.critical && isInSelected) {
+            ctx.beginPath(); ctx.arc(px, py, CRITICAL_RING, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(239, 68, 68, 0.5)'; ctx.lineWidth = 1.5; ctx.stroke();
+          }
+
+          // Radar hop coloring
+          let dotColor = isHover ? '#ffffff' : color;
+          if (isRadarHit !== undefined && isRadarHit > 0) {
+            dotColor = isRadarHit === 1 ? '#EF4444' : isRadarHit === 2 ? '#F97316' : '#EAB308';
+          }
+          if (isInPath) dotColor = '#60A5FA';
+
+          ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2);
+          ctx.fillStyle = dotColor;
+          ctx.globalAlpha = isInSelected ? (cSize >= labelThreshold ? 1.0 : 0.6) : 0.08;
+          ctx.fill(); ctx.globalAlpha = 1.0;
+
+          if (isHover) { ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke(); }
+
+          // LOD CLOSE: Show session names
+          if (k >= LOD_CLOSE_THRESHOLD && isInSelected) {
+            ctx.font = '8px "JetBrains Mono", monospace';
+            ctx.fillStyle = 'rgba(226, 232, 240, 0.7)';
+            ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+            ctx.fillText(p.name.slice(0, 12), px + r + 3, py);
+          }
+        }
+
+        // ── Path tracing polyline ──
+        if (hasTracedPath) {
+          ctx.beginPath();
+          for (let i = 0; i < tracedPath.length; i++) {
+            const pt = pointMap.get(tracedPath[i]);
+            if (!pt) continue;
+            const px = sx(pt.x); const py = sy(pt.y);
+            if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+          }
+          ctx.strokeStyle = '#60A5FA';
+          ctx.lineWidth = 3;
+          ctx.setLineDash([6, 3]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          // Path length badge
+          const midIdx = Math.floor(tracedPath.length / 2);
+          const midPt = pointMap.get(tracedPath[midIdx]);
+          if (midPt) {
+            const mpx = sx(midPt.x); const mpy = sy(midPt.y);
+            ctx.fillStyle = 'rgba(15,23,42,0.9)';
+            roundRect(ctx, mpx - 20, mpy - 22, 40, 16, 4);
+            ctx.fill();
+            ctx.fillStyle = '#60A5FA'; ctx.font = 'bold 9px "JetBrains Mono", monospace';
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText(`${tracedPath.length - 1} hops`, mpx, mpy - 14);
+          }
+        }
+
+        // ── Cluster labels (medium LOD only) ──
+        if (k >= LOD_FAR_THRESHOLD && k < LOD_CLOSE_THRESHOLD) {
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          for (const chunk of chunks) {
+            const isThisSelected = selectedChunkIds.has(chunk.id);
+            if (!isThisSelected && chunk.session_count < labelThreshold) continue;
+            if (hasFilter && !isThisSelected) continue;
+            const centroid = chunkCentroids.get(chunk.id);
+            if (!centroid) continue;
+            const lx = sx(centroid.x); const ly = sy(centroid.y);
+            const label = chunk.label.split(':')[0];
+            const countLabel = `${chunk.session_count} sessions`;
+            ctx.font = LABEL_FONT;
+            const tw = ctx.measureText(label).width + 16;
+            const pillH = 32;
+            ctx.fillStyle = isThisSelected ? 'rgba(8, 12, 20, 0.9)' : 'rgba(8, 12, 20, 0.75)';
+            roundRect(ctx, lx - tw / 2, ly - pillH / 2 - 4, tw, pillH, 6);
+            ctx.fill();
+            if (isThisSelected) {
+              ctx.strokeStyle = hexToRgba(chunk.color, 0.6); ctx.lineWidth = 1.5; ctx.stroke();
+            }
+            ctx.fillStyle = hexToRgba(chunk.color, isThisSelected ? 1.0 : 0.9);
+            ctx.font = LABEL_FONT; ctx.fillText(label, lx, ly - 6);
+            ctx.font = LABEL_FONT_SM;
+            ctx.fillStyle = hexToRgba(chunk.color, isThisSelected ? 0.8 : 0.6);
+            ctx.fillText(countLabel, lx, ly + 10);
+          }
         }
       }
     }
 
-    // Draw hover tooltip (works in both modes)
+    // ── Rich hover card ──────────────────────────────────────────────────
     if (hover) {
       const px = sx(hover.x);
       const py = sy(hover.y);
       const chunk = chunkMap.get(hover.chunk_id);
-      const lines = [
-        hover.name,
-        `Tier ${hover.tier}${hover.critical ? ' (critical)' : ''}`,
-        isGradient ? '(density view)' : (chunk ? chunk.label : hover.chunk_id),
-      ];
-      const lineH = 16;
-      const tooltipW = 220;
-      const tooltipH = lines.length * lineH + 12;
-      const tx = Math.min(px + 12, w - tooltipW - 8);
-      const ty = Math.max(py - tooltipH - 8, 8);
+      const comp = complexityMap.get(hover.session_id);
+      const wave = waveMap.get(hover.session_id);
+      const grav = gravityMap.get(hover.session_id);
 
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
+      const cardW = 240;
+      const cardH = comp !== undefined ? 140 : 80;
+      const tx = Math.min(px + 12, w - cardW - 8);
+      const ty = Math.max(py - cardH - 8, 8);
+
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.95)';
       ctx.strokeStyle = 'rgba(148, 163, 184, 0.3)';
       ctx.lineWidth = 1;
-      roundRect(ctx, tx, ty, tooltipW, tooltipH, 6);
-      ctx.fill();
-      ctx.stroke();
+      roundRect(ctx, tx, ty, cardW, cardH, 8);
+      ctx.fill(); ctx.stroke();
 
-      ctx.font = '11px "JetBrains Mono", monospace';
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'top';
-      lines.forEach((line, i) => {
-        ctx.fillStyle = i === 0 ? '#e2e8f0' : '#94a3b8';
-        ctx.fillText(line, tx + 8, ty + 6 + i * lineH, tooltipW - 16);
-      });
-    }
+      let yOff = ty + 10;
+      ctx.font = 'bold 11px "JetBrains Mono", monospace';
+      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+      ctx.fillStyle = '#e2e8f0';
+      ctx.fillText(hover.name.slice(0, 28), tx + 10, yOff, cardW - 20);
+      yOff += 16;
 
-    // ── Fisheye lens overlay ──────────────────────────────────────────────
-    const mousePos = mousePosRef.current;
-    if (fisheyeEnabled && mousePos) {
-      const lensR = 80;
-      const magnification = 2.5;
-      const mx = mousePos.x;
-      const my = mousePos.y;
+      ctx.font = '9px "JetBrains Mono", monospace';
+      ctx.fillStyle = '#94a3b8';
+      const tierText = `Tier ${hover.tier}${hover.critical ? ' (critical)' : ''}`;
+      const clusterText = isGradient ? '' : (chunk ? ` | ${chunk.label.split(':')[0]}` : '');
+      ctx.fillText(tierText + clusterText, tx + 10, yOff, cardW - 20);
+      yOff += 14;
 
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(mx, my, lensR, 0, Math.PI * 2);
-      ctx.clip();
-
-      ctx.fillStyle = 'rgba(8, 12, 20, 0.9)';
-      ctx.fillRect(mx - lensR, my - lensR, lensR * 2, lensR * 2);
-
-      for (const p of points) {
-        const px = sx(p.x);
-        const py = sy(p.y);
-        const dx = px - mx;
-        const dy = py - my;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist > lensR * magnification) continue;
-
-        const nd = dist / (lensR * magnification);
-        const fisheyeDist = nd < 1 ? nd * nd * lensR : dist;
-        const angle = Math.atan2(dy, dx);
-        const fpx = mx + Math.cos(angle) * fisheyeDist;
-        const fpy = my + Math.sin(angle) * fisheyeDist;
-
-        const color = chunkColorMap.get(p.chunk_id) || '#3B82F6';
-        const r = DOT_RADIUS * magnification;
-        ctx.beginPath();
-        ctx.arc(fpx, fpy, r, 0, Math.PI * 2);
-        ctx.fillStyle = isGradient ? 'rgba(148, 163, 184, 0.6)' : color;
-        ctx.fill();
-
-        if (dist < lensR) {
-          ctx.font = '9px "JetBrains Mono", monospace';
-          ctx.fillStyle = '#e2e8f0';
-          ctx.textAlign = 'left';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(p.name.slice(0, 16), fpx + r + 3, fpy);
-        }
+      if (comp !== undefined) {
+        // Complexity bar
+        ctx.fillStyle = '#64748b'; ctx.font = '8px "JetBrains Mono", monospace';
+        ctx.fillText(`Complexity: ${Math.round(comp)}`, tx + 10, yOff);
+        yOff += 12;
+        ctx.fillStyle = 'rgba(255,255,255,0.06)';
+        roundRect(ctx, tx + 10, yOff, cardW - 20, 6, 3); ctx.fill();
+        const barColor = comp > 75 ? '#EF4444' : comp > 50 ? '#F97316' : comp > 25 ? '#F59E0B' : '#10B981';
+        ctx.fillStyle = barColor;
+        roundRect(ctx, tx + 10, yOff, (cardW - 20) * (comp / 100), 6, 3); ctx.fill();
+        yOff += 14;
       }
 
+      // Info badges
+      const badges: string[] = [];
+      if (wave !== undefined) badges.push(`Wave ${wave}`);
+      if (grav !== undefined) badges.push(`G${grav}`);
+      if (pinnedSessions.has(hover.session_id)) badges.push('Pinned');
+
+      if (badges.length > 0) {
+        ctx.font = '8px "JetBrains Mono", monospace';
+        let bx = tx + 10;
+        for (const badge of badges) {
+          const bw = ctx.measureText(badge).width + 8;
+          ctx.fillStyle = 'rgba(59,130,246,0.15)';
+          roundRect(ctx, bx, yOff, bw, 14, 3); ctx.fill();
+          ctx.fillStyle = '#60A5FA';
+          ctx.fillText(badge, bx + 4, yOff + 3);
+          bx += bw + 4;
+        }
+        yOff += 20;
+      }
+
+      // Transforms/reads/lookups from tierData
+      if (tierData) {
+        const sess = tierData.sessions.find(s => s.name === hover.name);
+        if (sess) {
+          ctx.font = '8px "JetBrains Mono", monospace';
+          ctx.fillStyle = '#64748b';
+          ctx.fillText(`Transforms: ${sess.transforms} | ExtReads: ${sess.extReads} | Lookups: ${sess.lookupCount}`, tx + 10, yOff, cardW - 20);
+        }
+      }
+    }
+
+    // ── Fisheye lens ─────────────────────────────────────────────────────
+    const mousePos = mousePosRef.current;
+    if (fisheyeEnabled && mousePos && !isGradient) {
+      const lensR = 80; const mag = 2.5;
+      const mx = mousePos.x; const my = mousePos.y;
+      ctx.save();
+      ctx.beginPath(); ctx.arc(mx, my, lensR, 0, Math.PI * 2); ctx.clip();
+      ctx.fillStyle = 'rgba(8, 12, 20, 0.9)';
+      ctx.fillRect(mx - lensR, my - lensR, lensR * 2, lensR * 2);
+      for (const p of points) {
+        const ppx = sx(p.x); const ppy = sy(p.y);
+        const ddx = ppx - mx; const ddy = ppy - my;
+        const dist = Math.sqrt(ddx * ddx + ddy * ddy);
+        if (dist > lensR * mag) continue;
+        const nd = dist / (lensR * mag);
+        const fd = nd < 1 ? nd * nd * lensR : dist;
+        const angle = Math.atan2(ddy, ddx);
+        const fpx = mx + Math.cos(angle) * fd;
+        const fpy = my + Math.sin(angle) * fd;
+        const color = chunkColorMap.get(p.chunk_id) || '#3B82F6';
+        ctx.beginPath(); ctx.arc(fpx, fpy, DOT_RADIUS * mag, 0, Math.PI * 2);
+        ctx.fillStyle = color; ctx.fill();
+        if (dist < lensR) {
+          ctx.font = '9px "JetBrains Mono", monospace';
+          ctx.fillStyle = '#e2e8f0'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+          ctx.fillText(p.name.slice(0, 16), fpx + DOT_RADIUS * mag + 3, fpy);
+        }
+      }
       ctx.restore();
-
-      ctx.beginPath();
-      ctx.arc(mx, my, lensR, 0, Math.PI * 2);
-      ctx.strokeStyle = 'rgba(59, 130, 246, 0.5)';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-
-      ctx.beginPath();
-      ctx.moveTo(mx - 6, my); ctx.lineTo(mx + 6, my);
-      ctx.moveTo(mx, my - 6); ctx.lineTo(mx, my + 6);
-      ctx.strokeStyle = 'rgba(59, 130, 246, 0.3)';
-      ctx.lineWidth = 1;
-      ctx.stroke();
+      ctx.beginPath(); ctx.arc(mx, my, lensR, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(59, 130, 246, 0.5)'; ctx.lineWidth = 2; ctx.stroke();
     }
 
     ctx.restore();
-  }, [points, chunks, crossChunkEdges, chunkHulls, chunkCentroids, chunkColorMap, chunkMap, quadtree, fisheyeEnabled, selectedChunkIds, showEdges, showHulls, algorithm, densityGrid, highlightedSessionIds]);
 
-  // ── Animation loop ─────────────────────────────────────────────────────
+    // ── Mini-map ─────────────────────────────────────────────────────────
+    const miniCanvas = miniMapRef.current;
+    if (miniCanvas) {
+      const mCtx = miniCanvas.getContext('2d');
+      if (mCtx) {
+        const mw = 160; const mh = 120;
+        const mdpr = window.devicePixelRatio || 1;
+        miniCanvas.width = mw * mdpr; miniCanvas.height = mh * mdpr;
+        miniCanvas.style.width = `${mw}px`; miniCanvas.style.height = `${mh}px`;
+        mCtx.setTransform(mdpr, 0, 0, mdpr, 0, 0);
+
+        mCtx.fillStyle = 'rgba(8, 12, 20, 0.9)';
+        mCtx.fillRect(0, 0, mw, mh);
+
+        // Draw all points as 1px dots
+        const mPad = 4;
+        const mcw = mw - mPad * 2; const mch = mh - mPad * 2;
+        for (const p of points) {
+          mCtx.fillStyle = chunkColorMap.get(p.chunk_id) || '#3B82F6';
+          mCtx.fillRect(mPad + p.x * mcw, mPad + p.y * mch, 1, 1);
+        }
+
+        // Viewport rectangle
+        const vx0 = (t.invertX(0) - pad) / cw;
+        const vy0 = (t.invertY(0) - pad) / ch;
+        const vx1 = (t.invertX(w) - pad) / cw;
+        const vy1 = (t.invertY(h) - pad) / ch;
+        const rx = mPad + Math.max(0, vx0) * mcw;
+        const ry = mPad + Math.max(0, vy0) * mch;
+        const rw = Math.min(mcw, (vx1 - Math.max(0, vx0)) * mcw);
+        const rh = Math.min(mch, (vy1 - Math.max(0, vy0)) * mch);
+        mCtx.strokeStyle = 'rgba(59, 130, 246, 0.7)';
+        mCtx.lineWidth = 1.5;
+        mCtx.strokeRect(rx, ry, rw, rh);
+
+        mCtx.strokeStyle = 'rgba(100, 116, 139, 0.3)';
+        mCtx.lineWidth = 1;
+        mCtx.strokeRect(0, 0, mw, mh);
+      }
+    }
+  }, [points, chunks, crossChunkEdges, chunkHulls, chunkCentroids, chunkColorMap, chunkMap,
+      quadtree, fisheyeEnabled, selectedChunkIds, showEdges, showHulls, algorithm, densityGrid,
+      highlightedSessionIds, tierData, vectorResults, complexityMap, waveMap, gravityMap,
+      pointMap, pinnedSessions, searchFocusedId, tracedPath, showRadar, radarSession,
+      radarResult, radarHops, edgeBundles, showHeatOverlay, heatGrid]);
+
+  // ── Pulse animation for search focus ───────────────────────────────────
+
+  useEffect(() => {
+    if (!searchFocusedId) return;
+    let frame: number;
+    const animate = () => {
+      pulseRef.current += 0.016;
+      dirtyRef.current = true;
+      frame = requestAnimationFrame(animate);
+    };
+    frame = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(frame);
+  }, [searchFocusedId]);
+
+  // ── Animation loop ────────────────────────────────────────────────────
+
   useEffect(() => {
     const loop = () => {
-      if (dirtyRef.current) {
-        dirtyRef.current = false;
-        draw();
-      }
+      if (dirtyRef.current) { dirtyRef.current = false; draw(); }
       rafRef.current = requestAnimationFrame(loop);
     };
     rafRef.current = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(rafRef.current);
   }, [draw]);
 
-  // ── Resize observer ────────────────────────────────────────────────────
+  // ── Resize observer ───────────────────────────────────────────────────
+
   useEffect(() => {
     const container = containerRef.current;
     const canvas = canvasRef.current;
     if (!container || !canvas) return;
-
     const resize = () => {
       const rect = container.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;
       const w = Math.floor(rect.width);
       const h = Math.floor(rect.height);
       dimsRef.current = { w, h };
-      canvas.width = w * dpr;
-      canvas.height = h * dpr;
-      canvas.style.width = `${w}px`;
-      canvas.style.height = `${h}px`;
+      canvas.width = w * dpr; canvas.height = h * dpr;
+      canvas.style.width = `${w}px`; canvas.style.height = `${h}px`;
       dirtyRef.current = true;
     };
-
     const ro = new ResizeObserver(resize);
-    ro.observe(container);
-    resize();
+    ro.observe(container); resize();
     return () => ro.disconnect();
   }, []);
 
-  // ── D3 zoom ────────────────────────────────────────────────────────────
+  // ── D3 zoom ───────────────────────────────────────────────────────────
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
     const zoom = d3.zoom<HTMLCanvasElement, unknown>()
       .scaleExtent([0.3, 20])
-      .on('zoom', (event) => {
-        transformRef.current = event.transform;
-        dirtyRef.current = true;
-      });
-
+      .on('zoom', (event) => { transformRef.current = event.transform; dirtyRef.current = true; });
+    zoomRef.current = zoom;
     d3.select(canvas).call(zoom);
-
-    return () => {
-      d3.select(canvas).on('.zoom', null);
-    };
+    return () => { d3.select(canvas).on('.zoom', null); };
   }, []);
 
-  // ── Mouse hit-test ─────────────────────────────────────────────────────
+  // ── Fly-to function ───────────────────────────────────────────────────
+
+  const flyTo = useCallback((sessionId: string) => {
+    const canvas = canvasRef.current;
+    const zoom = zoomRef.current;
+    const pt = pointMap.get(sessionId);
+    if (!canvas || !zoom || !pt) return;
+    const { w, h } = dimsRef.current;
+    const pad = 40;
+    const cw = w - pad * 2; const ch = h - pad * 2;
+    const tx = pad + pt.x * cw;
+    const ty = pad + pt.y * ch;
+    const targetK = 5;
+    const targetTransform = d3.zoomIdentity.translate(w / 2 - tx * targetK, h / 2 - ty * targetK).scale(targetK);
+    d3.select(canvas).transition().duration(600).call(zoom.transform as any, targetTransform);
+    setSearchFocusedId(sessionId);
+  }, [pointMap]);
+
+  // ── Mouse hit-test ────────────────────────────────────────────────────
+
   const hitTest = useCallback((clientX: number, clientY: number): ConstellationPoint | null => {
     const canvas = canvasRef.current;
     if (!canvas || points.length === 0) return null;
-
     const rect = canvas.getBoundingClientRect();
-    const mx = clientX - rect.left;
-    const my = clientY - rect.top;
-
+    const mx = clientX - rect.left; const my = clientY - rect.top;
     const t = transformRef.current;
     const { w, h } = dimsRef.current;
-    const pad = 40;
-    const cw = w - pad * 2;
-    const ch = h - pad * 2;
-
+    const pad = 40; const cw = w - pad * 2; const ch = h - pad * 2;
     const nx = (t.invertX(mx) - pad) / cw;
     const ny = (t.invertY(my) - pad) / ch;
-
     const searchR = (DOT_RADIUS_HOVER * 2) / (Math.min(cw, ch) * t.k);
-
-    const found = quadtree.find(nx, ny, searchR);
-    return found || null;
+    return quadtree.find(nx, ny, searchR) || null;
   }, [points, quadtree]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
@@ -659,26 +1040,69 @@ export default function ConstellationCanvas({
       mousePosRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
       if (fisheyeEnabled) dirtyRef.current = true;
     }
+
+    // Alt+hover for proximity radar
+    if (e.altKey && showRadar) {
+      const pt = hitTest(e.clientX, e.clientY);
+      if (pt && pt.session_id !== radarSession) {
+        setRadarSession(pt.session_id);
+        dirtyRef.current = true;
+      }
+    }
+
     const pt = hitTest(e.clientX, e.clientY);
     if (pt !== hoverRef.current) {
       hoverRef.current = pt;
       dirtyRef.current = true;
       if (canvas) canvas.style.cursor = pt ? 'pointer' : 'grab';
     }
-  }, [hitTest, fisheyeEnabled]);
+  }, [hitTest, fisheyeEnabled, showRadar, radarSession]);
 
   const handleClick = useCallback((e: React.MouseEvent) => {
     const pt = hitTest(e.clientX, e.clientY);
     if (pt) {
+      // Shift+click for path tracing
+      if (e.shiftKey) {
+        if (!pathStart) {
+          setPathStart(pt.session_id);
+        } else if (!pathEnd) {
+          setPathEnd(pt.session_id);
+        } else {
+          // Reset and start new path
+          setPathStart(pt.session_id);
+          setPathEnd(null);
+          setTracedPath([]);
+        }
+        return;
+      }
       onChunkSelect(pt.chunk_id);
     }
-  }, [hitTest, onChunkSelect]);
+  }, [hitTest, onChunkSelect, pathStart, pathEnd]);
 
-  // ── Stats bar ─────────────────────────────────────────────────────────
+  // ── Mini-map click → navigate ──────────────────────────────────────────
+
+  const handleMiniMapClick = useCallback((e: React.MouseEvent) => {
+    const miniCanvas = miniMapRef.current;
+    const canvas = canvasRef.current;
+    const zoom = zoomRef.current;
+    if (!miniCanvas || !canvas || !zoom) return;
+    const rect = miniCanvas.getBoundingClientRect();
+    const mx = (e.clientX - rect.left) / rect.width;
+    const my = (e.clientY - rect.top) / rect.height;
+    const { w, h } = dimsRef.current;
+    const pad = 40; const cw = w - pad * 2; const ch = h - pad * 2;
+    const tx = pad + mx * cw;
+    const ty = pad + my * ch;
+    const currentK = transformRef.current.k;
+    const targetTransform = d3.zoomIdentity.translate(w / 2 - tx * currentK, h / 2 - ty * currentK).scale(currentK);
+    d3.select(canvas).transition().duration(300).call(zoom.transform as any, targetTransform);
+  }, []);
+
+  // ── Stats ──────────────────────────────────────────────────────────────
 
   const totalSessions = points.length;
   const totalChunks = chunks.length;
-  const criticalCount = points.filter((p) => p.critical).length;
+  const criticalCount = points.filter(p => p.critical).length;
   const isGradient = algorithm === 'gradient_scale';
 
   return (
@@ -692,63 +1116,124 @@ export default function ConstellationCanvas({
           style={{ display: 'block', cursor: 'grab' }}
         />
 
+        {/* Search bar (floating, top center) */}
+        <div style={{
+          position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)',
+          zIndex: 15, display: 'flex', flexDirection: 'column', alignItems: 'center',
+        }}>
+          <input
+            type="text"
+            placeholder="Search sessions or tables..."
+            value={searchTerm}
+            onChange={e => { setSearchTerm(e.target.value); setSearchFocusedId(null); }}
+            style={{
+              width: 280, padding: '6px 12px', borderRadius: 6,
+              border: '1px solid rgba(100,116,139,0.3)', background: 'rgba(15,23,42,0.9)',
+              color: '#e2e8f0', fontSize: 11, outline: 'none',
+              fontFamily: "'JetBrains Mono', monospace",
+            }}
+          />
+          {searchResults.length > 0 && (
+            <div style={{
+              width: 280, maxHeight: 200, overflowY: 'auto', marginTop: 2,
+              background: 'rgba(15,23,42,0.95)', border: '1px solid rgba(100,116,139,0.3)',
+              borderRadius: 6,
+            }}>
+              {searchResults.map(p => (
+                <div
+                  key={p.session_id}
+                  onClick={() => { flyTo(p.session_id); setSearchTerm(''); }}
+                  style={{
+                    padding: '4px 10px', cursor: 'pointer', fontSize: 10,
+                    color: searchFocusedId === p.session_id ? '#F59E0B' : '#e2e8f0',
+                    background: searchFocusedId === p.session_id ? 'rgba(245,158,11,0.1)' : 'transparent',
+                    fontFamily: "'JetBrains Mono', monospace",
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.background = 'rgba(59,130,246,0.1)')}
+                  onMouseLeave={e => (e.currentTarget.style.background = searchFocusedId === p.session_id ? 'rgba(245,158,11,0.1)' : 'transparent')}
+                >
+                  <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
+                  <div style={{ fontSize: 8, color: '#64748b' }}>Tier {p.tier} | {chunkMap.get(p.chunk_id)?.label.split(':')[0] || p.chunk_id}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Path tracing indicator */}
+        {(pathStart || pathEnd) && (
+          <div style={{
+            position: 'absolute', top: 52, left: '50%', transform: 'translateX(-50%)',
+            padding: '4px 12px', borderRadius: 6, background: 'rgba(59,130,246,0.15)',
+            border: '1px solid rgba(59,130,246,0.3)', color: '#60A5FA', fontSize: 10, zIndex: 15,
+            display: 'flex', alignItems: 'center', gap: 8,
+          }}>
+            <span>Path: {pathStart ? pointMap.get(pathStart)?.name.slice(0, 15) : '?'} → {pathEnd ? pointMap.get(pathEnd)?.name.slice(0, 15) : '(Shift+click target)'}</span>
+            {tracedPath.length > 1 && <span style={{ fontWeight: 700 }}>{tracedPath.length - 1} hops</span>}
+            <button onClick={() => { setPathStart(null); setPathEnd(null); setTracedPath([]); dirtyRef.current = true; }}
+              style={{ background: 'transparent', border: 'none', color: '#60A5FA', cursor: 'pointer', fontSize: 10, textDecoration: 'underline' }}>
+              Clear
+            </button>
+          </div>
+        )}
+
         {/* Reclustering overlay */}
         {reclustering && (
           <div style={{
-            position: 'absolute', inset: 0,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
             background: 'rgba(8, 12, 20, 0.7)', zIndex: 10,
           }}>
             <div style={{
               padding: '16px 32px', borderRadius: 12,
               background: 'rgba(15, 23, 42, 0.95)', border: '1px solid rgba(59, 130, 246, 0.3)',
               color: '#60A5FA', fontSize: 13, fontWeight: 600,
-            }}>
-              Re-clustering\u2026
-            </div>
+            }}>Re-clustering...</div>
           </div>
         )}
+
+        {/* Mini-map (bottom-left corner) */}
+        <canvas
+          ref={miniMapRef}
+          onClick={handleMiniMapClick}
+          style={{
+            position: 'absolute', bottom: 40, left: 12,
+            width: 160, height: 120, borderRadius: 6, cursor: 'crosshair',
+            border: '1px solid rgba(100,116,139,0.3)', zIndex: 10,
+          }}
+        />
 
         {/* Zoom controls */}
         <div style={{
           position: 'absolute', bottom: 52, right: 12,
           display: 'flex', flexDirection: 'column', gap: 4, zIndex: 10,
         }}>
-          {[
-            { label: '+', scale: 1.5 },
-            { label: '-', scale: 0.67 },
-          ].map(b => (
+          {[{ label: '+', scale: 1.5 }, { label: '-', scale: 0.67 }].map(b => (
             <button key={b.label} onClick={() => {
               const canvas = canvasRef.current;
-              if (canvas) d3.select(canvas).transition().duration(200).call(
-                d3.zoom<HTMLCanvasElement, unknown>().scaleExtent([0.3, 20]).scaleBy as any, b.scale
-              );
+              const zoom = zoomRef.current;
+              if (canvas && zoom) d3.select(canvas).transition().duration(200).call(zoom.scaleBy as any, b.scale);
             }} style={{
               width: 28, height: 28, borderRadius: 5, border: '1px solid rgba(255,255,255,0.1)',
               background: 'rgba(15,23,42,0.85)', color: '#94a3b8', fontSize: 14,
               cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>{b.label}</button>
           ))}
-          {/* Fisheye toggle */}
           <button
             onClick={() => setFisheyeEnabled(f => !f)}
-            title={fisheyeEnabled ? 'Disable fisheye lens' : 'Enable fisheye lens'}
+            title={fisheyeEnabled ? 'Disable fisheye' : 'Enable fisheye'}
             style={{
               width: 28, height: 28, borderRadius: 5,
               border: `1px solid ${fisheyeEnabled ? 'rgba(59,130,246,0.5)' : 'rgba(255,255,255,0.1)'}`,
               background: fisheyeEnabled ? 'rgba(59,130,246,0.2)' : 'rgba(15,23,42,0.85)',
               color: fisheyeEnabled ? '#60A5FA' : '#94a3b8',
-              fontSize: 12, cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}
-          >
-            {'\u25CE'}
-          </button>
+          >{'\u25CE'}</button>
         </div>
 
         {/* Stats overlay */}
         <div style={{
-          position: 'absolute', bottom: 12, left: 12,
+          position: 'absolute', bottom: 12, left: 180,
           padding: '6px 14px', borderRadius: 8,
           background: 'rgba(15, 23, 42, 0.85)', border: '1px solid rgba(30, 41, 59, 0.6)',
           display: 'flex', gap: 16, fontSize: 10, color: C.muted,
@@ -757,7 +1242,7 @@ export default function ConstellationCanvas({
           {isGradient ? (
             <>
               <span style={{ color: '#3B82F6', fontWeight: 600 }}>Gradient Scale Map</span>
-              {densityGrid && <span><strong style={{ color: '#EF4444' }}>{densityGrid.peaks.length}</strong> density peaks</span>}
+              {densityGrid && <span><strong style={{ color: '#EF4444' }}>{densityGrid.peaks.length}</strong> peaks</span>}
             </>
           ) : (
             <>
@@ -765,7 +1250,7 @@ export default function ConstellationCanvas({
               {criticalCount > 0 && <span><strong style={{ color: '#EF4444' }}>{criticalCount}</strong> Critical</span>}
             </>
           )}
-          <span style={{ color: C.dim }}>Scroll to zoom · Drag to pan · Click to drill in</span>
+          <span style={{ color: C.dim }}>Scroll/drag · Shift+click=path · Alt+hover=radar</span>
         </div>
       </div>
 
@@ -776,25 +1261,18 @@ export default function ConstellationCanvas({
           background: 'rgba(15, 23, 42, 0.6)', overflowY: 'auto',
           display: 'flex', flexDirection: 'column',
         }}>
-          <div style={{
-            padding: '12px 14px', borderBottom: '1px solid rgba(30, 41, 59, 0.6)',
-          }}>
-            <div style={{
-              fontSize: 10, fontWeight: 700, color: '#10B981',
-              textTransform: 'uppercase', letterSpacing: '0.1em',
-            }}>
+          <div style={{ padding: '12px 14px', borderBottom: '1px solid rgba(30, 41, 59, 0.6)' }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: '#10B981', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
               Clustering Algorithm
             </div>
           </div>
 
           <div style={{ padding: '8px 10px', flex: 1 }}>
-            {ALGO_KEYS.map((key) => {
+            {ALGO_KEYS.map(key => {
               const meta = ALGO_META[key];
               const isActive = key === algorithm;
               return (
-                <div
-                  key={key}
-                  onClick={() => !reclustering && onAlgorithmChange(key)}
+                <div key={key} onClick={() => !reclustering && onAlgorithmChange(key)}
                   style={{
                     padding: '10px 12px', marginBottom: 6, borderRadius: 8,
                     cursor: reclustering ? 'wait' : 'pointer',
@@ -802,81 +1280,107 @@ export default function ConstellationCanvas({
                     border: `1px solid ${isActive ? '#10B981' : 'rgba(30, 41, 59, 0.4)'}`,
                     transition: 'all 0.15s',
                     opacity: reclustering && !isActive ? 0.5 : 1,
-                  }}
-                >
+                  }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                    <span style={{
-                      fontSize: 14, lineHeight: 1,
-                      color: isActive ? '#34D399' : '#64748b',
-                    }}>
-                      {meta.icon}
-                    </span>
-                    <span style={{
-                      fontSize: 11, fontWeight: 700,
-                      color: isActive ? '#34D399' : '#CBD5E1',
-                    }}>
-                      {meta.name}
-                    </span>
+                    <span style={{ fontSize: 14, lineHeight: 1, color: isActive ? '#34D399' : '#64748b' }}>{meta.icon}</span>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: isActive ? '#34D399' : '#CBD5E1' }}>{meta.name}</span>
                     {isActive && (
-                      <span style={{
-                        marginLeft: 'auto', fontSize: 8, fontWeight: 700,
-                        padding: '1px 5px', borderRadius: 3,
-                        background: 'rgba(16, 185, 129, 0.2)', color: '#34D399',
-                      }}>
-                        ACTIVE
-                      </span>
+                      <span style={{ marginLeft: 'auto', fontSize: 8, fontWeight: 700, padding: '1px 5px', borderRadius: 3, background: 'rgba(16,185,129,0.2)', color: '#34D399' }}>ACTIVE</span>
                     )}
                   </div>
-                  <div style={{
-                    fontSize: 9, color: isActive ? 'rgba(52, 211, 153, 0.7)' : '#475569',
-                    lineHeight: 1.4,
-                  }}>
-                    {meta.desc}
-                  </div>
+                  <div style={{ fontSize: 9, color: isActive ? 'rgba(52,211,153,0.7)' : '#475569', lineHeight: 1.4 }}>{meta.desc}</div>
                 </div>
               );
             })}
           </div>
 
           {/* Display section */}
-          <div style={{
-            padding: '12px 14px', borderTop: '1px solid rgba(30, 41, 59, 0.6)',
-          }}>
-            <div style={{
-              fontSize: 10, fontWeight: 700, color: '#10B981',
-              textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 10,
-            }}>
+          <div style={{ padding: '12px 14px', borderTop: '1px solid rgba(30, 41, 59, 0.6)' }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: '#10B981', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 10 }}>
               Display
             </div>
             {[
               { label: 'Connection Lines', value: showEdges, setter: setShowEdges },
               { label: 'Cluster Shading', value: showHulls, setter: setShowHulls },
+              { label: 'Heat Overlay', value: showHeatOverlay, setter: setShowHeatOverlay },
             ].map(({ label, value, setter }) => (
               <div key={label} style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                marginBottom: 8,
-                opacity: isGradient ? 0.3 : 1,
-                pointerEvents: isGradient ? 'none' : 'auto',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8,
+                opacity: isGradient && label !== 'Heat Overlay' ? 0.3 : 1,
+                pointerEvents: isGradient && label !== 'Heat Overlay' ? 'none' : 'auto',
               }}>
                 <span style={{ fontSize: 10, color: '#CBD5E1' }}>{label}</span>
-                <div
-                  onClick={() => setter(v => !v)}
-                  style={{
-                    width: 28, height: 16, borderRadius: 8, cursor: 'pointer',
-                    background: value && !isGradient ? '#10B981' : '#334155',
-                    position: 'relative', transition: 'background 0.15s',
-                  }}
-                >
+                <div onClick={() => setter(v => !v)} style={{
+                  width: 28, height: 16, borderRadius: 8, cursor: 'pointer',
+                  background: value ? '#10B981' : '#334155',
+                  position: 'relative', transition: 'background 0.15s',
+                }}>
                   <div style={{
-                    width: 12, height: 12, borderRadius: '50%',
-                    background: '#fff', position: 'absolute', top: 2,
-                    left: value && !isGradient ? 14 : 2,
-                    transition: 'left 0.15s',
+                    width: 12, height: 12, borderRadius: '50%', background: '#fff',
+                    position: 'absolute', top: 2, left: value ? 14 : 2, transition: 'left 0.15s',
                   }} />
                 </div>
               </div>
             ))}
+
+            {/* Proximity Radar */}
+            <div style={{ marginTop: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                <span style={{ fontSize: 10, color: '#CBD5E1' }}>Radar (Alt+hover)</span>
+                <div onClick={() => { setShowRadar(v => !v); if (showRadar) { setRadarSession(null); setRadarResult(new Map()); dirtyRef.current = true; } }}
+                  style={{
+                    width: 28, height: 16, borderRadius: 8, cursor: 'pointer',
+                    background: showRadar ? '#F59E0B' : '#334155',
+                    position: 'relative', transition: 'background 0.15s',
+                  }}>
+                  <div style={{
+                    width: 12, height: 12, borderRadius: '50%', background: '#fff',
+                    position: 'absolute', top: 2, left: showRadar ? 14 : 2, transition: 'left 0.15s',
+                  }} />
+                </div>
+              </div>
+              {showRadar && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9, color: C.muted }}>
+                  <span>Hops:</span>
+                  {[1, 2, 3, 4, 5].map(n => (
+                    <button key={n} onClick={() => setRadarHops(n)} style={{
+                      width: 18, height: 18, borderRadius: 3, border: 'none', cursor: 'pointer',
+                      background: radarHops === n ? 'rgba(245,158,11,0.2)' : 'rgba(255,255,255,0.03)',
+                      color: radarHops === n ? '#F59E0B' : C.dim, fontSize: 9, fontWeight: 600,
+                    }}>{n}</button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
+
+          {/* Pinned Sessions */}
+          {pinnedSessions.size > 0 && (
+            <div style={{ padding: '12px 14px', borderTop: '1px solid rgba(30, 41, 59, 0.6)' }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: '#F59E0B', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8 }}>
+                Pinned ({pinnedSessions.size})
+              </div>
+              {Array.from(pinnedSessions).slice(0, 10).map(sid => {
+                const pt = pointMap.get(sid);
+                return (
+                  <div key={sid} style={{
+                    display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4,
+                    fontSize: 9, color: C.text,
+                  }}>
+                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: "'JetBrains Mono', monospace" }}>
+                      {pt?.name || sid}
+                    </span>
+                    <button onClick={() => flyTo(sid)} style={{
+                      background: 'transparent', border: 'none', color: '#60A5FA', cursor: 'pointer', fontSize: 8,
+                    }}>Go</button>
+                    <button onClick={() => onUnpinSession?.(sid)} style={{
+                      background: 'transparent', border: 'none', color: '#EF4444', cursor: 'pointer', fontSize: 8,
+                    }}>x</button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -892,19 +1396,12 @@ function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
-function roundRect(
-  ctx: CanvasRenderingContext2D,
-  x: number, y: number, w: number, h: number, r: number,
-) {
+function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + w - r, y);
-  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-  ctx.lineTo(x + w, y + h - r);
-  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-  ctx.lineTo(x + r, y + h);
-  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-  ctx.lineTo(x, y + r);
+  ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r); ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h); ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r); ctx.lineTo(x, y + r);
   ctx.quadraticCurveTo(x, y, x + r, y);
   ctx.closePath();
 }
