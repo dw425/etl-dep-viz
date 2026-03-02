@@ -1407,7 +1407,7 @@ export function DependencyApp() {
               {view === 'flowwalker' && tierData && (
                 <ErrorBoundary>
                   <div style={{ overflow: 'hidden', height: '100%' }}>
-                    <FlowWalkerView tierData={tierData} vectorResults={vectorResults} />
+                    <FlowWalkerView tierData={tierData} vectorResults={vectorResults} uploadId={uploadId} />
                   </div>
                 </ErrorBoundary>
               )}
@@ -1434,7 +1434,7 @@ export function DependencyApp() {
               {view === 'decisiontree' && tierData && (
                 <ErrorBoundary>
                   <div style={{ overflow: 'hidden', height: '100%' }}>
-                    <DecisionTreeView tierData={tierData} vectorResults={vectorResults} />
+                    <DecisionTreeView tierData={tierData} vectorResults={vectorResults} uploadId={uploadId} />
                   </div>
                 </ErrorBoundary>
               )}

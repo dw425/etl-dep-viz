@@ -44,38 +44,72 @@ interface FlowData {
 interface Props {
   tierData: TierMapResult;
   vectorResults: VectorResults | null;
+  uploadId?: number | null;
 }
 
-export default function FlowWalkerView({ tierData, vectorResults }: Props) {
+export default function FlowWalkerView({ tierData, vectorResults, uploadId }: Props) {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [flowData, setFlowData] = useState<FlowData | null>(null);
   const [loading, setLoading] = useState(false);
   const [expandedTransform, setExpandedTransform] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedField, setSelectedField] = useState<string | null>(null);
+  const [tierFilter, setTierFilter] = useState<string>('all');
+  const [criticalOnly, setCriticalOnly] = useState(false);
+  const [showAllUpstream, setShowAllUpstream] = useState(false);
+  const [showAllDownstream, setShowAllDownstream] = useState(false);
 
   const sessions = useMemo(() => tierData.sessions || [], [tierData]);
-  // Cap at 50 results to keep the browser list scrollable; filtered by full path or short name
-  const filteredSessions = useMemo(() => {
-    if (!searchTerm) return sessions.slice(0, 50);
-    const term = searchTerm.toLowerCase();
-    return sessions.filter(s =>
-      s.full?.toLowerCase().includes(term) || s.name?.toLowerCase().includes(term)
-    ).slice(0, 50);
-  }, [sessions, searchTerm]);
 
-  // ── loadFlow — fetches flow data for a session and populates all panels ──
-  // Vector results are merged into the request body when available so the backend
-  // can enrich the response with complexity scores and wave info.
+  // Apply filters to session list
+  const filteredSessions = useMemo(() => {
+    let list = sessions;
+    const term = searchTerm.toLowerCase();
+    if (term) {
+      list = list.filter(s =>
+        s.full?.toLowerCase().includes(term) || s.name?.toLowerCase().includes(term)
+      );
+    }
+    if (tierFilter !== 'all') {
+      const [lo, hi] = tierFilter.split('-').map(Number);
+      list = list.filter(s => s.tier >= lo && s.tier <= hi);
+    }
+    if (criticalOnly) {
+      list = list.filter(s => s.critical);
+    }
+    return list.slice(0, 50);
+  }, [sessions, searchTerm, tierFilter, criticalOnly]);
+
+  // Filter upstream/downstream by search term
+  const filteredUpstream = useMemo(() => {
+    if (!flowData) return [];
+    const term = searchTerm.toLowerCase();
+    const list = term
+      ? flowData.upstream.filter(u => u.name.toLowerCase().includes(term))
+      : flowData.upstream;
+    return showAllUpstream ? list : list.slice(0, 20);
+  }, [flowData, searchTerm, showAllUpstream]);
+
+  const filteredDownstream = useMemo(() => {
+    if (!flowData) return [];
+    const term = searchTerm.toLowerCase();
+    const list = term
+      ? flowData.downstream.filter(d => d.name.toLowerCase().includes(term))
+      : flowData.downstream;
+    return showAllDownstream ? list : list.slice(0, 20);
+  }, [flowData, searchTerm, showAllDownstream]);
+
   const loadFlow = useCallback(async (sessionId: string) => {
     setLoading(true);
-    setExpandedTransform(null); // collapse any previously expanded transform
+    setExpandedTransform(null);
     setSelectedField(null);
+    setShowAllUpstream(false);
+    setShowAllDownstream(false);
     try {
       const body = vectorResults
         ? { ...tierData, __vector_results: vectorResults }
         : tierData;
-      const data = await getFlowData(body, sessionId);
+      const data = await getFlowData(body, sessionId, uploadId);
       setFlowData(data as unknown as FlowData);
       setSelectedSessionId(sessionId);
     } catch (e) {
@@ -83,7 +117,7 @@ export default function FlowWalkerView({ tierData, vectorResults }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [tierData, vectorResults]);
+  }, [tierData, vectorResults, uploadId]);
 
   // Auto-load the first session on mount so the view is never blank after opening
   useEffect(() => {
@@ -149,18 +183,33 @@ export default function FlowWalkerView({ tierData, vectorResults }: Props) {
             style={{
               width: '100%', padding: '6px 10px', borderRadius: 6,
               border: '1px solid #334155', background: '#0f172a', color: '#e2e8f0',
-              fontSize: 11, outline: 'none',
+              fontSize: 11, outline: 'none', boxSizing: 'border-box',
             }}
           />
+          <div style={{ display: 'flex', gap: 4, marginTop: 6, flexWrap: 'wrap' }}>
+            <select value={tierFilter} onChange={e => setTierFilter(e.target.value)}
+              style={{ flex: 1, padding: '3px 4px', borderRadius: 4, border: '1px solid #334155', background: '#0f172a', color: '#94a3b8', fontSize: 10 }}>
+              <option value="all">All Tiers</option>
+              <option value="1-1">Tier 1</option>
+              <option value="1-3">Tier 1-3</option>
+              <option value="4-10">Tier 4-10</option>
+              <option value="11-99">Tier 11+</option>
+            </select>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 10, color: '#94a3b8', cursor: 'pointer' }}>
+              <input type="checkbox" checked={criticalOnly} onChange={e => setCriticalOnly(e.target.checked)}
+                style={{ width: 12, height: 12 }} />
+              Critical
+            </label>
+          </div>
         </div>
 
         {/* Upstream */}
         {flowData && flowData.upstream.length > 0 && (
           <div style={{ padding: '8px 12px' }}>
             <div style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', marginBottom: 6 }}>
-              Upstream ({flowData.upstream_count})
+              Upstream ({flowData.upstream_count}){searchTerm && filteredUpstream.length < flowData.upstream.length && ` — ${filteredUpstream.length} matching`}
             </div>
-            {flowData.upstream.map((u, i) => (
+            {filteredUpstream.map((u, i) => (
               <div
                 key={i}
                 onClick={() => loadFlow(u.session_id)}
@@ -177,6 +226,12 @@ export default function FlowWalkerView({ tierData, vectorResults }: Props) {
                 </div>
               </div>
             ))}
+            {!showAllUpstream && !searchTerm && flowData.upstream.length > 20 && (
+              <div onClick={() => setShowAllUpstream(true)}
+                style={{ fontSize: 10, color: '#3b82f6', cursor: 'pointer', padding: '4px 8px' }}>
+                Show all {flowData.upstream.length} upstream...
+              </div>
+            )}
           </div>
         )}
 
@@ -201,9 +256,9 @@ export default function FlowWalkerView({ tierData, vectorResults }: Props) {
         {flowData && flowData.downstream.length > 0 && (
           <div style={{ padding: '8px 12px' }}>
             <div style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', marginBottom: 6 }}>
-              Downstream ({flowData.downstream_count})
+              Downstream ({flowData.downstream_count}){searchTerm && filteredDownstream.length < flowData.downstream.length && ` — ${filteredDownstream.length} matching`}
             </div>
-            {flowData.downstream.map((d, i) => (
+            {filteredDownstream.map((d, i) => (
               <div
                 key={i}
                 onClick={() => loadFlow(d.session_id)}
@@ -219,13 +274,19 @@ export default function FlowWalkerView({ tierData, vectorResults }: Props) {
                 </div>
               </div>
             ))}
+            {!showAllDownstream && !searchTerm && flowData.downstream.length > 20 && (
+              <div onClick={() => setShowAllDownstream(true)}
+                style={{ fontSize: 10, color: '#3b82f6', cursor: 'pointer', padding: '4px 8px' }}>
+                Show all {flowData.downstream.length} downstream...
+              </div>
+            )}
           </div>
         )}
 
         {/* Session browser */}
         <div style={{ padding: '8px 12px', borderTop: '1px solid #334155' }}>
           <div style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', marginBottom: 6 }}>
-            All Sessions
+            All Sessions {filteredSessions.length < sessions.length && `(${filteredSessions.length} shown)`}
           </div>
           {filteredSessions.map(s => (
             <div
@@ -239,6 +300,7 @@ export default function FlowWalkerView({ tierData, vectorResults }: Props) {
               }}
             >
               {s.name}
+              {s.critical && <span style={{ marginLeft: 4, fontSize: 9, color: '#ef4444' }}>!</span>}
             </div>
           ))}
         </div>

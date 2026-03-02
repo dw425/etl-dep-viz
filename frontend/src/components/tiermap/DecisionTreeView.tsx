@@ -60,6 +60,7 @@ interface FlowData {
 interface Props {
   tierData: TierMapResult;
   vectorResults: VectorResults | null;
+  uploadId?: number | null;
 }
 
 // ── Color palette ────────────────────────────────────────────────────────
@@ -495,11 +496,14 @@ function renderNodeShape(
 
 // ── Main Component ───────────────────────────────────────────────────────
 
-export default function DecisionTreeView({ tierData, vectorResults }: Props) {
+export default function DecisionTreeView({ tierData, vectorResults, uploadId }: Props) {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [flowData, setFlowData] = useState<FlowData | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [tierFilter, setTierFilter] = useState<string>('all');
+  const [criticalOnly, setCriticalOnly] = useState(false);
   const [selectedNode, setSelectedNode] = useState<TreeNode | null>(null);
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
   const [hoveredEdge, setHoveredEdge] = useState<{ from: string; to: string } | null>(null);
@@ -511,12 +515,22 @@ export default function DecisionTreeView({ tierData, vectorResults }: Props) {
 
   const sessions = useMemo(() => tierData.sessions || [], [tierData]);
   const filteredSessions = useMemo(() => {
-    if (!searchTerm) return sessions.slice(0, 50);
+    let list = sessions;
     const term = searchTerm.toLowerCase();
-    return sessions.filter(s =>
-      s.full?.toLowerCase().includes(term) || s.name?.toLowerCase().includes(term)
-    ).slice(0, 50);
-  }, [sessions, searchTerm]);
+    if (term) {
+      list = list.filter(s =>
+        s.full?.toLowerCase().includes(term) || s.name?.toLowerCase().includes(term)
+      );
+    }
+    if (tierFilter !== 'all') {
+      const [lo, hi] = tierFilter.split('-').map(Number);
+      list = list.filter(s => s.tier >= lo && s.tier <= hi);
+    }
+    if (criticalOnly) {
+      list = list.filter(s => s.critical);
+    }
+    return list.slice(0, 50);
+  }, [sessions, searchTerm, tierFilter, criticalOnly]);
 
   // Complexity scores for session badges
   const complexityScores = useMemo(() => {
@@ -532,21 +546,25 @@ export default function DecisionTreeView({ tierData, vectorResults }: Props) {
   // Load flow data for a session
   const loadFlow = useCallback(async (sessionId: string) => {
     setLoading(true);
+    setLoadError(null);
     setSelectedNode(null);
     setCollapsedNodes(new Set());
     try {
       const body = vectorResults
         ? { ...tierData, __vector_results: vectorResults }
         : tierData;
-      const data = await getFlowData(body, sessionId);
+      const data = await getFlowData(body, sessionId, uploadId);
       setFlowData(data as unknown as FlowData);
       setSelectedSessionId(sessionId);
     } catch (e) {
-      console.error('Flow load error:', e);
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error('Flow load error:', msg);
+      setLoadError(msg);
+      setFlowData(null);
     } finally {
       setLoading(false);
     }
-  }, [tierData, vectorResults]);
+  }, [tierData, vectorResults, uploadId]);
 
   // Auto-load first session
   useEffect(() => {
@@ -931,12 +949,32 @@ export default function DecisionTreeView({ tierData, vectorResults }: Props) {
             style={{
               width: '100%', padding: '6px 10px', borderRadius: 6,
               border: `1px solid ${THEME.border}`, background: THEME.bg, color: THEME.text,
-              fontSize: 11, outline: 'none',
+              fontSize: 11, outline: 'none', boxSizing: 'border-box',
             }}
           />
+          <div style={{ display: 'flex', gap: 4, marginTop: 6, flexWrap: 'wrap' }}>
+            <select value={tierFilter} onChange={e => setTierFilter(e.target.value)}
+              style={{ flex: 1, padding: '3px 4px', borderRadius: 4, border: `1px solid ${THEME.border}`, background: THEME.bg, color: THEME.muted, fontSize: 10 }}>
+              <option value="all">All Tiers</option>
+              <option value="1-1">Tier 1</option>
+              <option value="1-3">Tier 1-3</option>
+              <option value="4-10">Tier 4-10</option>
+              <option value="11-99">Tier 11+</option>
+            </select>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 10, color: THEME.muted, cursor: 'pointer' }}>
+              <input type="checkbox" checked={criticalOnly} onChange={e => setCriticalOnly(e.target.checked)}
+                style={{ width: 12, height: 12 }} />
+              Critical
+            </label>
+          </div>
         </div>
 
         <div style={{ flex: 1, overflow: 'auto', padding: '4px 8px' }}>
+          {filteredSessions.length < sessions.length && (
+            <div style={{ padding: '4px 8px', fontSize: 9, color: THEME.dimText }}>
+              {filteredSessions.length} of {sessions.length} sessions
+            </div>
+          )}
           {filteredSessions.map(s => {
             const cx = complexityScores[s.id];
             const isSelected = s.id === selectedSessionId;
@@ -1013,7 +1051,16 @@ export default function DecisionTreeView({ tierData, vectorResults }: Props) {
           </div>
         )}
 
-        {!loading && !flowData && (
+        {!loading && loadError && (
+          <div style={{
+            position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            flexDirection: 'column', gap: 8, color: '#EF4444', fontSize: 13,
+          }}>
+            <span>Failed to load flow data</span>
+            <span style={{ color: THEME.dimText, fontSize: 11, maxWidth: 300, textAlign: 'center' }}>{loadError}</span>
+          </div>
+        )}
+        {!loading && !loadError && !flowData && (
           <div style={{
             position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
             color: THEME.dimText, fontSize: 13,

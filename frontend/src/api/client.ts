@@ -483,11 +483,15 @@ export async function getHealthLogs(limit = 50, level?: string): Promise<LogEntr
 export async function getFlowData(
   tierData: TierMapResult,
   sessionId: string,
+  uploadId?: number | null,
 ): Promise<Record<string, unknown>> {
-  const res = await fetch(`${BASE}/layers/flow/${sessionId}`, {
+  // When upload_id is available, use query param instead of sending the full tier_data body
+  // This avoids transmitting 15MB+ JSON for large datasets
+  const params = uploadId ? `?upload_id=${uploadId}` : '';
+  const res = await fetch(`${BASE}/layers/flow/${sessionId}${params}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...userHeaders() },
-    body: JSON.stringify(tierData),
+    body: uploadId ? '{}' : JSON.stringify(tierData),
   });
   if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.json();
