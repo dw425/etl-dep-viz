@@ -133,10 +133,19 @@ const TierDiagram: React.FC<Props> = ({ data, chunks }) => {
     return ids;
   }, [data.sessions, searchQuery, showCriticalOnly, clusterSessionIds, isolatedIds]);
 
-  // Filter tables based on isolation and cluster
+  // Filter tables based on session filters, isolation, and cluster
   const filteredTableIds = useMemo(() => {
+    const hasSessionFilter = !!(searchQuery || showCriticalOnly);
     const ids = new Set<string>();
     for (const t of data.tables) {
+      // When any session-level filter is active, only show tables connected to filtered sessions
+      if (hasSessionFilter) {
+        const hasConn = data.connections.some(c =>
+          (c.to === t.id && filteredSessionIds.has(c.from)) ||
+          (c.from === t.id && filteredSessionIds.has(c.to))
+        );
+        if (!hasConn) continue;
+      }
       // Cluster filter: if cluster active, only show tables connected to filtered sessions
       if (clusterSessionIds) {
         const hasConn = data.connections.some(c =>
@@ -150,7 +159,7 @@ const TierDiagram: React.FC<Props> = ({ data, chunks }) => {
       ids.add(t.id);
     }
     return ids;
-  }, [data.tables, data.connections, clusterSessionIds, isolatedIds]);
+  }, [data.tables, data.connections, searchQuery, showCriticalOnly, filteredSessionIds, clusterSessionIds, isolatedIds]);
 
   // Build filtered tier groups
   const filteredGroups = useMemo(() => {
