@@ -70,7 +70,7 @@ function buildSessionData(data: TierMapResult): Record<string, SessionDetail> {
 
 // ── Main export ──────────────────────────────────────────────────────────────
 
-export function buildTierMapHTML(data: TierMapResult, constellation?: ConstellationResult, vectorResults?: VectorResults | null): string {
+export function buildTierMapHTML(data: TierMapResult, constellation?: ConstellationResult, vectorResults?: VectorResults | null, selectedViews?: Set<string>): string {
   const sessionData = buildSessionData(data);
   const execOrder = data.sessions.slice().sort((a, b) => a.step - b.step).map(s => s.full);
 
@@ -82,13 +82,18 @@ export function buildTierMapHTML(data: TierMapResult, constellation?: Constellat
   const statsJSON = JSON.stringify(data.stats);
   const timestamp = new Date().toISOString().replace('T', ' ').slice(0, 19);
 
-  const constellationPointsJSON = constellation ? JSON.stringify(constellation.points) : '[]';
-  const constellationChunksJSON = constellation ? JSON.stringify(constellation.chunks) : '[]';
-  const crossChunkEdgesJSON = constellation ? JSON.stringify(constellation.cross_chunk_edges) : '[]';
-  const hasConstellation = constellation && constellation.points.length > 0;
+  const includeView = (id: string) => !selectedViews || selectedViews.has(id);
 
-  // Extract only the vector data needed by export views (V1, V4, V8, V9, V10, V11)
-  const vectorSubset = vectorResults ? {
+  const includeConstellation = includeView('constellation') && constellation && constellation.points.length > 0;
+  const constellationPointsJSON = includeConstellation ? JSON.stringify(constellation.points) : '[]';
+  const constellationChunksJSON = includeConstellation ? JSON.stringify(constellation.chunks) : '[]';
+  const crossChunkEdgesJSON = includeConstellation ? JSON.stringify(constellation.cross_chunk_edges) : '[]';
+  const hasConstellation = !!includeConstellation;
+
+  // Extract only the vector data needed by selected export views
+  const needVectors = includeView('complexity') || includeView('waves') || includeView('heatmap')
+    || includeView('concentration') || includeView('consensus');
+  const vectorSubset = vectorResults && needVectors ? {
     v1_communities: vectorResults.v1_communities ?? null,
     v4_wave_plan: vectorResults.v4_wave_plan ?? null,
     v8_ensemble_consensus: vectorResults.v8_ensemble_consensus ?? null,
@@ -136,6 +141,8 @@ const hasComplexity = !!(vectorResults?.v11_complexity);
 const hasWavePlan = !!(vectorResults?.v4_wave_plan);
 const hasConcentration = !!(vectorResults?.v10_concentration);
 const hasEnsemble = !!(vectorResults?.v8_ensemble_consensus);
+const includeViews = ${selectedViews ? `new Set(${JSON.stringify([...selectedViews])})` : 'null'};
+const iv = (id) => !includeViews || includeViews.has(id);
 
 // Derive write conflicts, read-after-write chains, and table maps
 const writeConflicts = {}; const readAfterWrite = {}; const allTargets = {}; const allSources = {}; const allTables = {};
@@ -1651,7 +1658,7 @@ const App = function App() {
     ...(hasConcentration?[{id:"concentration",label:"Gravity",icon:"⊕"}]:[]),
     ...(hasEnsemble?[{id:"consensus",label:"Consensus",icon:"◈"}]:[]),
     {id:"infra",label:"Infrastructure",icon:"⬡"},
-  ];
+  ].filter(v=>iv(v.id));
 
   const noPaddingViews=new Set(["tier","matrix","constellation","duplicates","tables","infra","heatmap"]);
 
@@ -1719,8 +1726,8 @@ const root=ReactDOM.createRoot(document.getElementById("root"));root.render(<App
 }
 
 /** Trigger download of the HTML string as a file */
-export function downloadTierMapHTML(data: TierMapResult, constellation?: ConstellationResult, vectorResults?: VectorResults | null, filename?: string): void {
-  const html = buildTierMapHTML(data, constellation, vectorResults);
+export function downloadTierMapHTML(data: TierMapResult, constellation?: ConstellationResult, vectorResults?: VectorResults | null, filename?: string, selectedViews?: Set<string>): void {
+  const html = buildTierMapHTML(data, constellation, vectorResults, selectedViews);
   const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

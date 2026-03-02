@@ -74,6 +74,7 @@ const HelpOverlay = lazy(() => import('../shared/HelpOverlay'));
 const AIChat = lazy(() => import('../chat/AIChat'));
 const AdminConsole = lazy(() => import('./AdminConsole'));
 const DecisionTreeView = lazy(() => import('./DecisionTreeView'));
+const ExportHTMLModal = lazy(() => import('./ExportHTMLModal'));
 
 // ── View registry ─────────────────────────────────────────────────────────────
 // ViewId is the union of all valid tab identifiers. Adding a new tab requires:
@@ -216,6 +217,7 @@ export function DependencyApp() {
   // staleDetected becomes true when no SSE progress event arrives for 120s
   const [staleDetected, setStaleDetected] = useState(false);
   const [showLogPanel, setShowLogPanel] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
   const [logLoading, setLogLoading] = useState(false);
   // 5-minute cooldown: after user closes the log panel, suppress auto-reopen until cooldown expires
@@ -297,6 +299,7 @@ export function DependencyApp() {
 
       if (e.key === '?') { setShowHelp(h => !h); return; }
       if (e.key === 'Escape') {
+        if (showExportModal) { setShowExportModal(false); return; }
         if (showHelp) { setShowHelp(false); return; }
         if (showLogPanel) { setShowLogPanel(false); return; }
         // Drill up through view history
@@ -326,7 +329,7 @@ export function DependencyApp() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [showHelp, showLogPanel, goBack, goForward, navigateView]);
+  }, [showHelp, showExportModal, showLogPanel, goBack, goForward, navigateView]);
 
   // ── Derived ────────────────────────────────────────────────────────────────
   const selectedChunks = constellation?.chunks.filter(c => selectedChunkIds.has(c.id)) ?? [];
@@ -583,9 +586,10 @@ export function DependencyApp() {
   }, [handleLoadUpload, urlState]);
 
   // ── Export HTML — generates a self-contained static report and triggers download ─
-  const handleExport = useCallback(() => {
+  const handleExport = useCallback((selectedViews?: Set<string>) => {
     if (!tierData) return;
-    const html = buildTierMapHTML(tierData, constellation ?? undefined, vectorResults);
+    setShowExportModal(false);
+    const html = buildTierMapHTML(tierData, constellation ?? undefined, vectorResults, selectedViews);
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -595,8 +599,8 @@ export function DependencyApp() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    logActivity('export', 'tier_map_export.html', { session_count: tierData.stats?.session_count });
-  }, [tierData, constellation]);
+    logActivity('export', 'tier_map_export.html', { session_count: tierData.stats?.session_count, views: selectedViews ? [...selectedViews] : 'all' });
+  }, [tierData, constellation, vectorResults]);
 
   // ── Drag & drop — filters to only .xml and .zip files before upload ──────
   const onDrop = useCallback((e: React.DragEvent) => {
@@ -1126,7 +1130,7 @@ export function DependencyApp() {
           </button>
           <div style={{ width: 1, height: 16, background: T.border }} />
           <button
-            onClick={handleExport}
+            onClick={() => setShowExportModal(true)}
             style={{
               padding: '4px 10px', borderRadius: 5, border: `1px solid ${T.border}`,
               background: 'transparent', color: T.textMuted, fontSize: 10, cursor: 'pointer',
@@ -1539,6 +1543,19 @@ export function DependencyApp() {
     {showHelp && (
       <Suspense fallback={null}>
         <HelpOverlay onClose={() => setShowHelp(false)} views={VIEWS} theme={T} />
+      </Suspense>
+    )}
+
+    {/* HTML export view selector */}
+    {showExportModal && (
+      <Suspense fallback={null}>
+        <ExportHTMLModal
+          onExport={handleExport}
+          onClose={() => setShowExportModal(false)}
+          hasConstellation={!!(constellation && constellation.points?.length > 0)}
+          hasComplexity={!!vectorResults?.v11_complexity}
+          theme={T}
+        />
       </Suspense>
     )}
 
