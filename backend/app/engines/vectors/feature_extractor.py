@@ -153,39 +153,60 @@ class FeatureMatrixBuilder:
     def build_similarity_matrix(self, metric: str = "jaccard"):
         """Build pairwise similarity matrix from table sets.
 
+        Uses vectorized binary matrix multiplication for O(n*t + n²) performance
+        instead of O(n² * t) Python loops. Critical for 10K+ sessions.
+
         Args:
             metric: 'jaccard', 'cosine', or 'overlap'
         """
         if np is None:
             raise ImportError("numpy is required for build_similarity_matrix. Install it with: pip install numpy")
         n = len(self.features)
-        sim = np.zeros((n, n), dtype=np.float64)
+        if n < 2:
+            sim = np.eye(n, dtype=np.float64)
+            return sim
 
+        # Build binary session-table matrix (n_sessions × n_tables)
+        all_tables: dict[str, int] = {}
         table_sets = []
         for f in self.features:
             ts = set(f.source_tables) | set(f.target_tables) | set(f.lookup_tables)
             table_sets.append(ts)
+            for t in ts:
+                if t not in all_tables:
+                    all_tables[t] = len(all_tables)
 
-        for i in range(n):
-            sim[i, i] = 1.0
-            for j in range(i + 1, n):
-                si, sj = table_sets[i], table_sets[j]
-                if metric == "jaccard":
-                    union = len(si | sj)
-                    score = len(si & sj) / union if union > 0 else 0.0
-                elif metric == "cosine":
-                    inter = len(si & sj)
-                    denom = math.sqrt(len(si)) * math.sqrt(len(sj))
-                    score = inter / denom if denom > 0 else 0.0
-                elif metric == "overlap":
-                    minlen = min(len(si), len(sj))
-                    score = len(si & sj) / minlen if minlen > 0 else 0.0
-                else:
-                    score = 0.0
-                sim[i, j] = score
-                sim[j, i] = score
+        t_count = len(all_tables)
+        if t_count == 0:
+            return np.eye(n, dtype=np.float64)
 
-        return sim
+        # Sparse binary matrix: sessions × tables
+        binary = np.zeros((n, t_count), dtype=np.float32)
+        for i, ts in enumerate(table_sets):
+            for t in ts:
+                binary[i, all_tables[t]] = 1.0
+
+        # Vectorized intersection: A @ A.T gives pairwise intersection counts
+        intersection = binary @ binary.T  # (n, n) — count of shared tables
+
+        # Set sizes per session
+        sizes = binary.sum(axis=1)  # (n,)
+
+        if metric == "jaccard":
+            # union(i,j) = |A_i| + |A_j| - intersection(i,j)
+            union = sizes[:, None] + sizes[None, :] - intersection
+            sim = np.divide(intersection, union, out=np.zeros_like(intersection), where=union > 0)
+        elif metric == "cosine":
+            denom = np.sqrt(sizes[:, None]) * np.sqrt(sizes[None, :])
+            sim = np.divide(intersection, denom, out=np.zeros_like(intersection), where=denom > 0)
+        elif metric == "overlap":
+            min_sizes = np.minimum(sizes[:, None], sizes[None, :])
+            sim = np.divide(intersection, min_sizes, out=np.zeros_like(intersection), where=min_sizes > 0)
+        else:
+            sim = np.zeros((n, n), dtype=np.float64)
+
+        np.fill_diagonal(sim, 1.0)
+        return sim.astype(np.float64)
 
 
 def extract_session_features(tier_data: dict[str, Any]) -> list[SessionFeatures]:

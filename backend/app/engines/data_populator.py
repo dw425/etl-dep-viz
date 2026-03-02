@@ -738,18 +738,37 @@ def _populate_waves(db: Session, upload_id: int, data: dict) -> None:
 
 
 def _populate_umap(db: Session, upload_id: int, data: dict) -> None:
-    """Populate vw_umap_coords from V3 output."""
+    """Populate vw_umap_coords from V3 output.
+
+    V3 output format: {projections: {scale_name: {coords: [{session_id, x, y, cluster}]}}, method: str}
+    """
     _delete_for_upload(db, VwUmapCoords, upload_id)
     rows = []
-    for item in data.get('points', data.get('embeddings', [])):
-        rows.append(VwUmapCoords(
-            upload_id=upload_id,
-            session_id=str(item.get('session_id', item.get('id', ''))),
-            scale=item.get('scale', 'balanced'),
-            x=item.get('x', 0),
-            y=item.get('y', 0),
-            cluster_id=item.get('cluster_id', item.get('cluster')),
-        ))
+
+    # Handle V3 projections format: projections -> {scale: {coords: [...]}}
+    projections = data.get('projections', {})
+    if projections:
+        for scale_name, proj in projections.items():
+            for item in proj.get('coords', []):
+                rows.append(VwUmapCoords(
+                    upload_id=upload_id,
+                    session_id=str(item.get('session_id', item.get('id', ''))),
+                    scale=scale_name,
+                    x=item.get('x', 0),
+                    y=item.get('y', 0),
+                    cluster_id=item.get('cluster_id', item.get('cluster')),
+                ))
+    else:
+        # Fallback: flat list of points
+        for item in data.get('points', data.get('embeddings', [])):
+            rows.append(VwUmapCoords(
+                upload_id=upload_id,
+                session_id=str(item.get('session_id', item.get('id', ''))),
+                scale=item.get('scale', 'balanced'),
+                x=item.get('x', 0),
+                y=item.get('y', 0),
+                cluster_id=item.get('cluster_id', item.get('cluster')),
+            ))
     _bulk_save(db, rows)
 
 
@@ -787,32 +806,66 @@ def _populate_wave_function(db: Session, upload_id: int, data: dict) -> None:
 
 
 def _populate_concentration(db: Session, upload_id: int, data: dict) -> None:
-    """Populate vw_concentration_groups + vw_concentration_members from V10 output."""
+    """Populate vw_concentration_groups + vw_concentration_members from V10 output.
+
+    V10 output format: {gravity_groups: [{group_id, medoid_session_id, session_ids, core_tables, cohesion, coupling}],
+                        independent_sessions: [{session_id, independence_type, confidence}]}
+    """
     _delete_for_upload(db, VwConcentrationMembers, upload_id)
     _delete_for_upload(db, VwConcentrationGroups, upload_id)
 
     group_rows = []
     member_rows = []
-    for grp in data.get('groups', data.get('clusters', [])):
+
+    # V10 uses 'gravity_groups' as the key
+    groups = data.get('gravity_groups', data.get('groups', data.get('clusters', [])))
+    for grp in groups:
         gid = str(grp.get('group_id', grp.get('id', '')))
+        medoid_sid = str(grp.get('medoid_session_id', grp.get('medoid', '')))
         group_rows.append(VwConcentrationGroups(
             upload_id=upload_id,
             group_id=gid,
-            medoid_session_id=str(grp.get('medoid_session_id', grp.get('medoid', ''))),
+            medoid_session_id=medoid_sid,
             core_tables_json=_json_dumps(grp.get('core_tables')),
             cohesion=grp.get('cohesion', 0),
             coupling=grp.get('coupling', 0),
-            session_count=grp.get('session_count', len(grp.get('members', []))),
+            session_count=grp.get('session_count', len(grp.get('session_ids', grp.get('members', [])))),
         ))
-        for m in grp.get('members', []):
-            member_rows.append(VwConcentrationMembers(
-                upload_id=upload_id,
-                session_id=str(m.get('session_id', m.get('id', ''))),
-                group_id=gid,
-                is_medoid=1 if m.get('is_medoid') else 0,
-                independence_type=m.get('independence_type', ''),
-                confidence=m.get('confidence', 0),
-            ))
+        # V10 uses 'session_ids' (flat list) not 'members' (list of dicts)
+        session_ids = grp.get('session_ids', [])
+        members = grp.get('members', [])
+        if session_ids and not members:
+            # Build member rows from flat session_ids list
+            for sid in session_ids:
+                member_rows.append(VwConcentrationMembers(
+                    upload_id=upload_id,
+                    session_id=str(sid),
+                    group_id=gid,
+                    is_medoid=1 if str(sid) == medoid_sid else 0,
+                    independence_type='',
+                    confidence=0,
+                ))
+        else:
+            for m in members:
+                member_rows.append(VwConcentrationMembers(
+                    upload_id=upload_id,
+                    session_id=str(m.get('session_id', m.get('id', ''))),
+                    group_id=gid,
+                    is_medoid=1 if m.get('is_medoid') else 0,
+                    independence_type=m.get('independence_type', ''),
+                    confidence=m.get('confidence', 0),
+                ))
+
+    # Also populate independent sessions as a special group
+    for indep in data.get('independent_sessions', []):
+        member_rows.append(VwConcentrationMembers(
+            upload_id=upload_id,
+            session_id=str(indep.get('session_id', '')),
+            group_id='independent',
+            is_medoid=0,
+            independence_type=indep.get('independence_type', ''),
+            confidence=indep.get('confidence', 0),
+        ))
 
     _bulk_save(db, group_rows)
     _bulk_save(db, member_rows)

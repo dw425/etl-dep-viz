@@ -85,6 +85,9 @@ async def analyze_vectors(
         # Phase 3 runs all phases internally via run_all for a full ensemble result
         result = await asyncio.to_thread(orchestrator.run_all, tier_data)
 
+    # Remove internal cached matrices before serialization
+    result.pop('_matrices', None)
+
     # Persist vector results against the upload row if an ID was provided
     if upload_id:
         upload = db.query(Upload).filter(Upload.id == upload_id).first()

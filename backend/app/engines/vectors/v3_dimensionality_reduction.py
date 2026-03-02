@@ -45,13 +45,19 @@ class DimensionalityReductionResult:
 
 
 class DimensionalityReductionVector:
-    """V3: Multi-scale 2D projections with auto-clustering."""
+    """V3: Multi-scale 2D projections with auto-clustering.
+
+    For large datasets (>8000), only runs 'balanced' scale and reduces KMeans
+    iterations to keep runtime reasonable.
+    """
 
     SCALES = {
         "local": 10,
         "balanced": 30,
         "global": 100,
     }
+
+    LARGE_N_THRESHOLD = 8000  # Only run balanced scale above this
 
     def run(
         self,
@@ -66,29 +72,40 @@ class DimensionalityReductionVector:
         if n < 3:
             return DimensionalityReductionResult()
 
+        import logging
+        logger = logging.getLogger(__name__)
+
         # Standardize features
         scaler = StandardScaler()
         X = scaler.fit_transform(feature_matrix)
 
         result = DimensionalityReductionResult()
 
+        # For large N, only compute 'balanced' scale to save time
+        scales_to_run = self.SCALES
+        if n > self.LARGE_N_THRESHOLD:
+            scales_to_run = {"balanced": 30}
+            logger.info("V3 large-N mode: %d sessions, running balanced scale only", n)
+
         # Try UMAP first, fall back to PCA
         try:
             import umap
             result.method = "umap"
-            for scale_name, n_neighbors in self.SCALES.items():
+            for scale_name, n_neighbors in scales_to_run.items():
                 nn = min(n_neighbors, n - 1)
                 if nn < 2:
                     nn = 2
+                logger.info("V3 UMAP %s: n=%d, n_neighbors=%d", scale_name, n, nn)
                 reducer = umap.UMAP(
                     n_components=2,
                     n_neighbors=nn,
                     min_dist=0.1,
                     metric="euclidean",
                     random_state=42,
+                    low_memory=n > 10000,  # Enable low memory mode for large N
                 )
                 embedding = reducer.fit_transform(X)
-                proj = self._build_projection(embedding, session_ids)
+                proj = self._build_projection(embedding, session_ids, large_n=(n > self.LARGE_N_THRESHOLD))
                 result.projections[scale_name] = proj
         except ImportError:
             # Fallback: PCA
@@ -97,7 +114,7 @@ class DimensionalityReductionVector:
             embedding = pca.fit_transform(X)
             if embedding.shape[1] == 1:
                 embedding = np.column_stack([embedding, np.zeros(n)])
-            proj = self._build_projection(embedding, session_ids)
+            proj = self._build_projection(embedding, session_ids, large_n=(n > self.LARGE_N_THRESHOLD))
             result.projections["balanced"] = proj
 
         return result
@@ -106,6 +123,7 @@ class DimensionalityReductionVector:
         self,
         embedding,
         session_ids: list[str],
+        large_n: bool = False,
     ) -> dict[str, Any]:
         """Build projection dict with auto-clustering."""
         n = len(session_ids)
@@ -122,12 +140,14 @@ class DimensionalityReductionVector:
 
         # Auto-cluster via KMeans (elbow heuristic: sqrt(n/2))
         max_k = max(2, min(int(np.sqrt(n / 2)), 15))
+        n_init_elbow = 3 if large_n else 5
+        n_init_final = 5 if large_n else 10
         best_k = 2
         best_inertia_drop = 0.0
         prev_inertia = None
 
         for k in range(2, max_k + 1):
-            km = KMeans(n_clusters=k, random_state=42, n_init=5)
+            km = KMeans(n_clusters=k, random_state=42, n_init=n_init_elbow)
             km.fit(embedding)
             if prev_inertia is not None:
                 drop = prev_inertia - km.inertia_
@@ -136,7 +156,7 @@ class DimensionalityReductionVector:
                     best_k = k
             prev_inertia = km.inertia_
 
-        km = KMeans(n_clusters=best_k, random_state=42, n_init=10)
+        km = KMeans(n_clusters=best_k, random_state=42, n_init=n_init_final)
         labels = km.fit_predict(embedding)
 
         coords = [

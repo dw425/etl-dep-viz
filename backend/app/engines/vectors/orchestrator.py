@@ -60,6 +60,37 @@ class VectorOrchestrator:
         self._computed: set[str] = set()  # Track which vectors have been computed
         self._cached_results: dict[str, Any] = {}  # Cache per-vector results
 
+    def _build_matrices(self, tier_data: dict[str, Any], results: dict[str, Any] | None = None):
+        """Build or retrieve cached feature matrices.
+
+        Returns (features, builder, dense, adjacency, similarity).
+        Caches matrices in results['_matrices'] to avoid redundant rebuilds across phases.
+        """
+        # Reuse cached matrices if available
+        if results and '_matrices' in results:
+            cached = results['_matrices']
+            return cached['features'], cached['builder'], cached['dense'], cached['adjacency'], cached['similarity']
+
+        t0 = time.monotonic()
+        features = extract_session_features(tier_data)
+        self._timings["feature_extraction"] = time.monotonic() - t0
+        logger.info("Feature extraction: %d sessions in %.2fs", len(features), self._timings["feature_extraction"])
+
+        if not features:
+            return features, None, None, None, None
+
+        t0 = time.monotonic()
+        builder = FeatureMatrixBuilder(features)
+        dense = builder.build_dense_matrix()
+        connections = tier_data.get("connections", [])
+        adjacency = builder.build_adjacency_matrix(connections)
+        similarity = builder.build_similarity_matrix("jaccard")
+        self._timings["matrix_build"] = time.monotonic() - t0
+        logger.info("Matrix build: dense=%s adjacency=%s similarity=%s in %.2fs",
+                     dense.shape, adjacency.shape, similarity.shape, self._timings["matrix_build"])
+
+        return features, builder, dense, adjacency, similarity
+
     def run_phase1(self, tier_data: dict[str, Any]) -> dict[str, Any]:
         """Run Phase 1: feature extraction + V1 + V4 + V11.
 
@@ -69,30 +100,20 @@ class VectorOrchestrator:
         """
         results: dict[str, Any] = {}
 
-        # Step 1: Extract features
-        t0 = time.monotonic()
-        features = extract_session_features(tier_data)
-        self._timings["feature_extraction"] = time.monotonic() - t0
-        logger.info("Feature extraction: %d sessions in %.2fs", len(features), self._timings["feature_extraction"])
+        features, builder, dense, adjacency, similarity = self._build_matrices(tier_data, results)
 
         if not features:
             return {"error": "No sessions found in tier_data", "timings": self._timings}
 
+        # Cache matrices for reuse in Phase 2/3
+        results["_matrices"] = {
+            'features': features, 'builder': builder,
+            'dense': dense, 'adjacency': adjacency, 'similarity': similarity,
+        }
         results["session_count"] = len(features)
         results["session_ids"] = [f.session_id for f in features]
 
-        # Step 2: Build matrices
-        t0 = time.monotonic()
-        builder = FeatureMatrixBuilder(features)
-        dense = builder.build_dense_matrix()
-        connections = tier_data.get("connections", [])
-        adjacency = builder.build_adjacency_matrix(connections)
-        similarity = builder.build_similarity_matrix("jaccard")
-        self._timings["matrix_build"] = time.monotonic() - t0
-        logger.info("Matrix build: dense=%s adjacency=%s in %.2fs",
-                     dense.shape, adjacency.shape, self._timings["matrix_build"])
-
-        # Step 3: V11 Complexity (independent — run first so V4 can use scores)
+        # Step 1: V11 Complexity (independent — run first so V4 can use scores)
         t0 = time.monotonic()
         v11 = ComplexityAnalyzer()
         complexity_result = v11.run(features)
@@ -105,7 +126,7 @@ class VectorOrchestrator:
             s.session_id: s.overall_score for s in complexity_result.scores
         }
 
-        # Step 4: V1 Community Detection
+        # Step 2: V1 Community Detection
         t0 = time.monotonic()
         v1 = CommunityDetectionVector()
         community_result = v1.run(similarity, builder.session_ids, adjacency)
@@ -113,7 +134,7 @@ class VectorOrchestrator:
         results["v1_communities"] = community_result.to_dict()
         logger.info("V1 Community: %.2fs", self._timings["v1_community"])
 
-        # Step 5: V4 Topological SCC + Wave Plan
+        # Step 3: V4 Topological SCC + Wave Plan
         t0 = time.monotonic()
         v4 = TopologicalSCCVector()
         wave_plan = v4.run(adjacency, builder.session_ids, complexity_scores)
@@ -130,15 +151,9 @@ class VectorOrchestrator:
         """Run Phase 2: V2 + V3 + V9 + V10. Depends on Phase 1 feature matrix."""
         results = dict(phase1_results)
 
-        features = extract_session_features(tier_data)
+        features, builder, dense, adjacency, similarity = self._build_matrices(tier_data, results)
         if not features:
             return results
-
-        builder = FeatureMatrixBuilder(features)
-        connections = tier_data.get("connections", [])
-        adjacency = builder.build_adjacency_matrix(connections)
-        similarity = builder.build_similarity_matrix("jaccard")
-        dense = builder.build_dense_matrix()
 
         # V2: Hierarchical Lineage
         try:
@@ -199,13 +214,9 @@ class VectorOrchestrator:
         """Run Phase 3: V5 + V6 + V7 + V8. V7 needs V3 coords, V8 needs V1-V7."""
         results = dict(phase2_results)
 
-        features = extract_session_features(tier_data)
+        features, builder, dense, adjacency, similarity = self._build_matrices(tier_data, results)
         if not features:
             return results
-
-        builder = FeatureMatrixBuilder(features)
-        similarity = builder.build_similarity_matrix("jaccard")
-        dense = builder.build_dense_matrix()
 
         # V5: Affinity Propagation
         try:
@@ -269,6 +280,7 @@ class VectorOrchestrator:
         r1 = self.run_phase1(tier_data)
         r2 = self.run_phase2(tier_data, r1)
         r3 = self.run_phase3(tier_data, r2)
+        r3.pop('_matrices', None)  # Remove cached numpy arrays before serialization
         r3["total_time"] = round(time.monotonic() - t_total, 3)
         return r3
 
@@ -337,6 +349,7 @@ class VectorOrchestrator:
                 logger.warning("Vector %s failed: %s", vec_key, exc)
             self._timings[vec_key] = time.monotonic() - t0
 
+        results.pop('_matrices', None)  # Remove cached numpy arrays before serialization
         results["timings"] = {k: round(v, 3) for k, v in self._timings.items()}
         results["_incremental"] = True
         results["_vectors_run"] = sorted(to_run)

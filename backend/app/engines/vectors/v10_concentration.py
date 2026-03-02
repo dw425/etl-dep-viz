@@ -209,16 +209,47 @@ class ConcentrationVector:
         features: list[SessionFeatures],
         similarity,
     ) -> list[IndependentSession]:
-        """Detect sessions that are independent (can migrate without coordination)."""
+        """Detect sessions that are independent (can migrate without coordination).
+
+        Uses vectorized shared-table counting via binary matrix multiplication
+        instead of O(n²) Python loops.
+        """
         independents = []
         n = len(features)
+
+        # Pre-compute shared table counts using binary matrix (vectorized)
+        all_tables: dict[str, int] = {}
+        table_sets = []
+        for f in features:
+            ts = set(f.source_tables) | set(f.target_tables) | set(f.lookup_tables)
+            table_sets.append(ts)
+            for t in ts:
+                if t not in all_tables:
+                    all_tables[t] = len(all_tables)
+
+        t_count = len(all_tables)
+        if t_count > 0:
+            binary = np.zeros((n, t_count), dtype=np.float32)
+            for i, ts in enumerate(table_sets):
+                for t in ts:
+                    binary[i, all_tables[t]] = 1.0
+            # shared_matrix[i, j] = number of other sessions sharing tables with session i
+            has_shared = (binary @ binary.T) > 0  # bool matrix: sessions share at least 1 table
+            np.fill_diagonal(has_shared, False)
+            shared_counts = has_shared.sum(axis=1)  # per-session count of sessions sharing tables
+        else:
+            shared_counts = np.zeros(n, dtype=np.int64)
+
+        # Pre-compute max similarity per session (vectorized)
+        sim_copy = similarity.copy()
+        np.fill_diagonal(sim_copy, -1.0)
+        max_sims = sim_copy.max(axis=1)
 
         for i, f in enumerate(features):
             reasons = []
             full = True
             confidence = 1.0
 
-            # Check 6 strict criteria
             if f.upstream_count > self.INDEPENDENCE_CRITERIA["max_upstream"]:
                 full = False
             else:
@@ -244,27 +275,12 @@ class ConcentrationVector:
             else:
                 reasons.append("no staleness risk")
 
-            # Check shared tables with other sessions
-            my_tables = set(f.source_tables) | set(f.target_tables) | set(f.lookup_tables)
-            shared_count = 0
-            for j, f2 in enumerate(features):
-                if i == j:
-                    continue
-                other_tables = set(f2.source_tables) | set(f2.target_tables) | set(f2.lookup_tables)
-                if my_tables & other_tables:
-                    shared_count += 1
-
-            if shared_count > self.INDEPENDENCE_CRITERIA["max_shared_tables"]:
+            if int(shared_counts[i]) > self.INDEPENDENCE_CRITERIA["max_shared_tables"]:
                 full = False
             else:
                 reasons.append("minimal shared tables")
 
-            # Max similarity to any other session
-            max_sim = 0.0
-            for j in range(n):
-                if i != j:
-                    max_sim = max(max_sim, float(similarity[i, j]))
-
+            max_sim = float(max_sims[i])
             if max_sim < 0.1:
                 reasons.append("low similarity to all")
                 confidence = min(confidence, 1.0 - max_sim)
