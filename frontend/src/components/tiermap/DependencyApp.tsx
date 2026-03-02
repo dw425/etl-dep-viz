@@ -501,22 +501,28 @@ export function DependencyApp() {
   }, []);
 
   // ── Recluster — re-runs clustering on already-parsed tierData, no re-upload ─
+  const [reclusterLoading, setReclusterLoading] = useState(false);
   const handleRecluster = useCallback(async (algo: AlgorithmKey) => {
     if (!tierData) return;
+    const prevAlgo = algorithm;
     setAlgorithm(algo);
     setSelectedChunkIds(new Set());
     if (algo === 'gradient_scale') {
       // Pure frontend mode — no backend call needed
       return;
     }
+    setReclusterLoading(true);
     try {
       const result = await recluster(tierData, algo);
       setConstellation(result.constellation);
       logActivity('recluster', undefined, { algorithm: algo });
     } catch (e: any) {
+      setAlgorithm(prevAlgo); // restore previous algorithm on failure
       setError({ message: e.message, phase: 'recluster', timestamp: new Date().toISOString() });
+    } finally {
+      setReclusterLoading(false);
     }
-  }, [tierData]);
+  }, [tierData, algorithm]);
 
   // ── Load from persistence — restores tier/constellation/vector data from SQLite ────
   const handleLoadUpload = useCallback(async (id: number, restoreView?: string) => {
@@ -1251,9 +1257,9 @@ export function DependencyApp() {
       {/* Main content */}
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex' }}>
         {/* Constellation sidebar */}
-        {view === 'constellation' && constellation && algorithm !== 'gradient_scale' && (
+        {view === 'constellation' && constellation && (
           <ChunkSelector
-            chunks={constellation.chunks}
+            chunks={algorithm === 'gradient_scale' ? [] : constellation.chunks}
             activeChunkIds={selectedChunkIds}
             onToggle={handleChunkToggle}
             onSelectAll={handleSelectAll}
@@ -1277,7 +1283,7 @@ export function DependencyApp() {
                   wrapped in Suspense. Edge-to-edge views use padding=0. ── */}
         <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, color: '#64748b' }}>Loading view...</div>}>
-            <div style={{ flex: 1, overflow: 'hidden', padding: (['tier', 'matrix', 'galaxy', 'constellation', 'tables', 'duplicates', 'heatmap', 'umap', 'decisiontree'].includes(view)) ? 0 : 20 }}>
+            <div style={{ flex: 1, overflow: 'hidden', padding: (['tier', 'matrix', 'galaxy', 'constellation', 'tables', 'duplicates', 'heatmap', 'umap', 'decisiontree', 'flowwalker'].includes(view)) ? 0 : 20 }}>
               {/* ── Core views ── */}
               {view === 'tier' && scopedTierData && (
                 <ErrorBoundary><TierDiagram data={scopedTierData} chunks={constellation?.chunks} /></ErrorBoundary>
@@ -1297,6 +1303,7 @@ export function DependencyApp() {
                     onChunkSelect={handleChunkToggle}
                     algorithm={algorithm}
                     onAlgorithmChange={handleRecluster}
+                    reclustering={reclusterLoading}
                     highlightedSessionIds={highlightedSessionIds}
                     tierData={tierData}
                     vectorResults={vectorResults}
@@ -1440,7 +1447,7 @@ export function DependencyApp() {
               )}
 
               {/* AI Chat */}
-              {view === 'chat' && (
+              {view === 'chat' && tierData && (
                 <ErrorBoundary>
                   <div style={{ overflow: 'hidden', height: '100%' }}>
                     <AIChat uploadId={uploadId} tierData={tierData} onToast={addToast} />

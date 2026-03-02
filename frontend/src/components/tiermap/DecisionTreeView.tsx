@@ -550,10 +550,7 @@ export default function DecisionTreeView({ tierData, vectorResults, uploadId }: 
     setSelectedNode(null);
     setCollapsedNodes(new Set());
     try {
-      const body = vectorResults
-        ? { ...tierData, __vector_results: vectorResults }
-        : tierData;
-      const data = await getFlowData(body, sessionId, uploadId);
+      const data = await getFlowData(tierData, sessionId, uploadId);
       setFlowData(data as unknown as FlowData);
       setSelectedSessionId(sessionId);
     } catch (e) {
@@ -564,7 +561,7 @@ export default function DecisionTreeView({ tierData, vectorResults, uploadId }: 
     } finally {
       setLoading(false);
     }
-  }, [tierData, vectorResults, uploadId]);
+  }, [tierData, uploadId]);
 
   // Auto-load first session
   useEffect(() => {

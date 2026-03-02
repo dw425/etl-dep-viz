@@ -51,6 +51,7 @@ export default function FlowWalkerView({ tierData, vectorResults, uploadId }: Pr
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [flowData, setFlowData] = useState<FlowData | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [expandedTransform, setExpandedTransform] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedField, setSelectedField] = useState<string | null>(null);
@@ -101,23 +102,23 @@ export default function FlowWalkerView({ tierData, vectorResults, uploadId }: Pr
 
   const loadFlow = useCallback(async (sessionId: string) => {
     setLoading(true);
+    setLoadError(null);
     setExpandedTransform(null);
     setSelectedField(null);
     setShowAllUpstream(false);
     setShowAllDownstream(false);
     try {
-      const body = vectorResults
-        ? { ...tierData, __vector_results: vectorResults }
-        : tierData;
-      const data = await getFlowData(body, sessionId, uploadId);
+      const data = await getFlowData(tierData, sessionId, uploadId);
       setFlowData(data as unknown as FlowData);
       setSelectedSessionId(sessionId);
     } catch (e) {
-      console.error('Flow load error:', e);
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error('Flow load error:', msg);
+      setLoadError(msg);
     } finally {
       setLoading(false);
     }
-  }, [tierData, vectorResults, uploadId]);
+  }, [tierData, uploadId]);
 
   // Auto-load the first session on mount so the view is never blank after opening
   useEffect(() => {
@@ -311,6 +312,19 @@ export default function FlowWalkerView({ tierData, vectorResults, uploadId }: Pr
         {loading && (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b' }}>
             Loading flow data...
+          </div>
+        )}
+
+        {!loading && loadError && (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 8 }}>
+            <div style={{ color: '#ef4444', fontSize: 13 }}>Failed to load flow data</div>
+            <div style={{ color: '#64748b', fontSize: 11, maxWidth: 400, textAlign: 'center' }}>{loadError}</div>
+          </div>
+        )}
+
+        {!loading && !loadError && !flowData && !selectedSessionId && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b' }}>
+            Select a session to view its flow
           </div>
         )}
 
