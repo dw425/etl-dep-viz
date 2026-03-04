@@ -1,0 +1,13 @@
+command:
+  - "bash"
+  - "databricks-app/build.sh"
+
+env:
+  - name: DATABRICKS_APP_PORT
+    description: "Port assigned by Databricks Apps runtime"
+  - name: EDV_DATABASE_URL
+    description: "Lakebase PostgreSQL connection string"
+  - name: EDV_DATABRICKS_APP
+    value: "true"
+  - name: EDV_CORS_ORIGINS
+    value: '["*"]'

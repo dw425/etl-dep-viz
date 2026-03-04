@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     parse_timeout_seconds: int = 1800               # Hard timeout for XML/JSON parse (30 min)
     max_sessions_for_phase3: int = 15000            # Session count threshold for enabling Phase 3 vectors
 
+    # ── Databricks App Deployment ────────────────────────────────────────
+    lakebase_instance: str = ""                   # Lakebase instance name (empty = SQLite mode)
+    databricks_app: bool = False                  # True when running as a Databricks App
+
     # ── AI Chat / Vector DB ───────────────────────────────────────────────
     embedding_mode: str = "local"               # "local" (sentence-transformers) or "openai"
     embedding_model: str = "all-MiniLM-L6-v2"   # sentence-transformers model name

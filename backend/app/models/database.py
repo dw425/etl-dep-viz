@@ -109,10 +109,54 @@ class Upload(Base):
 
 
 # ── Engine & Session Factory ───────────────────────────────────────────────
-# check_same_thread=False is required for SQLite when used with FastAPI's
-# async request handlers, since the DB session may be created and closed on
-# different threads.
-engine = create_engine(settings.database_url, connect_args={"check_same_thread": False})
+
+
+def _attach_token_refresh(eng):
+    """Refresh Databricks OAuth token on each new PostgreSQL connection.
+
+    When running as a Databricks App, the password field of the connection
+    is replaced with a fresh OAuth access token fetched from the workspace's
+    OIDC endpoint.  This ensures long-running apps never hit token expiry.
+    """
+    from sqlalchemy import event
+    import os, json, urllib.request
+
+    @event.listens_for(eng, "do_connect")
+    def on_connect(dialect, conn_rec, cargs, cparams):
+        host = os.environ.get("DATABRICKS_HOST", "")
+        client_id = os.environ.get("DATABRICKS_CLIENT_ID", "")
+        client_secret = os.environ.get("DATABRICKS_CLIENT_SECRET", "")
+        if host and client_id and client_secret:
+            token_url = f"{host}/oidc/v1/token"
+            data = f"grant_type=client_credentials&client_id={client_id}&client_secret={client_secret}&scope=all-apis"
+            req = urllib.request.Request(
+                token_url, data=data.encode(), method="POST",
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            resp = urllib.request.urlopen(req)
+            token = json.loads(resp.read())["access_token"]
+            cparams["password"] = token
+
+
+def _create_engine():
+    """Build the SQLAlchemy engine based on the configured database URL.
+
+    - **SQLite** (default): uses ``check_same_thread=False`` for FastAPI
+      async compatibility — identical to the previous hard-coded behaviour.
+    - **PostgreSQL** (Lakebase): connection pooling with pre-ping; when
+      ``databricks_app=True``, attaches an OAuth token-refresh hook.
+    """
+    url = settings.database_url
+    if url.startswith("sqlite"):
+        return create_engine(url, connect_args={"check_same_thread": False})
+    else:
+        eng = create_engine(url, pool_size=5, max_overflow=10, pool_pre_ping=True)
+        if settings.databricks_app:
+            _attach_token_refresh(eng)
+        return eng
+
+
+engine = _create_engine()
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 
