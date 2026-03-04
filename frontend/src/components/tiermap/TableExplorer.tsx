@@ -11,6 +11,7 @@ import TierFilterSidebar, { type TierFilters, getDefaultTierFilters, applyTierFi
 
 interface Props {
   data: TierMapResult;
+  onSessionSelect?: (sessionId: string) => void;
 }
 
 /** Aggregated profile for a single table showing all session references. */
@@ -43,9 +44,12 @@ const TYPE_COLORS: Record<string, string> = {
  * Right detail panel shows per-table breakdown: writers, readers, and
  * lookup users, with conflict badges for write-write conflicts.
  */
-export default function TableExplorer({ data }: Props) {
+const PAGE_SIZE = 50;
+
+export default function TableExplorer({ data, onSessionSelect }: Props) {
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [page, setPage] = useState(1);
   const [tierFilters, setTierFilters] = useState<TierFilters>(getDefaultTierFilters);
   const filteredData = useMemo(() => applyTierFilters(data, tierFilters), [data, tierFilters]);
 
@@ -97,25 +101,27 @@ export default function TableExplorer({ data }: Props) {
     return profiles;
   }, [filteredData]);
 
-  // Top 100 tables sorted by reference count
-  const sortedTables = useMemo(() => {
+  // All tables sorted by reference count, paginated
+  const allSortedTables = useMemo(() => {
     let tables = Object.values(tableProfiles)
       .sort((a, b) => b.totalRefs - a.totalRefs);
     if (searchTerm) {
       const term = searchTerm.toUpperCase();
       tables = tables.filter(t => t.name.includes(term));
     }
-    return tables.slice(0, 100);
+    return tables;
   }, [tableProfiles, searchTerm]);
+  const totalPages = Math.ceil(allSortedTables.length / PAGE_SIZE);
+  const sortedTables = allSortedTables.slice(0, page * PAGE_SIZE);
 
   const selected = selectedTable ? tableProfiles[selectedTable] : null;
 
   return (
     <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
       {/* Left sidebar: table list */}
-      <div style={{ width: 320, flexShrink: 0, display: 'flex', flexDirection: 'column', borderRight: '1px solid #1e293b' }}>
-        <div style={{ padding: '12px 16px', borderBottom: '1px solid #1e293b' }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8 }}>
+      <div style={{ width: 320, flexShrink: 0, display: 'flex', flexDirection: 'column', borderRight: '1px solid #3a4a5e' }}>
+        <div style={{ padding: '12px 16px', borderBottom: '1px solid #3a4a5e' }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#8899aa', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8 }}>
             Top Tables ({Object.keys(tableProfiles).length} total)
           </div>
           <input
@@ -124,8 +130,8 @@ export default function TableExplorer({ data }: Props) {
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
             style={{
-              width: '100%', padding: '6px 10px', borderRadius: 6, border: '1px solid #1e293b',
-              background: '#111827', color: '#e2e8f0', fontSize: 11, outline: 'none',
+              width: '100%', padding: '6px 10px', borderRadius: 6, border: '1px solid #3a4a5e',
+              background: '#243044', color: '#e2e8f0', fontSize: 11, outline: 'none',
             }}
           />
         </div>
@@ -149,7 +155,7 @@ export default function TableExplorer({ data }: Props) {
                     <div style={{ fontSize: 11, fontWeight: 600, color: isSel ? '#60a5fa' : '#e2e8f0', fontFamily: "'JetBrains Mono', monospace", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {t.name}
                     </div>
-                    <div style={{ fontSize: 9, color: '#64748b', marginTop: 2 }}>
+                    <div style={{ fontSize: 9, color: '#8899aa', marginTop: 2 }}>
                       {t.totalRefs} references
                       {t.type === 'conflict' && <span style={{ color: '#ef4444', marginLeft: 4 }}>CONFLICT</span>}
                     </div>
@@ -163,6 +169,17 @@ export default function TableExplorer({ data }: Props) {
               </div>
             );
           })}
+          {page * PAGE_SIZE < allSortedTables.length && (
+            <button
+              onClick={() => setPage(p => p + 1)}
+              style={{
+                width: '100%', padding: '8px', borderRadius: 6, border: '1px solid #3a4a5e',
+                background: 'transparent', color: '#8899aa', fontSize: 11, cursor: 'pointer', marginTop: 4,
+              }}
+            >
+              Show more ({allSortedTables.length - page * PAGE_SIZE} remaining)
+            </button>
+          )}
         </div>
       </div>
 
@@ -175,23 +192,23 @@ export default function TableExplorer({ data }: Props) {
                 {selected.name}
               </div>
               <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
-                <Stat label="Type" value={selected.type} color={TYPE_COLORS[selected.type] || '#64748b'} />
+                <Stat label="Type" value={selected.type} color={TYPE_COLORS[selected.type] || '#8899aa'} />
                 <Stat label="Tier" value={String(selected.tier)} />
                 <Stat label="Total Refs" value={String(selected.totalRefs)} />
               </div>
             </div>
 
             {/* Writers */}
-            <RefSection label="WRITES TO" icon="W" color="#EF4444" items={selected.writers} />
+            <RefSection label="WRITES TO" icon="W" color="#EF4444" items={selected.writers} onSessionClick={onSessionSelect} />
             {/* Readers */}
-            <RefSection label="READS FROM" icon="R" color="#22C55E" items={selected.readers} />
+            <RefSection label="READS FROM" icon="R" color="#22C55E" items={selected.readers} onSessionClick={onSessionSelect} />
             {/* Lookups */}
-            <RefSection label="LOOKUP USERS" icon="L" color="#F59E0B" items={selected.lookupUsers} />
+            <RefSection label="LOOKUP USERS" icon="L" color="#F59E0B" items={selected.lookupUsers} onSessionClick={onSessionSelect} />
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', opacity: 0.4 }}>
             <div style={{ fontSize: 32, marginBottom: 12 }}>&#9664;</div>
-            <div style={{ fontSize: 12, color: '#64748b' }}>Select a table to explore its references</div>
+            <div style={{ fontSize: 12, color: '#8899aa' }}>Select a table to explore its references</div>
           </div>
         )}
       </div>
@@ -213,13 +230,13 @@ function Stat({ label, value, color }: { label: string; value: string; color?: s
   return (
     <div style={{ textAlign: 'center' }}>
       <div style={{ fontSize: 14, fontWeight: 700, color: color || '#e2e8f0' }}>{value}</div>
-      <div style={{ fontSize: 9, color: '#64748b' }}>{label}</div>
+      <div style={{ fontSize: 9, color: '#8899aa' }}>{label}</div>
     </div>
   );
 }
 
 /** Expandable list of session references for a given relationship type (writes/reads/lookups). */
-function RefSection({ label, icon, color, items }: { label: string; icon: string; color: string; items: string[] }) {
+function RefSection({ label, icon, color, items, onSessionClick }: { label: string; icon: string; color: string; items: string[]; onSessionClick?: (sid: string) => void }) {
   if (items.length === 0) return null;
   return (
     <div style={{ marginBottom: 20 }}>
@@ -229,9 +246,10 @@ function RefSection({ label, icon, color, items }: { label: string; icon: string
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
         {items.map(name => (
-          <span key={name} style={{
+          <span key={name} onClick={() => onSessionClick?.(name)} style={{
             fontSize: 10, padding: '4px 8px', borderRadius: 5, background: `${color}08`,
             color: '#e2e8f0', border: '1px solid transparent', fontFamily: "'JetBrains Mono', monospace",
+            cursor: onSessionClick ? 'pointer' : undefined,
           }}>
             {name}
           </span>

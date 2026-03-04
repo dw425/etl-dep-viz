@@ -76,11 +76,11 @@ export default function ParseAuditDashboard({ audit }: ParseAuditDashboardProps)
       </div>
 
       {/* Per-file results */}
-      <div style={{ border: '1px solid #334155', borderRadius: 8, overflow: 'hidden' }}>
+      <div style={{ border: '1px solid #4a5a6e', borderRadius: 8, overflow: 'hidden' }}>
         <div style={{
           display: 'grid', gridTemplateColumns: '2fr 80px 60px 100px 1fr',
-          padding: '8px 12px', background: '#1e293b', fontSize: 11, color: '#64748b',
-          fontWeight: 600, borderBottom: '1px solid #334155',
+          padding: '8px 12px', background: '#3a4a5e', fontSize: 11, color: '#8899aa',
+          fontWeight: 600, borderBottom: '1px solid #4a5a6e',
         }}>
           <span>File</span>
           <span>Status</span>
@@ -94,7 +94,7 @@ export default function ParseAuditDashboard({ audit }: ParseAuditDashboardProps)
             key={i}
             style={{
               display: 'grid', gridTemplateColumns: '2fr 80px 60px 100px 1fr',
-              padding: '6px 12px', borderBottom: '1px solid #1e293b',
+              padding: '6px 12px', borderBottom: '1px solid #3a4a5e',
               fontSize: 12, alignItems: 'center',
             }}
           >
@@ -110,11 +110,11 @@ export default function ParseAuditDashboard({ audit }: ParseAuditDashboardProps)
             <span style={{ color: '#94a3b8' }}>
               {f.elapsed_ms > 0 ? `${f.elapsed_ms}ms` : '-'}
             </span>
-            <div style={{ position: 'relative', height: 6, background: '#1e293b', borderRadius: 3 }}>
+            <div style={{ position: 'relative', height: 6, background: '#3a4a5e', borderRadius: 3 }}>
               <div style={{
                 position: 'absolute', left: 0, top: 0, height: '100%', borderRadius: 3,
                 width: `${(f.elapsed_ms / maxElapsed) * 100}%`,
-                background: STATUS_COLORS[f.status] || '#64748b',
+                background: STATUS_COLORS[f.status] || '#8899aa',
                 opacity: 0.7,
               }} />
             </div>
@@ -148,7 +148,7 @@ export default function ParseAuditDashboard({ audit }: ParseAuditDashboardProps)
 function SummaryCard({ label, value, color }: { label: string; value: number; color: string }) {
   return (
     <div style={{
-      padding: '12px 16px', background: '#1e293b', borderRadius: 8,
+      padding: '12px 16px', background: '#3a4a5e', borderRadius: 8,
       border: `1px solid ${color}33`,
     }}>
       <div style={{ fontSize: 24, fontWeight: 700, color }}>{value}</div>

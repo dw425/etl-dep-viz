@@ -124,9 +124,9 @@ export default function TierFilterSidebar({ data, filters, onChange, compact }: 
       <button
         onClick={() => setExpanded(true)}
         style={{
-          padding: '4px 10px', borderRadius: 4, border: '1px solid #1e293b',
+          padding: '4px 10px', borderRadius: 4, border: '1px solid #3a4a5e',
           background: activeCount ? 'rgba(59,130,246,0.1)' : 'rgba(0,0,0,0.2)',
-          color: activeCount ? '#60A5FA' : '#64748b', fontSize: 10,
+          color: activeCount ? '#60A5FA' : '#8899aa', fontSize: 10,
           cursor: 'pointer', whiteSpace: 'nowrap',
         }}
       >
@@ -137,12 +137,12 @@ export default function TierFilterSidebar({ data, filters, onChange, compact }: 
 
   return (
     <div style={{
-      width: 200, borderLeft: '1px solid #1e293b', background: 'rgba(8,12,20,0.95)',
+      width: 200, borderLeft: '1px solid #3a4a5e', background: 'rgba(26,35,50,0.95)',
       display: 'flex', flexDirection: 'column', overflow: 'hidden', flexShrink: 0,
     }}>
       {/* Header */}
       <div style={{
-        padding: '8px 12px', borderBottom: '1px solid #1e293b',
+        padding: '8px 12px', borderBottom: '1px solid #3a4a5e',
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
       }}>
         <span style={{ fontSize: 10, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
@@ -157,7 +157,7 @@ export default function TierFilterSidebar({ data, filters, onChange, compact }: 
       </div>
 
       {/* Search */}
-      <div style={{ padding: '6px 10px', borderBottom: '1px solid #1e293b' }}>
+      <div style={{ padding: '6px 10px', borderBottom: '1px solid #3a4a5e' }}>
         <input
           type="text"
           placeholder="Filter sessions…"
@@ -165,7 +165,7 @@ export default function TierFilterSidebar({ data, filters, onChange, compact }: 
           onChange={e => setSearch(e.target.value)}
           style={{
             width: '100%', padding: '4px 8px', borderRadius: 4,
-            border: '1px solid #1e293b', background: 'rgba(0,0,0,0.3)',
+            border: '1px solid #3a4a5e', background: 'rgba(0,0,0,0.3)',
             color: '#e2e8f0', fontSize: 10, outline: 'none',
             fontFamily: "'JetBrains Mono', monospace",
           }}
@@ -175,7 +175,7 @@ export default function TierFilterSidebar({ data, filters, onChange, compact }: 
       <div style={{ flex: 1, overflowY: 'auto', padding: '6px 0' }}>
         {/* Tier checkboxes */}
         <div style={{ padding: '4px 10px' }}>
-          <div style={{ fontSize: 9, fontWeight: 700, color: '#64748b', marginBottom: 4, textTransform: 'uppercase' }}>
+          <div style={{ fontSize: 9, fontWeight: 700, color: '#8899aa', marginBottom: 4, textTransform: 'uppercase' }}>
             Tiers
           </div>
           {tiers.map(([tier, count]) => {
@@ -198,10 +198,10 @@ export default function TierFilterSidebar({ data, filters, onChange, compact }: 
                 }}>
                   {active && <div style={{ width: 5, height: 5, borderRadius: 1, background: color }} />}
                 </div>
-                <span style={{ fontSize: 10, color: active ? '#e2e8f0' : '#475569', flex: 1 }}>
+                <span style={{ fontSize: 10, color: active ? '#e2e8f0' : '#5a6a7a', flex: 1 }}>
                   Tier {tier}
                 </span>
-                <span style={{ fontSize: 9, color: '#475569' }}>{count}</span>
+                <span style={{ fontSize: 9, color: '#5a6a7a' }}>{count}</span>
               </div>
             );
           })}
@@ -212,8 +212,8 @@ export default function TierFilterSidebar({ data, filters, onChange, compact }: 
         </div>
 
         {/* Connection type toggles */}
-        <div style={{ padding: '8px 10px', borderTop: '1px solid #1e293b', marginTop: 4 }}>
-          <div style={{ fontSize: 9, fontWeight: 700, color: '#64748b', marginBottom: 4, textTransform: 'uppercase' }}>
+        <div style={{ padding: '8px 10px', borderTop: '1px solid #3a4a5e', marginTop: 4 }}>
+          <div style={{ fontSize: 9, fontWeight: 700, color: '#8899aa', marginBottom: 4, textTransform: 'uppercase' }}>
             Connections
           </div>
           {CONN_TYPES.map(ct => {
@@ -237,10 +237,10 @@ export default function TierFilterSidebar({ data, filters, onChange, compact }: 
                 }}>
                   {active && <div style={{ width: 5, height: 5, borderRadius: 1, background: ct.color }} />}
                 </div>
-                <span style={{ fontSize: 10, color: active ? '#e2e8f0' : '#475569', flex: 1 }}>
+                <span style={{ fontSize: 10, color: active ? '#e2e8f0' : '#5a6a7a', flex: 1 }}>
                   {ct.label}
                 </span>
-                <span style={{ fontSize: 9, color: '#475569' }}>{count}</span>
+                <span style={{ fontSize: 9, color: '#5a6a7a' }}>{count}</span>
               </div>
             );
           })}
@@ -252,7 +252,7 @@ export default function TierFilterSidebar({ data, filters, onChange, compact }: 
 
 const miniBtn: React.CSSProperties = {
   padding: '2px 6px', borderRadius: 3, border: '1px solid rgba(255,255,255,0.08)',
-  background: 'transparent', color: '#64748b', fontSize: 9, cursor: 'pointer',
+  background: 'transparent', color: '#8899aa', fontSize: 9, cursor: 'pointer',
 };
 
 const tinyBtn: React.CSSProperties = {

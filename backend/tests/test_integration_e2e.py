@@ -33,7 +33,7 @@ class TestFullPipeline:
         )
         assert r.status_code == 200
         vectors = r.json()
-        assert "v1_community" in vectors or "v4_topological" in vectors or "v11_complexity" in vectors
+        assert "v1_communities" in vectors or "v4_wave_plan" in vectors or "v11_complexity" in vectors
 
         # Step 3: Retrieve cached vectors
         r = client.get(f"/api/vectors/results/{upload_id}")

@@ -4,8 +4,8 @@ export default {
   theme: {
     extend: {
       colors: {
-        surface: '#111827',
-        border: '#1e293b',
+        surface: '#243044',
+        border: '#3a4a5e',
       },
       fontFamily: {
         mono: ['JetBrains Mono', 'monospace'],

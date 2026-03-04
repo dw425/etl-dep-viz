@@ -104,20 +104,27 @@ def _get_complexity(session_id: str, vectors: dict | None) -> dict | None:
 
 def _get_wave(session_id: str, vectors: dict | None) -> int | None:
     """Get wave assignment for a session."""
-    if not vectors or "v4_topological" not in vectors:
+    if not vectors or "v4_wave_plan" not in vectors:
         return None
-    for wave_data in vectors["v4_topological"].get("waves", []):
-        if session_id in wave_data.get("sessions", []):
-            return wave_data.get("wave")
+    for wave_data in vectors["v4_wave_plan"].get("waves", []):
+        if session_id in wave_data.get("session_ids", []):
+            return wave_data.get("wave_number")
     return None
 
 
 def _get_community(session_id: str, vectors: dict | None) -> int | None:
     """Get community assignment from V1 results."""
-    if not vectors or "v1_community" not in vectors:
+    if not vectors or "v1_communities" not in vectors:
         return None
-    assignments = vectors["v1_community"].get("assignments", {})
-    return assignments.get(session_id)
+    assignments = vectors["v1_communities"].get("assignments", {})
+    if isinstance(assignments, dict):
+        return assignments.get(session_id)
+    # assignments can also be a list of {session_id, community_id} dicts
+    if isinstance(assignments, list):
+        for a in assignments:
+            if isinstance(a, dict) and a.get("session_id") == session_id:
+                return a.get("community_id") or a.get("macro_id")
+    return None
 
 
 def _get_gravity(session_id: str, vectors: dict | None) -> int | None:
@@ -476,10 +483,10 @@ def generate_environment_document(tier_data: dict, vectors: dict | None) -> str:
 
     # Summarise V4 topological wave plan — each wave is a migration execution batch
     wave_summary = ""
-    if vectors and "v4_topological" in vectors:
-        for wave_data in vectors["v4_topological"].get("waves", []):
-            wave_num = wave_data.get("wave", "?")
-            count = len(wave_data.get("sessions", []))
+    if vectors and "v4_wave_plan" in vectors:
+        for wave_data in vectors["v4_wave_plan"].get("waves", []):
+            wave_num = wave_data.get("wave_number", "?")
+            count = wave_data.get("session_count", len(wave_data.get("session_ids", [])))
             wave_summary += f"  Wave {wave_num}: {count} sessions\n"
 
     # Top 10 most complex sessions (descending overall_score) for quick triage
@@ -506,11 +513,17 @@ def generate_environment_document(tier_data: dict, vectors: dict | None) -> str:
 
     # Community summary from V1
     community_summary = ""
-    if vectors and "v1_community" in vectors:
-        assignments = vectors["v1_community"].get("assignments", {})
+    if vectors and "v1_communities" in vectors:
+        assignments = vectors["v1_communities"].get("assignments", {})
         community_counts: dict[int, int] = defaultdict(int)
-        for c in assignments.values():
-            community_counts[c] += 1
+        if isinstance(assignments, dict):
+            for c in assignments.values():
+                community_counts[c] += 1
+        elif isinstance(assignments, list):
+            for a in assignments:
+                cid = a.get("community_id") or a.get("macro_id") if isinstance(a, dict) else None
+                if cid is not None:
+                    community_counts[cid] += 1
         if community_counts:
             community_summary = f"  {len(community_counts)} communities detected\n"
             for cid, count in sorted(community_counts.items(), key=lambda x: -x[1])[:10]:

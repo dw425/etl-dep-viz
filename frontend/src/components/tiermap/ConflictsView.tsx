@@ -13,6 +13,7 @@ import {
   deriveReadAfterWrite,
 } from './constants';
 import TierFilterSidebar, { type TierFilters, getDefaultTierFilters, applyTierFilters } from '../shared/TierFilterSidebar';
+import SessionSearchBar from '../shared/SessionSearchBar';
 
 /** Number of items per "page" for progressive loading of conflict/chain lists */
 const PAGE_SIZE = 100;
@@ -20,6 +21,7 @@ const PAGE_SIZE = 100;
 interface Props {
   /** Full tier map result containing sessions, tables, and connections */
   data: TierMapResult;
+  onSessionSelect?: (sessionId: string) => void;
 }
 
 /**
@@ -29,8 +31,9 @@ interface Props {
  *
  * Both sections use progressive "show more" pagination to avoid rendering thousands of DOM nodes.
  */
-const ConflictsView: React.FC<Props> = ({ data }) => {
+const ConflictsView: React.FC<Props> = ({ data, onSessionSelect }) => {
   const [tierFilters, setTierFilters] = useState<TierFilters>(getDefaultTierFilters);
+  const [searchTerm, setSearchTerm] = useState('');
 
   // ── Derived data pipeline ──────────────────────────────────────────────────
   // Each step memoizes its result and only recomputes when its direct dependency changes.
@@ -40,15 +43,23 @@ const ConflictsView: React.FC<Props> = ({ data }) => {
   const readAfterWrite = useMemo(() => deriveReadAfterWrite(sessionData), [sessionData]);
 
   /** Table -> writers[] entries for write-write conflicts */
-  const conflictEntries = useMemo(
-    () => Object.entries(writeConflicts),
-    [writeConflicts],
-  );
+  const conflictEntries = useMemo(() => {
+    const entries = Object.entries(writeConflicts);
+    if (!searchTerm) return entries;
+    return entries.filter(([table, writers]) =>
+      table.toLowerCase().includes(searchTerm) || writers.some(w => w.toLowerCase().includes(searchTerm))
+    );
+  }, [writeConflicts, searchTerm]);
   /** Table -> {writers[], readers[]} entries for read-after-write chains */
-  const rawEntries = useMemo(
-    () => Object.entries(readAfterWrite),
-    [readAfterWrite],
-  );
+  const rawEntries = useMemo(() => {
+    const entries = Object.entries(readAfterWrite);
+    if (!searchTerm) return entries;
+    return entries.filter(([table, info]) =>
+      table.toLowerCase().includes(searchTerm) ||
+      info.writers.some((w: string) => w.toLowerCase().includes(searchTerm)) ||
+      info.readers.some((r: string) => r.toLowerCase().includes(searchTerm))
+    );
+  }, [readAfterWrite, searchTerm]);
 
   // ── Progressive pagination ──────────────────────────────────────────────────
   // Starts at page 1; each "show more" click increments by 1, revealing PAGE_SIZE more items.
@@ -60,6 +71,11 @@ const ConflictsView: React.FC<Props> = ({ data }) => {
   return (
     <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
     <div style={{ overflowY: 'auto', flex: 1 }}>
+      <SessionSearchBar
+        placeholder="Search tables or sessions..."
+        onSearch={setSearchTerm}
+        matchCount={searchTerm ? conflictEntries.length + rawEntries.length : undefined}
+      />
       {/* ── Write-Write Conflicts ──────────────────────────────────────────── */}
       <div style={{ marginBottom: 24 }}>
         <div

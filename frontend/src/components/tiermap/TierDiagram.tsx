@@ -391,7 +391,7 @@ const TierDiagram: React.FC<Props> = ({ data, chunks }) => {
           }}>
             <span style={{ fontWeight: 700, color: '#60A5FA' }}>{data.sessions.length.toLocaleString()} sessions</span>
             <span>across {tGroupsData.length} tiers</span>
-            <span style={{ color: '#64748B' }}>|</span>
+            <span style={{ color: '#8899aa' }}>|</span>
             <span>{data.connections.length.toLocaleString()} connections</span>
             {activeFilterCount > 0 && (
               <span style={{ color: '#F59E0B' }}>
@@ -433,7 +433,7 @@ const TierDiagram: React.FC<Props> = ({ data, chunks }) => {
         {/* Tier band cards */}
         <div style={{ position: 'relative' as const, padding: '28px 40px', minWidth: 920, zIndex: 2 }}>
           {filteredGroups.length === 0 && (
-            <div style={{ textAlign: 'center', padding: 48, color: '#475569', fontSize: 13 }}>
+            <div style={{ textAlign: 'center', padding: 48, color: '#5a6a7a', fontSize: 13 }}>
               No sessions match the current filters.
               <button onClick={() => { setSearchQuery(''); setShowCriticalOnly(false); setSelectedClusterId(null); setSel(null); }}
                 style={{ marginLeft: 8, color: '#60A5FA', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
@@ -529,7 +529,7 @@ const TierDiagram: React.FC<Props> = ({ data, chunks }) => {
                             {t.lookupUsers > 0 ? ' ' + t.lookupUsers + 'L' : ''}
                           </div>
                         )}
-                        <div style={{ fontSize: 8, color: '#64748B', marginTop: 2, textTransform: 'uppercase' as const, letterSpacing: '0.05em' }}>{t.type}</div>
+                        <div style={{ fontSize: 8, color: '#8899aa', marginTop: 2, textTransform: 'uppercase' as const, letterSpacing: '0.05em' }}>{t.type}</div>
                       </div>
                     );
                   })}
@@ -538,7 +538,7 @@ const TierDiagram: React.FC<Props> = ({ data, chunks }) => {
                     <button onClick={(e) => { e.stopPropagation(); setTierTableLimits(prev => ({ ...prev, [g.tier]: (prev[g.tier] ?? TABLE_PAGE_SIZE) + TABLE_PAGE_SIZE })); }}
                       style={{
                         padding: '8px 16px', borderRadius: 6, border: '1px dashed rgba(100,116,139,0.3)',
-                        background: 'transparent', color: '#64748B', fontSize: 10, fontWeight: 600,
+                        background: 'transparent', color: '#8899aa', fontSize: 10, fontWeight: 600,
                         cursor: 'pointer', minWidth: 120, textAlign: 'center' as const,
                       }}>
                       + {hiddenTableCount} more table{hiddenTableCount > 1 ? 's' : ''}
@@ -556,13 +556,13 @@ const TierDiagram: React.FC<Props> = ({ data, chunks }) => {
           RIGHT SIDEBAR
          ══════════════════════════════════════════════════════════════════ */}
       <div style={{
-        width: 280, borderLeft: '1px solid #1E293B', background: 'rgba(15,23,42,0.6)',
+        width: 280, borderLeft: '1px solid #3a4a5e', background: 'rgba(26,35,50,0.6)',
         overflowY: 'auto', flexShrink: 0, display: 'flex', flexDirection: 'column' as const,
       }}>
 
         {/* ── Session Search ──────────────────────────────────────────── */}
-        <div style={{ padding: '10px 14px', borderBottom: '1px solid #1E293B', flexShrink: 0 }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: '#64748B', textTransform: 'uppercase' as const, letterSpacing: '0.1em', marginBottom: 6 }}>
+        <div style={{ padding: '10px 14px', borderBottom: '1px solid #3a4a5e', flexShrink: 0 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#8899aa', textTransform: 'uppercase' as const, letterSpacing: '0.1em', marginBottom: 6 }}>
             Search Sessions
           </div>
           <input
@@ -572,20 +572,20 @@ const TierDiagram: React.FC<Props> = ({ data, chunks }) => {
             placeholder="Filter by name..."
             style={{
               width: '100%', padding: '6px 10px', borderRadius: 6, fontSize: 11,
-              background: '#0f172a', border: '1px solid #1E293B', color: '#E2E8F0',
+              background: '#1a2332', border: '1px solid #3a4a5e', color: '#E2E8F0',
               outline: 'none', boxSizing: 'border-box' as const,
             }}
           />
           {searchQuery && (
-            <div style={{ fontSize: 9, color: '#64748B', marginTop: 4 }}>
+            <div style={{ fontSize: 9, color: '#8899aa', marginTop: 4 }}>
               {filteredSessionIds.size} match{filteredSessionIds.size !== 1 ? 'es' : ''}
             </div>
           )}
         </div>
 
         {/* ── Session Filters ─────────────────────────────────────────── */}
-        <div style={{ padding: '10px 14px', borderBottom: '1px solid #1E293B', flexShrink: 0 }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: '#64748B', textTransform: 'uppercase' as const, letterSpacing: '0.1em', marginBottom: 6 }}>
+        <div style={{ padding: '10px 14px', borderBottom: '1px solid #3a4a5e', flexShrink: 0 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#8899aa', textTransform: 'uppercase' as const, letterSpacing: '0.1em', marginBottom: 6 }}>
             Session Filters
           </div>
 
@@ -602,7 +602,7 @@ const TierDiagram: React.FC<Props> = ({ data, chunks }) => {
             <input type="checkbox" checked={isolateSelected} onChange={() => setIsolateSelected(v => !v)}
               style={{ accentColor: '#3B82F6' }} />
             Isolate on select
-            <span style={{ marginLeft: 'auto', fontSize: 9, color: '#64748B' }}>
+            <span style={{ marginLeft: 'auto', fontSize: 9, color: '#8899aa' }}>
               {sel ? 'active' : 'off'}
             </span>
           </label>
@@ -623,8 +623,8 @@ const TierDiagram: React.FC<Props> = ({ data, chunks }) => {
 
         {/* ── Cluster Filter ──────────────────────────────────────────── */}
         {chunks && chunks.length > 0 && (
-          <div style={{ padding: '10px 14px', borderBottom: '1px solid #1E293B', flexShrink: 0 }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: '#64748B', textTransform: 'uppercase' as const, letterSpacing: '0.1em', marginBottom: 6 }}>
+          <div style={{ padding: '10px 14px', borderBottom: '1px solid #3a4a5e', flexShrink: 0 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: '#8899aa', textTransform: 'uppercase' as const, letterSpacing: '0.1em', marginBottom: 6 }}>
               Cluster Filter
             </div>
             <select
@@ -632,7 +632,7 @@ const TierDiagram: React.FC<Props> = ({ data, chunks }) => {
               onChange={e => setSelectedClusterId(e.target.value || null)}
               style={{
                 width: '100%', padding: '6px 8px', borderRadius: 6, fontSize: 10,
-                background: '#0f172a', border: '1px solid #1E293B', color: '#E2E8F0',
+                background: '#1a2332', border: '1px solid #3a4a5e', color: '#E2E8F0',
                 outline: 'none', cursor: 'pointer',
               }}
             >
@@ -655,7 +655,7 @@ const TierDiagram: React.FC<Props> = ({ data, chunks }) => {
                   {ch.critical_count > 0 && <div style={{ color: '#EF4444' }}>{ch.critical_count} critical</div>}
                   {ch.pivot_tables.length > 0 && (
                     <div style={{ marginTop: 4 }}>
-                      <span style={{ color: '#64748B' }}>Pivots: </span>
+                      <span style={{ color: '#8899aa' }}>Pivots: </span>
                       {ch.pivot_tables.slice(0, 3).join(', ')}
                       {ch.pivot_tables.length > 3 && ` +${ch.pivot_tables.length - 3}`}
                     </div>
@@ -667,18 +667,18 @@ const TierDiagram: React.FC<Props> = ({ data, chunks }) => {
         )}
 
         {/* ── Tier Visibility ─────────────────────────────────────────── */}
-        <div style={{ padding: '10px 14px', borderBottom: '1px solid #1E293B', flexShrink: 0 }}>
+        <div style={{ padding: '10px 14px', borderBottom: '1px solid #3a4a5e', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: '#64748B', textTransform: 'uppercase' as const, letterSpacing: '0.1em' }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: '#8899aa', textTransform: 'uppercase' as const, letterSpacing: '0.1em' }}>
               Tier Visibility
             </div>
             <div style={{ display: 'flex', gap: 6 }}>
               <button onClick={() => setHiddenTiers(new Set())}
-                style={{ fontSize: 8, padding: '2px 6px', borderRadius: 3, border: '1px solid #1E293B', background: 'transparent', color: '#64748B', cursor: 'pointer' }}>
+                style={{ fontSize: 8, padding: '2px 6px', borderRadius: 3, border: '1px solid #3a4a5e', background: 'transparent', color: '#8899aa', cursor: 'pointer' }}>
                 All
               </button>
               <button onClick={() => setHiddenTiers(new Set(tGroupsData.map(g => g.tier)))}
-                style={{ fontSize: 8, padding: '2px 6px', borderRadius: 3, border: '1px solid #1E293B', background: 'transparent', color: '#64748B', cursor: 'pointer' }}>
+                style={{ fontSize: 8, padding: '2px 6px', borderRadius: 3, border: '1px solid #3a4a5e', background: 'transparent', color: '#8899aa', cursor: 'pointer' }}>
                 None
               </button>
             </div>
@@ -693,16 +693,16 @@ const TierDiagram: React.FC<Props> = ({ data, chunks }) => {
                 style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5, cursor: 'pointer', userSelect: 'none' as const, overflow: 'hidden' as const }}>
                 <div style={{
                   width: 16, height: 16, minWidth: 16, borderRadius: 3, flexShrink: 0,
-                  border: '2px solid ' + (hidden ? '#475569' : cfg.color),
+                  border: '2px solid ' + (hidden ? '#5a6a7a' : cfg.color),
                   background: hidden ? 'transparent' : cfg.color,
                   display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.15s',
                 }}>
                   {!hidden && <span style={{ color: '#fff', fontSize: 9, fontWeight: 900, lineHeight: 1 }}>{'\u2713'}</span>}
                 </div>
-                <div style={{ fontSize: 8, color: hidden ? '#475569' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, width: 0, flexGrow: 1, transition: 'color 0.15s' }}>
+                <div style={{ fontSize: 8, color: hidden ? '#5a6a7a' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, width: 0, flexGrow: 1, transition: 'color 0.15s' }}>
                   {cfg.label}
                 </div>
-                <div style={{ fontSize: 8, fontFamily: 'monospace', color: hidden ? '#475569' : cfg.color, flexShrink: 0, whiteSpace: 'nowrap' as const }}>
+                <div style={{ fontSize: 8, fontFamily: 'monospace', color: hidden ? '#5a6a7a' : cfg.color, flexShrink: 0, whiteSpace: 'nowrap' as const }}>
                   {g.sessions.length > 0 ? g.sessions.length + 'S' : ''}
                   {g.sessions.length > 0 && g.tables.length > 0 ? '+' : ''}
                   {g.tables.length > 0 ? g.tables.length + 'T' : ''}
@@ -713,8 +713,8 @@ const TierDiagram: React.FC<Props> = ({ data, chunks }) => {
         </div>
 
         {/* ── Node Detail ─────────────────────────────────────────────── */}
-        <div style={{ padding: '12px 14px', borderBottom: '1px solid #1E293B', flexShrink: 0 }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: '#64748B', textTransform: 'uppercase' as const, letterSpacing: '0.1em' }}>
+        <div style={{ padding: '12px 14px', borderBottom: '1px solid #3a4a5e', flexShrink: 0 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#8899aa', textTransform: 'uppercase' as const, letterSpacing: '0.1em' }}>
             Node Detail
           </div>
         </div>
@@ -726,12 +726,12 @@ const TierDiagram: React.FC<Props> = ({ data, chunks }) => {
             </div>
 
             {selSession && (
-              <div style={{ fontSize: 9, color: '#64748B', marginBottom: 12, fontFamily: 'monospace', wordBreak: 'break-all' as const }}>
+              <div style={{ fontSize: 9, color: '#8899aa', marginBottom: 12, fontFamily: 'monospace', wordBreak: 'break-all' as const }}>
                 {selSession.full}
               </div>
             )}
             {selTable && (
-              <div style={{ fontSize: 9, color: '#64748B', marginBottom: 12 }}>
+              <div style={{ fontSize: 9, color: '#8899aa', marginBottom: 12 }}>
                 {selTable.type} &middot; tier {selTable.tier}
               </div>
             )}
@@ -763,7 +763,7 @@ const TierDiagram: React.FC<Props> = ({ data, chunks }) => {
                     </div>
                   );
                 })}
-                {selOuts.length > 20 && <div style={{ fontSize: 9, color: '#64748B', marginTop: 4 }}>+ {selOuts.length - 20} more</div>}
+                {selOuts.length > 20 && <div style={{ fontSize: 9, color: '#8899aa', marginTop: 4 }}>+ {selOuts.length - 20} more</div>}
               </div>
             )}
 
@@ -784,26 +784,26 @@ const TierDiagram: React.FC<Props> = ({ data, chunks }) => {
                     </div>
                   );
                 })}
-                {selIns.length > 20 && <div style={{ fontSize: 9, color: '#64748B', marginTop: 4 }}>+ {selIns.length - 20} more</div>}
+                {selIns.length > 20 && <div style={{ fontSize: 9, color: '#8899aa', marginTop: 4 }}>+ {selIns.length - 20} more</div>}
               </div>
             )}
           </div>
         ) : (
-          <div style={{ padding: 20, color: '#475569', fontSize: 11, textAlign: 'center' as const, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ padding: 20, color: '#5a6a7a', fontSize: 11, textAlign: 'center' as const, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             Click a node to inspect
           </div>
         )}
 
         {/* ── Connection Density ───────────────────────────────────────── */}
-        <div style={{ padding: '10px 14px', borderTop: '1px solid #1E293B', flexShrink: 0 }}>
-          <div style={{ fontSize: 9, fontWeight: 700, color: '#64748B', textTransform: 'uppercase' as const, letterSpacing: '0.1em', marginBottom: 6 }}>
+        <div style={{ padding: '10px 14px', borderTop: '1px solid #3a4a5e', flexShrink: 0 }}>
+          <div style={{ fontSize: 9, fontWeight: 700, color: '#8899aa', textTransform: 'uppercase' as const, letterSpacing: '0.1em', marginBottom: 6 }}>
             Connection Density
           </div>
           {densityNodes.map(n => (
             <div key={n.id} style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 3, cursor: 'pointer' }}
               onClick={() => setSel(p => p === n.id ? null : n.id)}>
-              <div style={{ fontSize: 8, color: '#64748B', width: 12, textAlign: 'right' as const, fontFamily: 'monospace' }}>{allConnCounts[n.id] || 0}</div>
-              <div style={{ flex: 1, height: 5, borderRadius: 2, background: '#1E293B', overflow: 'hidden' as const }}>
+              <div style={{ fontSize: 8, color: '#8899aa', width: 12, textAlign: 'right' as const, fontFamily: 'monospace' }}>{allConnCounts[n.id] || 0}</div>
+              <div style={{ flex: 1, height: 5, borderRadius: 2, background: '#3a4a5e', overflow: 'hidden' as const }}>
                 <div style={{
                   height: '100%', borderRadius: 2,
                   width: Math.min(((allConnCounts[n.id] || 0) / 8) * 100, 100) + '%',
@@ -818,8 +818,8 @@ const TierDiagram: React.FC<Props> = ({ data, chunks }) => {
         </div>
 
         {/* ── Connection Legend ─────────────────────────────────────────── */}
-        <div style={{ padding: '10px 14px', borderTop: '1px solid #1E293B', flexShrink: 0 }}>
-          <div style={{ fontSize: 9, fontWeight: 700, color: '#64748B', textTransform: 'uppercase' as const, letterSpacing: '0.1em', marginBottom: 6 }}>
+        <div style={{ padding: '10px 14px', borderTop: '1px solid #3a4a5e', flexShrink: 0 }}>
+          <div style={{ fontSize: 9, fontWeight: 700, color: '#8899aa', textTransform: 'uppercase' as const, letterSpacing: '0.1em', marginBottom: 6 }}>
             Connection Types
           </div>
           {(Object.entries(connTypes) as [TierConn['type'], ConnTypeConfig][]).map(([k, v]) => {
@@ -829,12 +829,12 @@ const TierDiagram: React.FC<Props> = ({ data, chunks }) => {
               <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
                 <div style={{ width: 16, height: 3, borderRadius: 1, background: v.color, flexShrink: 0 }} />
                 <span style={{ fontSize: 8, color: '#94A3B8', flex: 1 }}>{k.replace(/_/g, ' ')}</span>
-                <span style={{ fontSize: 8, color: '#64748B', fontFamily: 'monospace' }}>{count}</span>
+                <span style={{ fontSize: 8, color: '#8899aa', fontFamily: 'monospace' }}>{count}</span>
               </div>
             );
           })}
           {data.connections.length > 500 && (
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, cursor: 'pointer', fontSize: 9, color: '#64748B' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, cursor: 'pointer', fontSize: 9, color: '#8899aa' }}>
               <input type="checkbox" checked={hideMinorConns} onChange={() => setHideMinorConns(h => !h)} />
               Hide minor connections
             </label>

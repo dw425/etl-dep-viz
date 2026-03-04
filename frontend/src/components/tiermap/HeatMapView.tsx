@@ -80,12 +80,12 @@ const SIDEBAR_W = 200;
 const DETAIL_W = 280;
 
 const C = {
-  bg: '#0F172A',
-  surface: '#1E293B',
-  border: '#334155',
+  bg: '#1a2332',
+  surface: '#243044',
+  border: '#3a4a5e',
   text: '#E2E8F0',
   muted: '#94A3B8',
-  dim: '#475569',
+  dim: '#5a6a7a',
 };
 
 // ── Heat color: green → yellow → red ─────────────────────────────────────────
@@ -110,7 +110,7 @@ function heatColor(t: number): string {
 }
 
 function contrastText(t: number): string {
-  return t > 0.55 ? '#FFFFFF' : '#1E293B';
+  return t > 0.55 ? '#FFFFFF' : '#3a4a5e';
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -488,7 +488,7 @@ export default function HeatMapView({ complexity, tierData, vectorResults, onSes
       {/* ── Left Sidebar ── */}
       <div style={{
         width: SIDEBAR_W, flexShrink: 0, borderRight: `1px solid ${C.border}`,
-        background: 'rgba(15,23,42,0.6)', padding: 12, display: 'flex', flexDirection: 'column', gap: 14,
+        background: 'rgba(26,35,50,0.6)', padding: 12, display: 'flex', flexDirection: 'column', gap: 14,
         overflowY: 'auto',
       }}>
         {/* Title */}
@@ -574,7 +574,7 @@ export default function HeatMapView({ complexity, tierData, vectorResults, onSes
             onClick={() => setCriticalOnly(v => !v)}
             style={{
               width: 28, height: 16, borderRadius: 8, cursor: 'pointer',
-              background: criticalOnly ? '#EF4444' : '#334155',
+              background: criticalOnly ? '#EF4444' : '#4a5a6e',
               position: 'relative', transition: 'background 0.15s',
             }}
           >
@@ -618,7 +618,7 @@ export default function HeatMapView({ complexity, tierData, vectorResults, onSes
             left: Math.min(hoverPos.x + 12, containerWidth - 240),
             top: hoverPos.y + 12,
             width: 220, padding: 10, borderRadius: 8, zIndex: 20,
-            background: 'rgba(15,23,42,0.95)', border: `1px solid ${C.border}`,
+            background: 'rgba(26,35,50,0.95)', border: `1px solid ${C.border}`,
             pointerEvents: 'none',
           }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: C.text, marginBottom: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -666,7 +666,7 @@ export default function HeatMapView({ complexity, tierData, vectorResults, onSes
       {selectedSession && (
         <div style={{
           width: DETAIL_W, flexShrink: 0, borderLeft: `1px solid ${C.border}`,
-          background: 'rgba(15,23,42,0.6)', overflowY: 'auto', padding: 14,
+          background: 'rgba(26,35,50,0.6)', overflowY: 'auto', padding: 14,
         }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>

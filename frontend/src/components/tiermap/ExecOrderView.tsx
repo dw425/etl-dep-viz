@@ -28,16 +28,23 @@ import {
   deriveReadAfterWrite,
 } from './constants';
 import TierFilterSidebar, { type TierFilters, getDefaultTierFilters, applyTierFilters } from '../shared/TierFilterSidebar';
+import SessionSearchBar from '../shared/SessionSearchBar';
 
 interface Props {
   data: TierMapResult;
+  onSessionSelect?: (sessionId: string) => void;
 }
 
-const ExecOrderView: React.FC<Props> = ({ data }) => {
+const ExecOrderView: React.FC<Props> = ({ data, onSessionSelect }) => {
   const [tierFilters, setTierFilters] = useState<TierFilters>(getDefaultTierFilters);
+  const [searchTerm, setSearchTerm] = useState('');
   const filteredData = useMemo(() => applyTierFilters(data, tierFilters), [data, tierFilters]);
   const sessionData = useMemo(() => buildSessionData(filteredData), [filteredData]);
-  const executionOrder = useMemo(() => buildExecutionOrder(filteredData), [filteredData]);
+  const executionOrder = useMemo(() => {
+    const order = buildExecutionOrder(filteredData);
+    if (!searchTerm) return order;
+    return order.filter(s => s.toLowerCase().includes(searchTerm));
+  }, [filteredData, searchTerm]);
   const writeConflicts = useMemo(() => deriveWriteConflicts(sessionData), [sessionData]);
   const readAfterWrite = useMemo(() => deriveReadAfterWrite(sessionData), [sessionData]);
 
@@ -73,9 +80,14 @@ const ExecOrderView: React.FC<Props> = ({ data }) => {
       <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 4 }}>
         Recommended Execution Order
       </div>
-      <div style={{ fontSize: 10, color: C.textDim, marginBottom: 16 }}>
+      <div style={{ fontSize: 10, color: C.textDim, marginBottom: 8 }}>
         Respects all read-after-write chains and write conflicts ({executionOrder.length} sessions)
       </div>
+      <SessionSearchBar
+        placeholder="Search sessions..."
+        onSearch={setSearchTerm}
+        matchCount={searchTerm ? executionOrder.length : undefined}
+      />
 
       {useVirtual && <div style={{ height: startIdx * ITEM_HEIGHT }} />}
       {visibleItems.map((name, vi) => {
@@ -148,6 +160,7 @@ const ExecOrderView: React.FC<Props> = ({ data }) => {
 
             {/* Session card */}
             <div
+              onClick={() => onSessionSelect?.(name)}
               style={{
                 flex: 1,
                 background: C.surface,
@@ -155,6 +168,7 @@ const ExecOrderView: React.FC<Props> = ({ data }) => {
                 borderRadius: 8,
                 padding: '10px 14px',
                 marginBottom: 6,
+                cursor: onSessionSelect ? 'pointer' : undefined,
               }}
             >
               <div

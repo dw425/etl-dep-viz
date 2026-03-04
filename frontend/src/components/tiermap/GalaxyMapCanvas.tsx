@@ -241,7 +241,7 @@ export default function GalaxyMapCanvas({
   // Tier ≤ 0.6 indicates a source table not produced by any session (upstream external source)
   const extCount = useMemo(() => tables.filter(t => t.tier <= 0.6).length, [tables]);
   const EXT      = useMemo((): SP => ({
-    x: dims.w * 0.90, y: dims.h * 0.12, r: 48, color: '#475569',
+    x: dims.w * 0.90, y: dims.h * 0.12, r: 48, color: '#5a6a7a',
   }), [dims]);
 
   // ── Session→session edges (overview only) ─────────────────────────────────
@@ -305,7 +305,7 @@ export default function GalaxyMapCanvas({
       const tbl = tblById.get(otherId)!;
       nodes.push({
         uid: `i::${otherId}`, entityId: otherId, type: 'table',
-        x, y, r: 22, color: CC[connType] ?? '#64748B',
+        x, y, r: 22, color: CC[connType] ?? '#8899aa',
         label: tbl.name.length > 13 ? tbl.name.slice(0, 13) + '…' : tbl.name,
         fullName: tbl.name, connType, dir, parentX: sp.x, parentY: sp.y, level: 1,
       });
@@ -321,7 +321,7 @@ export default function GalaxyMapCanvas({
       const tbl = tblById.get(otherId)!;
       nodes.push({
         uid: `o::${otherId}`, entityId: otherId, type: 'table',
-        x, y, r: 20, color: CC[connType] ?? '#64748B',
+        x, y, r: 20, color: CC[connType] ?? '#8899aa',
         label: tbl.name.length > 13 ? tbl.name.slice(0, 13) + '…' : tbl.name,
         fullName: tbl.name, connType, dir, parentX: sp.x, parentY: sp.y, level: 1,
       });
@@ -446,14 +446,14 @@ export default function GalaxyMapCanvas({
         <div style={{ width: 1, height: 20, background: 'rgba(255,255,255,0.07)' }} />
         <span style={{ fontSize: 14, fontWeight: 800, color: '#E2E8F0' }}>Galaxy Map</span>
         {focusId ? (
-          <span style={{ fontSize: 11, color: '#64748B' }}>
+          <span style={{ fontSize: 11, color: '#8899aa' }}>
             {sessById.get(focusId)?.full ?? focusId}
             {' · '}{orbitNodes.filter(n => n.type === 'table').length} tables
             {' · '}{orbitNodes.filter(n => n.type === 'session').length} sessions
             {' · scroll to zoom · drag to pan'}
           </span>
         ) : (
-          <span style={{ fontSize: 11, color: '#475569' }}>
+          <span style={{ fontSize: 11, color: '#5a6a7a' }}>
             {sessions.length} sessions — click to explore · scroll to zoom · drag to pan
           </span>
         )}
@@ -463,7 +463,7 @@ export default function GalaxyMapCanvas({
             style={{
               ...btnSt,
               borderColor: filterVisible ? 'rgba(59,130,246,0.5)' : undefined,
-              color: filterVisible ? '#60a5fa' : '#64748B',
+              color: filterVisible ? '#60a5fa' : '#8899aa',
             }}
           >
             ⫶ Filters {sessions.length < data.sessions.length ? `(${sessions.length}/${data.sessions.length})` : ''}
@@ -475,7 +475,7 @@ export default function GalaxyMapCanvas({
             <button onClick={onClose} style={btnSt}>✕ Close</button>
           )}
           {!focusId && (
-            <div style={{ fontSize: 10, color: '#1e293b' }}>ESC closes</div>
+            <div style={{ fontSize: 10, color: '#3a4a5e' }}>ESC closes</div>
           )}
         </div>
       </div>
@@ -518,11 +518,11 @@ export default function GalaxyMapCanvas({
                   color: r.type === 'session' ? '#3B82F6' : '#10B981',
                 }}>{r.type}</span>
                 <span style={{ fontSize: 12, color: '#E2E8F0' }}>{r.name}</span>
-                <span style={{ fontSize: 10, color: '#475569', marginLeft: 'auto' }}>T{r.tier}</span>
+                <span style={{ fontSize: 10, color: '#5a6a7a', marginLeft: 'auto' }}>T{r.tier}</span>
               </div>
             ))}
             {search && searchResults.length === 0 && (
-              <div style={{ padding: '12px 16px', color: '#475569', fontSize: 11 }}>No results found</div>
+              <div style={{ padding: '12px 16px', color: '#5a6a7a', fontSize: 11 }}>No results found</div>
             )}
           </div>
         </div>
@@ -583,16 +583,16 @@ export default function GalaxyMapCanvas({
                 onMouseEnter={() => showTip(`${extCount} External Source Tables`, 'Tier 0 upstream sources — not produced by any session')}
                 onMouseLeave={hideTip}
               >
-                <circle cx={EXT.x} cy={EXT.y} r={EXT.r + 14} fill="#47556906" />
+                <circle cx={EXT.x} cy={EXT.y} r={EXT.r + 14} fill="#5a6a7a06" />
                 <circle cx={EXT.x} cy={EXT.y} r={EXT.r}
-                  fill="rgba(71,85,105,0.10)" stroke="#475569" strokeWidth={1.5}
+                  fill="rgba(71,85,105,0.10)" stroke="#5a6a7a" strokeWidth={1.5}
                   filter="url(#gsm)"
                 />
                 <text x={EXT.x} y={EXT.y - 7} textAnchor="middle"
                   fill="#94A3B8" fontSize={22} fontWeight={800}
                 >{extCount}</text>
-                <text x={EXT.x} y={EXT.y + 10} textAnchor="middle" fill="#64748B" fontSize={10}>External</text>
-                <text x={EXT.x} y={EXT.y + 22} textAnchor="middle" fill="#475569" fontSize={9}>Sources</text>
+                <text x={EXT.x} y={EXT.y + 10} textAnchor="middle" fill="#8899aa" fontSize={10}>External</text>
+                <text x={EXT.x} y={EXT.y + 22} textAnchor="middle" fill="#5a6a7a" fontSize={9}>Sources</text>
               </g>
 
               {/* Session→session base edges */}
@@ -862,7 +862,7 @@ export default function GalaxyMapCanvas({
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
             <DetailStat label="Tier" value={`${detailNode.tier}`} color={tierColor(detailNode.tier)} />
-            <DetailStat label="Step" value={`${detailNode.step}`} color="#64748B" />
+            <DetailStat label="Step" value={`${detailNode.step}`} color="#8899aa" />
             <DetailStat label="Transforms" value={`${detailNode.transforms}`} color="#3B82F6" />
             <DetailStat label="Lookups" value={`${detailNode.lookupCount}`} color="#A855F7" />
             <DetailStat label="Ext Reads" value={`${detailNode.extReads}`} color="#10B981" />
@@ -879,12 +879,12 @@ export default function GalaxyMapCanvas({
               const other = sessById.get(otherId) ?? tblById.get(otherId);
               return (
                 <div key={i} style={{
-                  fontSize: 10, color: '#64748B', padding: '3px 0',
+                  fontSize: 10, color: '#8899aa', padding: '3px 0',
                   borderBottom: '1px solid rgba(255,255,255,0.03)',
                 }}>
                   <span style={{ color: CC[c.type] ?? '#3B82F6' }}>{dir}</span>{' '}
                   <span style={{ color: '#94A3B8' }}>{(other as any)?.name ?? otherId}</span>{' '}
-                  <span style={{ color: '#475569' }}>({CL[c.type] ?? c.type})</span>
+                  <span style={{ color: '#5a6a7a' }}>({CL[c.type] ?? c.type})</span>
                 </div>
               );
             })}
@@ -905,7 +905,7 @@ export default function GalaxyMapCanvas({
           <div style={{ fontSize: 13, fontWeight: 700, color: '#F1F5F9', marginBottom: 5, wordBreak: 'break-all', lineHeight: 1.4 }}>
             {tip.name}
           </div>
-          <div style={{ fontSize: 11, color: '#64748B', lineHeight: 1.5 }}>{tip.sub}</div>
+          <div style={{ fontSize: 11, color: '#8899aa', lineHeight: 1.5 }}>{tip.sub}</div>
         </div>
       )}
 
@@ -997,7 +997,7 @@ function DetailStat({ label, value, color }: { label: string; value: string; col
     <div style={{
       background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: '6px 10px',
     }}>
-      <div style={{ fontSize: 9, color: '#475569', marginBottom: 2 }}>{label}</div>
+      <div style={{ fontSize: 9, color: '#5a6a7a', marginBottom: 2 }}>{label}</div>
       <div style={{ fontSize: 14, fontWeight: 800, color }}>{value}</div>
     </div>
   );
@@ -1006,6 +1006,6 @@ function DetailStat({ label, value, color }: { label: string; value: string; col
 const btnSt: React.CSSProperties = {
   padding: '4px 14px', borderRadius: 5,
   border: '1px solid rgba(255,255,255,0.09)',
-  background: 'transparent', color: '#64748B',
+  background: 'transparent', color: '#8899aa',
   fontSize: 11, cursor: 'pointer',
 };

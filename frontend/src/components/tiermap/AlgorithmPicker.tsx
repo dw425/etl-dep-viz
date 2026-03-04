@@ -70,7 +70,7 @@ export default function AlgorithmPicker({
             style={{
               padding: '4px 10px', fontSize: 11, cursor: 'pointer',
               background: compareMode ? '#3B82F6' : 'transparent',
-              border: `1px solid ${compareMode ? '#3B82F6' : '#475569'}`,
+              border: `1px solid ${compareMode ? '#3B82F6' : '#5a6a7a'}`,
               borderRadius: 4, color: '#e2e8f0',
             }}
           >
@@ -106,7 +106,7 @@ export default function AlgorithmPicker({
                 background: isActive ? 'rgba(59,130,246,0.15)' :
                   isCompareSelected ? 'rgba(168,85,247,0.15)' : 'transparent',
                 border: `1px solid ${isActive ? '#3B82F6' :
-                  isCompareSelected ? '#A855F7' : '#1e293b'}`,
+                  isCompareSelected ? '#A855F7' : '#3a4a5e'}`,
                 borderRadius: 8, color: '#e2e8f0', textAlign: 'left',
                 opacity: reclustering ? 0.5 : 1,
               }}

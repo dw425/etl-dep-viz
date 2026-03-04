@@ -59,10 +59,10 @@ const LOD_FAR_THRESHOLD = 0.8;
 const LOD_CLOSE_THRESHOLD = 3.0;
 
 const C = {
-  bg: '#080C14',
+  bg: '#1a2332',
   text: '#e2e8f0',
-  muted: '#64748b',
-  dim: '#475569',
+  muted: '#8899aa',
+  dim: '#5a6a7a',
 };
 
 // ── Algorithm metadata ───────────────────────────────────────────────────────
@@ -240,7 +240,7 @@ export default function ConstellationCanvas({
     const m = new Map<string, number>();
     if (vectorResults?.v4_wave_plan?.waves) {
       for (const w of vectorResults.v4_wave_plan.waves) {
-        for (const sid of w.session_ids) m.set(sid, w.wave_number);
+        for (const sid of (w.session_ids ?? [])) m.set(sid, w.wave_number);
       }
     }
     return m;
@@ -250,7 +250,7 @@ export default function ConstellationCanvas({
     const m = new Map<string, number>();
     if (vectorResults?.v10_concentration?.gravity_groups) {
       for (const g of vectorResults.v10_concentration.gravity_groups) {
-        for (const sid of g.session_ids) m.set(sid, g.group_id);
+        for (const sid of (g.session_ids ?? [])) m.set(sid, g.group_id);
       }
     }
     return m;
@@ -529,7 +529,7 @@ export default function ConstellationCanvas({
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(i + 1), px, py);
       }
       const legendX = w - 140; const legendY = h - 80;
-      ctx.fillStyle = 'rgba(15,23,42,0.85)'; roundRect(ctx, legendX - 8, legendY - 6, 120, 36, 6); ctx.fill();
+      ctx.fillStyle = 'rgba(26,35,50,0.85)'; roundRect(ctx, legendX - 8, legendY - 6, 120, 36, 6); ctx.fill();
       const grad = ctx.createLinearGradient(legendX, 0, legendX + 100, 0);
       grad.addColorStop(0, 'hsl(220,80%,85%)'); grad.addColorStop(1, 'hsl(220,80%,25%)');
       ctx.fillStyle = grad; roundRect(ctx, legendX, legendY, 100, 12, 3); ctx.fill();
@@ -787,7 +787,7 @@ export default function ConstellationCanvas({
           const midPt = pointMap.get(tracedPath[midIdx]);
           if (midPt) {
             const mpx = sx(midPt.x); const mpy = sy(midPt.y);
-            ctx.fillStyle = 'rgba(15,23,42,0.9)';
+            ctx.fillStyle = 'rgba(26,35,50,0.9)';
             roundRect(ctx, mpx - 20, mpy - 22, 40, 16, 4);
             ctx.fill();
             ctx.fillStyle = '#60A5FA'; ctx.font = 'bold 9px "JetBrains Mono", monospace';
@@ -863,7 +863,7 @@ export default function ConstellationCanvas({
 
       if (comp !== undefined) {
         // Complexity bar
-        ctx.fillStyle = '#64748b'; ctx.font = '8px "JetBrains Mono", monospace';
+        ctx.fillStyle = '#8899aa'; ctx.font = '8px "JetBrains Mono", monospace';
         ctx.fillText(`Complexity: ${Math.round(comp)}`, tx + 10, yOff);
         yOff += 12;
         ctx.fillStyle = 'rgba(255,255,255,0.06)';
@@ -899,7 +899,7 @@ export default function ConstellationCanvas({
         const sess = tierData.sessions.find(s => s.name === hover.name);
         if (sess) {
           ctx.font = '8px "JetBrains Mono", monospace';
-          ctx.fillStyle = '#64748b';
+          ctx.fillStyle = '#8899aa';
           ctx.fillText(`Transforms: ${sess.transforms} | ExtReads: ${sess.extReads} | Lookups: ${sess.lookupCount}`, tx + 10, yOff, cardW - 20);
         }
       }
@@ -1174,7 +1174,7 @@ export default function ConstellationCanvas({
             onChange={e => { setSearchTerm(e.target.value); setSearchFocusedId(null); }}
             style={{
               width: 280, padding: '6px 12px', borderRadius: 6,
-              border: '1px solid rgba(100,116,139,0.3)', background: 'rgba(15,23,42,0.9)',
+              border: '1px solid rgba(100,116,139,0.3)', background: 'rgba(26,35,50,0.9)',
               color: '#e2e8f0', fontSize: 11, outline: 'none',
               fontFamily: "'JetBrains Mono', monospace",
             }}
@@ -1182,7 +1182,7 @@ export default function ConstellationCanvas({
           {searchResults.length > 0 && (
             <div style={{
               width: 280, maxHeight: 200, overflowY: 'auto', marginTop: 2,
-              background: 'rgba(15,23,42,0.95)', border: '1px solid rgba(100,116,139,0.3)',
+              background: 'rgba(26,35,50,0.95)', border: '1px solid rgba(100,116,139,0.3)',
               borderRadius: 6,
             }}>
               {searchResults.map(p => (
@@ -1199,7 +1199,7 @@ export default function ConstellationCanvas({
                   onMouseLeave={e => (e.currentTarget.style.background = searchFocusedId === p.session_id ? 'rgba(245,158,11,0.1)' : 'transparent')}
                 >
                   <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
-                  <div style={{ fontSize: 8, color: '#64748b' }}>Tier {p.tier} | {chunkMap.get(p.chunk_id)?.label.split(':')[0] || p.chunk_id}</div>
+                  <div style={{ fontSize: 8, color: '#8899aa' }}>Tier {p.tier} | {chunkMap.get(p.chunk_id)?.label.split(':')[0] || p.chunk_id}</div>
                 </div>
               ))}
             </div>
@@ -1260,7 +1260,7 @@ export default function ConstellationCanvas({
               if (canvas && zoom) d3.select(canvas).transition().duration(200).call(zoom.scaleBy as any, b.scale);
             }} style={{
               width: 28, height: 28, borderRadius: 5, border: '1px solid rgba(255,255,255,0.1)',
-              background: 'rgba(15,23,42,0.85)', color: '#94a3b8', fontSize: 14,
+              background: 'rgba(26,35,50,0.85)', color: '#94a3b8', fontSize: 14,
               cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>{b.label}</button>
           ))}
@@ -1270,7 +1270,7 @@ export default function ConstellationCanvas({
             style={{
               width: 28, height: 28, borderRadius: 5,
               border: `1px solid ${fisheyeEnabled ? 'rgba(59,130,246,0.5)' : 'rgba(255,255,255,0.1)'}`,
-              background: fisheyeEnabled ? 'rgba(59,130,246,0.2)' : 'rgba(15,23,42,0.85)',
+              background: fisheyeEnabled ? 'rgba(59,130,246,0.2)' : 'rgba(26,35,50,0.85)',
               color: fisheyeEnabled ? '#60A5FA' : '#94a3b8',
               fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}
@@ -1328,13 +1328,13 @@ export default function ConstellationCanvas({
                     opacity: reclustering && !isActive ? 0.5 : 1,
                   }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                    <span style={{ fontSize: 14, lineHeight: 1, color: isActive ? '#34D399' : '#64748b' }}>{meta.icon}</span>
+                    <span style={{ fontSize: 14, lineHeight: 1, color: isActive ? '#34D399' : '#8899aa' }}>{meta.icon}</span>
                     <span style={{ fontSize: 11, fontWeight: 700, color: isActive ? '#34D399' : '#CBD5E1' }}>{meta.name}</span>
                     {isActive && (
                       <span style={{ marginLeft: 'auto', fontSize: 8, fontWeight: 700, padding: '1px 5px', borderRadius: 3, background: 'rgba(16,185,129,0.2)', color: '#34D399' }}>ACTIVE</span>
                     )}
                   </div>
-                  <div style={{ fontSize: 9, color: isActive ? 'rgba(52,211,153,0.7)' : '#475569', lineHeight: 1.4 }}>{meta.desc}</div>
+                  <div style={{ fontSize: 9, color: isActive ? 'rgba(52,211,153,0.7)' : '#5a6a7a', lineHeight: 1.4 }}>{meta.desc}</div>
                 </div>
               );
             })}
@@ -1358,7 +1358,7 @@ export default function ConstellationCanvas({
                 <span style={{ fontSize: 10, color: '#CBD5E1' }}>{label}</span>
                 <div onClick={() => setter(v => !v)} style={{
                   width: 28, height: 16, borderRadius: 8, cursor: 'pointer',
-                  background: value ? '#10B981' : '#334155',
+                  background: value ? '#10B981' : '#4a5a6e',
                   position: 'relative', transition: 'background 0.15s',
                 }}>
                   <div style={{
@@ -1376,7 +1376,7 @@ export default function ConstellationCanvas({
                 <div onClick={() => { setShowRadar(v => !v); if (showRadar) { setRadarSession(null); setRadarResult(new Map()); dirtyRef.current = true; } }}
                   style={{
                     width: 28, height: 16, borderRadius: 8, cursor: 'pointer',
-                    background: showRadar ? '#F59E0B' : '#334155',
+                    background: showRadar ? '#F59E0B' : '#4a5a6e',
                     position: 'relative', transition: 'background 0.15s',
                   }}>
                   <div style={{

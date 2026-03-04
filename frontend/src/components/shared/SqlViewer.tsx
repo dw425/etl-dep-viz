@@ -46,7 +46,7 @@ function highlightSQL(sql: string): JSX.Element[] {
     if (token.startsWith("'") || token.startsWith('"')) {
       tokens.push(<span key={key++} style={{ color: '#10B981' }}>{token}</span>);
     } else if (token.startsWith('--') || token.startsWith('/*')) {
-      tokens.push(<span key={key++} style={{ color: '#64748b', fontStyle: 'italic' }}>{token}</span>);
+      tokens.push(<span key={key++} style={{ color: '#8899aa', fontStyle: 'italic' }}>{token}</span>);
     } else if (/^\d/.test(token)) {
       tokens.push(<span key={key++} style={{ color: '#F97316' }}>{token}</span>);
     } else if (SQL_KEYWORDS.has(token.toUpperCase())) {
@@ -83,11 +83,11 @@ export default function SqlViewer({ sql, title, defaultCollapsed = false }: Prop
   };
 
   return (
-    <div style={{ borderRadius: 8, border: '1px solid #334155', overflow: 'hidden', marginBottom: 8 }}>
+    <div style={{ borderRadius: 8, border: '1px solid #4a5a6e', overflow: 'hidden', marginBottom: 8 }}>
       <div
         onClick={() => setCollapsed(!collapsed)}
         style={{
-          padding: '6px 12px', background: '#1e293b', display: 'flex',
+          padding: '6px 12px', background: '#3a4a5e', display: 'flex',
           justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer',
         }}
       >
@@ -97,7 +97,7 @@ export default function SqlViewer({ sql, title, defaultCollapsed = false }: Prop
         <button
           onClick={e => { e.stopPropagation(); handleCopy(); }}
           style={{
-            fontSize: 10, color: copied ? '#10B981' : '#64748b',
+            fontSize: 10, color: copied ? '#10B981' : '#8899aa',
             background: 'transparent', border: 'none', cursor: 'pointer',
           }}
         >
@@ -105,10 +105,10 @@ export default function SqlViewer({ sql, title, defaultCollapsed = false }: Prop
         </button>
       </div>
       {!collapsed && (
-        <div style={{ display: 'flex', background: '#0f172a', overflow: 'auto', maxHeight: 400 }}>
+        <div style={{ display: 'flex', background: '#1a2332', overflow: 'auto', maxHeight: 400 }}>
           <div style={{
-            padding: '8px 8px 8px 12px', borderRight: '1px solid #334155',
-            color: '#475569', fontSize: 11, fontFamily: 'monospace', textAlign: 'right',
+            padding: '8px 8px 8px 12px', borderRight: '1px solid #4a5a6e',
+            color: '#5a6a7a', fontSize: 11, fontFamily: 'monospace', textAlign: 'right',
             userSelect: 'none', lineHeight: '1.6',
           }}>
             {lines.map((_, i) => <div key={i}>{i + 1}</div>)}

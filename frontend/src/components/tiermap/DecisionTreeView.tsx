@@ -105,12 +105,12 @@ const NODE_LABELS: Record<TreeNode['nodeType'], string> = {
 
 // ── Theme ────────────────────────────────────────────────────────────────
 const THEME = {
-  bg: '#0F172A',
-  surface: '#1E293B',
+  bg: '#1a2332',
+  surface: '#243044',
   text: '#E2E8F0',
   muted: '#94A3B8',
-  border: '#334155',
-  dimText: '#64748B',
+  border: '#3a4a5e',
+  dimText: '#8899aa',
   highlight: 'rgba(59,130,246,0.15)',
 };
 
@@ -746,7 +746,7 @@ export default function DecisionTreeView({ tierData, vectorResults, uploadId }: 
           if (connectedToHovered.has(fromId) && connectedToHovered.has(toId)) {
             return '#60A5FA';
           }
-          return '#1E293B';
+          return '#3a4a5e';
         }
         if (hoveredEdge && hoveredEdge.from === fromId && hoveredEdge.to === toId) {
           return '#60A5FA';

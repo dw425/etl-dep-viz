@@ -69,7 +69,7 @@ export default function HelpOverlay({ onClose, views, theme: T }: Props) {
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
         }}>
           <div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: T.text }}>ETL Dependency Visualizer</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: T.text }}>Lakehouse Optimizer</div>
             <div style={{ fontSize: 11, color: T.textMuted, marginTop: 2 }}>Help & Keyboard Shortcuts</div>
           </div>
           <button

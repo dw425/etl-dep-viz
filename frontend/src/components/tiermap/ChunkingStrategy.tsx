@@ -122,7 +122,7 @@ export default function ChunkingStrategy({ tierData, constellation, vectorResult
         <h2 style={{ fontSize: 18, fontWeight: 700, color: '#e2e8f0', marginBottom: 8 }}>
           Data Harmonization &amp; Chunking
         </h2>
-        <p style={{ fontSize: 12, color: '#64748b', maxWidth: 600 }}>
+        <p style={{ fontSize: 12, color: '#8899aa', maxWidth: 600 }}>
           Choose how to group {sessionCount.toLocaleString()} sessions and {tableCount.toLocaleString()} tables
           into manageable chunks for visualization and analysis.
         </p>
@@ -155,13 +155,13 @@ export default function ChunkingStrategy({ tierData, constellation, vectorResult
                     onClick={() => setSelected(s.id)}
                     style={{
                       padding: 16, borderRadius: 10, cursor: 'pointer',
-                      background: isSel ? 'rgba(59,130,246,0.12)' : '#111827',
-                      border: `1px solid ${isSel ? '#3b82f6' : '#1e293b'}`,
+                      background: isSel ? 'rgba(59,130,246,0.12)' : '#243044',
+                      border: `1px solid ${isSel ? '#3b82f6' : '#3a4a5e'}`,
                       transition: 'all 0.15s',
                     }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                      <div style={{ width: 16, height: 16, borderRadius: '50%', border: `2px solid ${isSel ? '#3b82f6' : '#334155'}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <div style={{ width: 16, height: 16, borderRadius: '50%', border: `2px solid ${isSel ? '#3b82f6' : '#4a5a6e'}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         {isSel && <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#3b82f6' }} />}
                       </div>
                       <span style={{ fontSize: 13, fontWeight: 600, color: isSel ? '#60a5fa' : '#e2e8f0' }}>
@@ -169,7 +169,7 @@ export default function ChunkingStrategy({ tierData, constellation, vectorResult
                       </span>
                       {s.recommended && <span style={{ fontSize: 8, padding: '1px 5px', borderRadius: 3, background: 'rgba(34,197,94,0.2)', color: '#22C55E', fontWeight: 700 }}>RECOMMENDED</span>}
                     </div>
-                    <div style={{ fontSize: 11, color: '#64748b', lineHeight: 1.4 }}>
+                    <div style={{ fontSize: 11, color: '#8899aa', lineHeight: 1.4 }}>
                       {s.description}
                     </div>
                   </div>
@@ -181,7 +181,7 @@ export default function ChunkingStrategy({ tierData, constellation, vectorResult
       </div>
 
       {/* Analysis actions — Vector Analysis + AI Index */}
-      <div style={{ display: 'flex', gap: 12, marginTop: 24, padding: 16, borderRadius: 10, background: '#111827', border: '1px solid #1e293b' }}>
+      <div style={{ display: 'flex', gap: 12, marginTop: 24, padding: 16, borderRadius: 10, background: '#243044', border: '1px solid #3a4a5e' }}>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: '#A855F7', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8 }}>
             Analysis Tools
@@ -238,8 +238,8 @@ export default function ChunkingStrategy({ tierData, constellation, vectorResult
         <button
           onClick={() => onProceed('tier')}
           style={{
-            padding: '10px 24px', borderRadius: 8, border: '1px solid #1e293b', cursor: 'pointer',
-            background: 'transparent', color: '#64748b', fontSize: 13, fontWeight: 600,
+            padding: '10px 24px', borderRadius: 8, border: '1px solid #3a4a5e', cursor: 'pointer',
+            background: 'transparent', color: '#8899aa', fontSize: 13, fontWeight: 600,
           }}
         >
           Tier Diagram
@@ -261,9 +261,9 @@ export default function ChunkingStrategy({ tierData, constellation, vectorResult
 /** Centered stat card with large number and small label. */
 function StatCard({ label, value }: { label: string; value: number }) {
   return (
-    <div style={{ padding: '10px 16px', borderRadius: 8, background: '#111827', border: '1px solid #1e293b', textAlign: 'center' }}>
+    <div style={{ padding: '10px 16px', borderRadius: 8, background: '#243044', border: '1px solid #3a4a5e', textAlign: 'center' }}>
       <div style={{ fontSize: 18, fontWeight: 700, color: '#e2e8f0' }}>{value.toLocaleString()}</div>
-      <div style={{ fontSize: 9, color: '#64748b' }}>{label}</div>
+      <div style={{ fontSize: 9, color: '#8899aa' }}>{label}</div>
     </div>
   );
 }

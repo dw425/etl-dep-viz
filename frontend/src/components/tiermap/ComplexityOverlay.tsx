@@ -20,6 +20,7 @@
 
 import React, { useMemo, useState } from 'react';
 import type { ComplexityResult, SessionComplexityScore } from '../../types/vectors';
+import SessionSearchBar from '../shared/SessionSearchBar';
 
 const BUCKET_COLORS: Record<string, string> = {
   Simple: '#10B981',
@@ -47,20 +48,26 @@ interface Props {
 
 export default function ComplexityOverlay({ complexity, selectedSessionId, onSessionSelect }: Props) {
   const [sortBy, setSortBy] = useState<'score' | 'name'>('score');
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const scores = complexity?.scores ?? [];
 
   const sorted = useMemo(() => {
-    const scores = [...complexity.scores];
+    let arr = [...scores];
+    if (searchTerm) {
+      arr = arr.filter(s => s.name.toLowerCase().includes(searchTerm) || s.session_id.toLowerCase().includes(searchTerm));
+    }
     return sortBy === 'score'
-      ? scores.sort((a, b) => b.overall_score - a.overall_score)
-      : scores.sort((a, b) => a.name.localeCompare(b.name));
-  }, [complexity.scores, sortBy]);
+      ? arr.sort((a, b) => b.overall_score - a.overall_score)
+      : arr.sort((a, b) => a.name.localeCompare(b.name));
+  }, [scores, sortBy, searchTerm]);
 
   const selected = useMemo(() => {
     if (!selectedSessionId) return null;
-    return complexity.scores.find(s => s.session_id === selectedSessionId) ?? null;
-  }, [complexity.scores, selectedSessionId]);
+    return scores.find(s => s.session_id === selectedSessionId) ?? null;
+  }, [scores, selectedSessionId]);
 
-  const totalSessions = complexity.scores.length;
+  const totalSessions = scores.length;
 
   return (
     <div className="space-y-4">
@@ -138,8 +145,11 @@ export default function ComplexityOverlay({ complexity, selectedSessionId, onSes
 
       {/* Session List */}
       <div className="bg-gray-800 rounded-lg border border-gray-700">
+        <div className="px-3 pt-2">
+          <SessionSearchBar placeholder="Search sessions..." onSearch={setSearchTerm} matchCount={searchTerm ? sorted.length : undefined} totalCount={totalSessions} />
+        </div>
         <div className="flex items-center justify-between px-3 py-2 border-b border-gray-700">
-          <span className="text-xs text-gray-500">{totalSessions} sessions</span>
+          <span className="text-xs text-gray-500">{sorted.length} sessions</span>
           <div className="flex gap-1">
             <button
               onClick={() => setSortBy('score')}

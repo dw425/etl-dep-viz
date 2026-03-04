@@ -146,7 +146,7 @@ function buildLayout(data: TierMapResult, viewportW: number, viewportH: number):
     const source = nodeMap.get(conn.from);
     const target = nodeMap.get(conn.to);
     if (source && target) {
-      edges.push({ source, target, type: conn.type, color: CONN_COLORS[conn.type] || '#64748b' });
+      edges.push({ source, target, type: conn.type, color: CONN_COLORS[conn.type] || '#8899aa' });
     }
   }
 
@@ -326,7 +326,7 @@ export default function WebGLCanvas({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     // Clear
-    ctx.fillStyle = '#0f172a';
+    ctx.fillStyle = '#1a2332';
     ctx.fillRect(0, 0, w, h);
 
     // Apply zoom transform
@@ -338,7 +338,7 @@ export default function WebGLCanvas({
     for (let i = 0; i < layout.tierBands.length; i++) {
       const band = layout.tierBands[i];
       // Alternating band backgrounds
-      ctx.fillStyle = i % 2 === 0 ? 'rgba(30,41,59,0.35)' : 'rgba(15,23,42,0.2)';
+      ctx.fillStyle = i % 2 === 0 ? 'rgba(30,41,59,0.35)' : 'rgba(26,35,50,0.2)';
       ctx.fillRect(0, band.y, layout.virtualW, band.height);
 
       // Tier label on left edge
@@ -350,7 +350,7 @@ export default function WebGLCanvas({
       ctx.fillText(`T${band.tier}`, 4, band.y + band.height / 2 + labelSize * 0.35);
       // Count on right
       ctx.textAlign = 'right';
-      ctx.fillStyle = '#64748b';
+      ctx.fillStyle = '#8899aa';
       ctx.font = `${Math.max(8, labelSize - 2)}px monospace`;
       ctx.fillText(`${band.count}`, layout.virtualW - 4, band.y + band.height / 2 + labelSize * 0.35);
       ctx.globalAlpha = 1;
@@ -434,7 +434,7 @@ export default function WebGLCanvas({
     if (hover) {
       ctx.restore();
       const [sx, sy] = t.apply([hover.x, hover.y]);
-      ctx.fillStyle = 'rgba(15,23,42,0.95)';
+      ctx.fillStyle = 'rgba(26,35,50,0.95)';
       ctx.strokeStyle = hover.color;
       ctx.lineWidth = 1;
       const label = `${hover.label}  (Tier ${Math.floor(hover.tier)})`;
@@ -454,7 +454,7 @@ export default function WebGLCanvas({
     }
 
     // Stats overlay
-    ctx.fillStyle = 'rgba(15,23,42,0.8)';
+    ctx.fillStyle = 'rgba(26,35,50,0.8)';
     ctx.fillRect(8, h - 28, 360, 22);
     ctx.fillStyle = '#94a3b8';
     ctx.font = '10px monospace';
@@ -556,12 +556,12 @@ export default function WebGLCanvas({
       </div>
       {showSidebar && (
         <div style={{
-          width: 260, borderLeft: '1px solid #1e293b', background: '#111827',
+          width: 260, borderLeft: '1px solid #3a4a5e', background: '#243044',
           overflow: 'auto', flexShrink: 0, padding: 12, fontSize: 11,
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
             <span style={{ fontWeight: 700, color: '#e2e8f0', fontSize: 12 }}>Tier Filter</span>
-            <button onClick={() => setShowSidebar(false)} style={{ background: 'transparent', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: 14 }}>x</button>
+            <button onClick={() => setShowSidebar(false)} style={{ background: 'transparent', border: 'none', color: '#8899aa', cursor: 'pointer', fontSize: 14 }}>x</button>
           </div>
           {tierStats.map(ts => (
             <label key={ts.tier} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', cursor: 'pointer' }}>
@@ -578,18 +578,18 @@ export default function WebGLCanvas({
               />
               <div style={{ width: 8, height: 8, borderRadius: '50%', background: ts.color, flexShrink: 0 }} />
               <span style={{ color: '#e2e8f0', flex: 1 }}>Tier {ts.tier}</span>
-              <span style={{ color: '#64748b' }}>{ts.count}</span>
+              <span style={{ color: '#8899aa' }}>{ts.count}</span>
             </label>
           ))}
 
           {/* Selected node detail */}
           {hoverNode && (
-            <div style={{ marginTop: 16, padding: 10, borderRadius: 6, background: '#0f172a', border: '1px solid #1e293b' }}>
+            <div style={{ marginTop: 16, padding: 10, borderRadius: 6, background: '#1a2332', border: '1px solid #3a4a5e' }}>
               <div style={{ fontWeight: 600, color: '#e2e8f0', marginBottom: 4 }}>{hoverNode.label}</div>
-              <div style={{ color: '#64748b' }}>Type: {hoverNode.type}</div>
-              <div style={{ color: '#64748b' }}>Tier: {hoverNode.tier}</div>
+              <div style={{ color: '#8899aa' }}>Type: {hoverNode.type}</div>
+              <div style={{ color: '#8899aa' }}>Tier: {hoverNode.tier}</div>
               {(hoverNode.data as TierSession).transforms !== undefined && (
-                <div style={{ color: '#64748b' }}>Transforms: {(hoverNode.data as TierSession).transforms}</div>
+                <div style={{ color: '#8899aa' }}>Transforms: {(hoverNode.data as TierSession).transforms}</div>
               )}
               {(hoverNode.data as TierSession).critical && (
                 <div style={{ color: '#EF4444' }}>Critical</div>
@@ -603,10 +603,10 @@ export default function WebGLCanvas({
             {topNodes.map(n => (
               <div key={n.id} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                 <span style={{ color: '#e2e8f0', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 10 }}>{n.name}</span>
-                <div style={{ width: 60, height: 4, borderRadius: 2, background: '#1e293b', overflow: 'hidden' }}>
+                <div style={{ width: 60, height: 4, borderRadius: 2, background: '#3a4a5e', overflow: 'hidden' }}>
                   <div style={{ width: `${(n.count / n.max) * 100}%`, height: '100%', background: '#3b82f6', borderRadius: 2 }} />
                 </div>
-                <span style={{ color: '#64748b', fontSize: 9, minWidth: 20, textAlign: 'right' }}>{n.count}</span>
+                <span style={{ color: '#8899aa', fontSize: 9, minWidth: 20, textAlign: 'right' }}>{n.count}</span>
               </div>
             ))}
           </div>
@@ -628,7 +628,7 @@ export default function WebGLCanvas({
           onClick={() => setShowSidebar(true)}
           style={{
             position: 'absolute', right: 8, top: 8, padding: '4px 8px', borderRadius: 4,
-            background: '#111827', border: '1px solid #1e293b', color: '#64748b',
+            background: '#243044', border: '1px solid #3a4a5e', color: '#8899aa',
             fontSize: 10, cursor: 'pointer',
           }}
         >

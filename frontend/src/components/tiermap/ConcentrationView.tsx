@@ -20,8 +20,9 @@
  * @param onSessionSelect - Callback when a session is clicked in the group or independent list
  */
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import type { ConcentrationResult, GravityGroup, IndependentSession } from '../../types/vectors';
+import SessionSearchBar from '../shared/SessionSearchBar';
 
 const COLORS = [
   '#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#A855F7',
@@ -43,21 +44,31 @@ interface Props {
 export default function ConcentrationView({ concentration, onSessionSelect }: Props) {
   const [selectedGroup, setSelectedGroup] = useState<number | null>(null);
   const [showIndependent, setShowIndependent] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const gravityGroups = concentration?.gravity_groups ?? [];
+  const independentSessions = concentration?.independent_sessions ?? [];
+
+  const filteredGroups = useMemo(() => {
+    if (!searchTerm) return gravityGroups;
+    return gravityGroups.filter(g => (g.session_ids ?? []).some((sid: string) => sid.toLowerCase().includes(searchTerm)));
+  }, [gravityGroups, searchTerm]);
 
   const activeGroup = selectedGroup !== null
-    ? concentration.gravity_groups.find(g => g.group_id === selectedGroup)
+    ? gravityGroups.find(g => g.group_id === selectedGroup)
     : null;
 
   return (
     <div className="space-y-4">
       {/* Summary */}
       <div className="flex items-center gap-4 px-4 py-3 bg-gray-800 rounded-lg border border-gray-700">
-        <SumStat label="Groups" value={concentration.gravity_groups.length} />
-        <SumStat label="Independent" value={concentration.independent_sessions.length} />
+        <SumStat label="Groups" value={gravityGroups.length} />
+        <SumStat label="Independent" value={independentSessions.length} />
         <SumStat label="Optimal K" value={concentration.optimal_k} />
         <SumStat label="Silhouette" value={concentration.silhouette.toFixed(3)} />
       </div>
 
+      <SessionSearchBar placeholder="Search sessions..." onSearch={setSearchTerm} matchCount={searchTerm ? filteredGroups.length : undefined} />
       <div className="flex gap-4">
         {/* Group List */}
         <div className="w-72">
@@ -65,7 +76,7 @@ export default function ConcentrationView({ concentration, onSessionSelect }: Pr
             <div className="px-3 py-2 border-b border-gray-700 text-xs text-gray-500">
               Gravity Groups
             </div>
-            {concentration.gravity_groups.map((g, i) => (
+            {filteredGroups.map((g, i) => (
               <button
                 key={g.group_id}
                 onClick={() => setSelectedGroup(g.group_id)}
@@ -80,14 +91,14 @@ export default function ConcentrationView({ concentration, onSessionSelect }: Pr
             ))}
           </div>
 
-          {concentration.independent_sessions.length > 0 && (
+          {independentSessions.length > 0 && (
             <button
               onClick={() => setShowIndependent(!showIndependent)}
               className="w-full px-3 py-2 bg-gray-800 rounded-lg border border-gray-700 text-left flex items-center gap-2 hover:bg-gray-700/50 transition-colors"
             >
               <div className="w-3 h-3 rounded-full bg-gray-500" />
               <span className="text-xs text-gray-300 flex-1">Independent Sessions</span>
-              <span className="text-xs text-gray-500">{concentration.independent_sessions.length}</span>
+              <span className="text-xs text-gray-500">{independentSessions.length}</span>
               <span className="text-[10px] text-gray-600">{showIndependent ? '▲' : '▼'}</span>
             </button>
           )}
@@ -96,9 +107,9 @@ export default function ConcentrationView({ concentration, onSessionSelect }: Pr
         {/* Detail Panel */}
         <div className="flex-1">
           {activeGroup ? (
-            <GroupProfile group={activeGroup} colorIdx={concentration.gravity_groups.indexOf(activeGroup)} onSessionSelect={onSessionSelect} />
+            <GroupProfile group={activeGroup} colorIdx={gravityGroups.indexOf(activeGroup)} onSessionSelect={onSessionSelect} />
           ) : showIndependent ? (
-            <IndependentList sessions={concentration.independent_sessions} onSessionSelect={onSessionSelect} />
+            <IndependentList sessions={independentSessions} onSessionSelect={onSessionSelect} />
           ) : (
             <div className="flex items-center justify-center h-32 text-sm text-gray-500">
               Select a gravity group to view its profile
@@ -150,7 +161,7 @@ function GroupProfile({ group, colorIdx, onSessionSelect }: { group: GravityGrou
       <div className="bg-gray-800 rounded-lg border border-gray-700 p-3">
         <div className="text-xs text-gray-500 mb-2">Sessions</div>
         <div className="flex flex-wrap gap-1 max-h-40 overflow-y-auto">
-          {group.session_ids.map(sid => (
+          {(group.session_ids ?? []).map(sid => (
             <button
               key={sid}
               onClick={() => onSessionSelect?.(sid)}

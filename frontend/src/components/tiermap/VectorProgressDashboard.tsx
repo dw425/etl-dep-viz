@@ -143,14 +143,14 @@ export default function VectorProgressDashboard({
                 alignItems: 'center', marginBottom: 4, gap: 8,
               }}>
                 <span style={{
-                  fontSize: 11, color: t.status === 'completed' ? '#e2e8f0' : '#475569',
+                  fontSize: 11, color: t.status === 'completed' ? '#e2e8f0' : '#5a6a7a',
                   whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                 }}>
                   {VECTOR_NAMES[t.name] || t.name}
                 </span>
                 <div style={{
                   position: 'relative', height: 8,
-                  background: '#1e293b', borderRadius: 4,
+                  background: '#3a4a5e', borderRadius: 4,
                 }}>
                   <div style={{
                     position: 'absolute', left: 0, top: 0, height: '100%',
@@ -158,12 +158,12 @@ export default function VectorProgressDashboard({
                     width: `${(t.elapsed_ms / maxTime) * 100}%`,
                     background: t.status === 'completed'
                       ? PHASE_COLORS[phase]
-                      : '#475569',
+                      : '#5a6a7a',
                     opacity: t.status === 'completed' ? 0.8 : 0.3,
                   }} />
                 </div>
                 <span style={{
-                  fontSize: 10, color: '#64748b', textAlign: 'right',
+                  fontSize: 10, color: '#8899aa', textAlign: 'right',
                 }}>
                   {t.status === 'completed' ? `${t.elapsed_ms}ms` : 'skip'}
                 </span>

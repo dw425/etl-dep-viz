@@ -108,8 +108,8 @@ const MatrixView: React.FC<Props> = ({ data }) => {
         disabled={page <= 0}
         onClick={() => setPage(page - 1)}
         style={{
-          padding: '2px 8px', borderRadius: 4, border: '1px solid #334155',
-          background: page <= 0 ? '#1E293B' : '#334155', color: page <= 0 ? '#475569' : '#E2E8F0',
+          padding: '2px 8px', borderRadius: 4, border: '1px solid #4a5a6e',
+          background: page <= 0 ? '#3a4a5e' : '#4a5a6e', color: page <= 0 ? '#5a6a7a' : '#E2E8F0',
           cursor: page <= 0 ? 'default' : 'pointer', fontSize: 11,
         }}
       >
@@ -122,9 +122,9 @@ const MatrixView: React.FC<Props> = ({ data }) => {
         disabled={page >= totalPages - 1}
         onClick={() => setPage(page + 1)}
         style={{
-          padding: '2px 8px', borderRadius: 4, border: '1px solid #334155',
-          background: page >= totalPages - 1 ? '#1E293B' : '#334155',
-          color: page >= totalPages - 1 ? '#475569' : '#E2E8F0',
+          padding: '2px 8px', borderRadius: 4, border: '1px solid #4a5a6e',
+          background: page >= totalPages - 1 ? '#3a4a5e' : '#4a5a6e',
+          color: page >= totalPages - 1 ? '#5a6a7a' : '#E2E8F0',
           cursor: page >= totalPages - 1 ? 'default' : 'pointer', fontSize: 11,
         }}
       >
@@ -139,7 +139,7 @@ const MatrixView: React.FC<Props> = ({ data }) => {
       <div style={{ fontSize: 18, fontWeight: 700, color: '#E2E8F0', marginBottom: 6 }}>
         Many-to-Many Relationship Matrix
       </div>
-      <div style={{ fontSize: 14, color: '#64748B', marginBottom: 16 }}>
+      <div style={{ fontSize: 14, color: '#8899aa', marginBottom: 16 }}>
         Sessions (rows) {'\u00D7'} Tables (columns) &mdash; hover to highlight
       </div>
 
@@ -165,7 +165,7 @@ const MatrixView: React.FC<Props> = ({ data }) => {
       {/* Controls bar */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16, flexWrap: 'wrap' as const,
-        padding: '8px 12px', background: 'rgba(30,41,59,0.5)', borderRadius: 8, border: '1px solid #334155',
+        padding: '8px 12px', background: 'rgba(30,41,59,0.5)', borderRadius: 8, border: '1px solid #4a5a6e',
       }}>
         {/* Sparse toggle */}
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
@@ -185,13 +185,13 @@ const MatrixView: React.FC<Props> = ({ data }) => {
           onChange={e => { setSearch(e.target.value); setRowPage(0); setColPage(0); }}
           placeholder="Filter sessions/tables..."
           style={{
-            padding: '4px 10px', borderRadius: 4, border: '1px solid #334155',
-            background: '#0F172A', color: '#E2E8F0', fontSize: 11, width: 180,
+            padding: '4px 10px', borderRadius: 4, border: '1px solid #4a5a6e',
+            background: '#1a2332', color: '#E2E8F0', fontSize: 11, width: 180,
           }}
         />
 
         {/* Stats */}
-        <span style={{ fontSize: 11, color: '#64748B', fontFamily: 'monospace' }}>
+        <span style={{ fontSize: 11, color: '#8899aa', fontFamily: 'monospace' }}>
           {filteredSessions.length} rows x {filteredTables.length} cols
           {(filteredSessions.length !== data.sessions.length || filteredTables.length !== data.tables.length) &&
             ` (of ${data.sessions.length} x ${data.tables.length})`}
@@ -216,9 +216,9 @@ const MatrixView: React.FC<Props> = ({ data }) => {
             <tr>
               <th
                 style={{
-                  padding: '10px 16px', background: '#1E293B', color: '#64748B',
+                  padding: '10px 16px', background: '#3a4a5e', color: '#8899aa',
                   position: 'sticky' as const, left: 0, zIndex: 2, textAlign: 'left' as const,
-                  borderBottom: '2px solid #334155', fontSize: 13,
+                  borderBottom: '2px solid #4a5a6e', fontSize: 13,
                 }}
               >
                 Session {'\u2193'} / Table {'\u2192'}
@@ -230,12 +230,12 @@ const MatrixView: React.FC<Props> = ({ data }) => {
                   onMouseLeave={() => setHov(null)}
                   style={{
                     padding: '8px 8px',
-                    background: hov === t.id ? 'rgba(255,255,255,0.1)' : '#1E293B',
+                    background: hov === t.id ? 'rgba(255,255,255,0.1)' : '#3a4a5e',
                     color: hov === t.id ? '#fff' : '#94A3B8',
                     cursor: 'pointer',
                     writingMode: 'vertical-lr' as const,
                     textOrientation: 'mixed' as const,
-                    minWidth: 48, borderBottom: '2px solid #334155',
+                    minWidth: 48, borderBottom: '2px solid #4a5a6e',
                     borderRight: '1px solid #1a1f2e',
                     fontWeight: t.type === 'conflict' ? 700 : 500,
                     fontSize: 13, maxHeight: 200,
@@ -256,14 +256,14 @@ const MatrixView: React.FC<Props> = ({ data }) => {
                     onMouseLeave={() => setHov(null)}
                     style={{
                       padding: '12px 16px',
-                      background: hov === s.id ? 'rgba(255,255,255,0.1)' : '#111827',
+                      background: hov === s.id ? 'rgba(255,255,255,0.1)' : '#243044',
                       color: hov === s.id ? '#fff' : cfg.color,
                       position: 'sticky' as const, left: 0, zIndex: 1,
                       cursor: 'pointer', borderBottom: '1px solid #1a1f2e',
                       fontWeight: 600, whiteSpace: 'nowrap' as const, fontSize: 14,
                     }}
                   >
-                    <span style={{ color: '#64748B', marginRight: 6 }}>S{s.step}</span>
+                    <span style={{ color: '#8899aa', marginRight: 6 }}>S{s.step}</span>
                     {s.name}
                   </td>
                   {pageTables.map(t => {

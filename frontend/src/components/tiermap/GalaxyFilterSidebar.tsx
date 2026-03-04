@@ -159,7 +159,7 @@ export default function GalaxyFilterSidebar({ data, filters, onFiltersChange, vi
           position: 'absolute', top: 56, left: 8, zIndex: 15,
           padding: '6px 12px', borderRadius: 8,
           background: 'rgba(4,8,18,0.95)', border: '1px solid rgba(255,255,255,0.1)',
-          color: '#64748b', fontSize: 11, cursor: 'pointer',
+          color: '#8899aa', fontSize: 11, cursor: 'pointer',
         }}
       >
         Filters ({activeCount}/{totalCount})
@@ -181,7 +181,7 @@ export default function GalaxyFilterSidebar({ data, filters, onFiltersChange, vi
       }}>
         <div>
           <div style={{ fontSize: 12, fontWeight: 700, color: '#e2e8f0' }}>Filters & Slicers</div>
-          <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>
+          <div style={{ fontSize: 10, color: '#8899aa', marginTop: 2 }}>
             {activeCount}/{totalCount} sessions visible
           </div>
         </div>
@@ -213,7 +213,7 @@ export default function GalaxyFilterSidebar({ data, filters, onFiltersChange, vi
                   style={{
                     padding: '3px 8px', borderRadius: 4, border: 'none', cursor: 'pointer',
                     background: active ? `${color}20` : 'rgba(255,255,255,0.03)',
-                    color: active ? color : '#334155',
+                    color: active ? color : '#4a5a6e',
                     fontSize: 10, fontWeight: 600,
                     opacity: active ? 1 : 0.5,
                   }}
@@ -264,10 +264,10 @@ export default function GalaxyFilterSidebar({ data, filters, onFiltersChange, vi
                   }}>
                     {active && <div style={{ width: 6, height: 6, borderRadius: 1, background: ct.color }} />}
                   </div>
-                  <span style={{ fontSize: 10, color: active ? '#e2e8f0' : '#475569', flex: 1 }}>
+                  <span style={{ fontSize: 10, color: active ? '#e2e8f0' : '#5a6a7a', flex: 1 }}>
                     {ct.label}
                   </span>
-                  <span style={{ fontSize: 9, color: '#475569' }}>{count}</span>
+                  <span style={{ fontSize: 9, color: '#5a6a7a' }}>{count}</span>
                 </div>
               );
             })}
@@ -291,20 +291,20 @@ export default function GalaxyFilterSidebar({ data, filters, onFiltersChange, vi
             >
               <div style={{
                 width: 14, height: 14, borderRadius: 3,
-                border: `2px solid ${filters.conflictsOnly ? '#EF4444' : '#334155'}`,
+                border: `2px solid ${filters.conflictsOnly ? '#EF4444' : '#4a5a6e'}`,
                 background: filters.conflictsOnly ? '#EF444430' : 'transparent',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
               }}>
                 {filters.conflictsOnly && <div style={{ width: 6, height: 6, borderRadius: 1, background: '#EF4444' }} />}
               </div>
-              <span style={{ fontSize: 10, color: filters.conflictsOnly ? '#e2e8f0' : '#64748b' }}>
+              <span style={{ fontSize: 10, color: filters.conflictsOnly ? '#e2e8f0' : '#8899aa' }}>
                 Conflicts only ({stats.conflictCount})
               </span>
             </div>
 
             {/* Min transforms */}
             <div style={{ marginTop: 8 }}>
-              <div style={{ fontSize: 9, color: '#64748b', marginBottom: 4 }}>
+              <div style={{ fontSize: 9, color: '#8899aa', marginBottom: 4 }}>
                 Min transforms: {filters.minTransforms}
               </div>
               <input
@@ -319,7 +319,7 @@ export default function GalaxyFilterSidebar({ data, filters, onFiltersChange, vi
 
             {/* Min connections */}
             <div style={{ marginTop: 8 }}>
-              <div style={{ fontSize: 9, color: '#64748b', marginBottom: 4 }}>
+              <div style={{ fontSize: 9, color: '#8899aa', marginBottom: 4 }}>
                 Min connections: {filters.minConnections}
               </div>
               <input
@@ -363,10 +363,10 @@ export default function GalaxyFilterSidebar({ data, filters, onFiltersChange, vi
                   }}>
                     {active && <div style={{ width: 6, height: 6, borderRadius: 1, background: tt.color }} />}
                   </div>
-                  <span style={{ fontSize: 10, color: active ? '#e2e8f0' : '#475569', flex: 1 }}>
+                  <span style={{ fontSize: 10, color: active ? '#e2e8f0' : '#5a6a7a', flex: 1 }}>
                     {tt.label}
                   </span>
-                  <span style={{ fontSize: 9, color: '#475569' }}>{count}</span>
+                  <span style={{ fontSize: 9, color: '#5a6a7a' }}>{count}</span>
                 </div>
               );
             })}
@@ -413,7 +413,7 @@ function FilterSection({ title, expanded, onToggle, children }: {
         <span style={{ fontSize: 10, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
           {title}
         </span>
-        <span style={{ fontSize: 10, color: '#475569' }}>{expanded ? '\u25B2' : '\u25BC'}</span>
+        <span style={{ fontSize: 10, color: '#5a6a7a' }}>{expanded ? '\u25B2' : '\u25BC'}</span>
       </div>
       {expanded && children}
     </div>
@@ -429,7 +429,7 @@ function ToggleOption({ label, active, onChange }: { label: string; active: bool
     >
       <div style={{
         width: 28, height: 14, borderRadius: 7,
-        background: active ? '#3B82F6' : '#1e293b',
+        background: active ? '#3B82F6' : '#3a4a5e',
         position: 'relative', transition: 'background 0.15s',
       }}>
         <div style={{
@@ -438,14 +438,14 @@ function ToggleOption({ label, active, onChange }: { label: string; active: bool
           left: active ? 16 : 2, transition: 'left 0.15s',
         }} />
       </div>
-      <span style={{ fontSize: 10, color: active ? '#e2e8f0' : '#64748b' }}>{label}</span>
+      <span style={{ fontSize: 10, color: active ? '#e2e8f0' : '#8899aa' }}>{label}</span>
     </div>
   );
 }
 
 const miniBtn: React.CSSProperties = {
   padding: '3px 8px', borderRadius: 4, border: '1px solid rgba(255,255,255,0.08)',
-  background: 'transparent', color: '#64748b', fontSize: 9, cursor: 'pointer',
+  background: 'transparent', color: '#8899aa', fontSize: 9, cursor: 'pointer',
 };
 
 const tinyBtn: React.CSSProperties = {

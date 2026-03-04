@@ -56,14 +56,18 @@ def _check_upload(db: Session, upload_id: int) -> Upload:
 
 
 def _json_load(val: str | None):
-    """Safe JSON load — returns empty list for None/empty columns.
+    """Safe JSON load — returns empty list for None/empty/null columns.
 
     Many view table columns store lists as JSON strings; this helper
     avoids repeated None-checks at every call site.
     """
-    if not val:
+    if not val or val == 'null':
         return []
-    return json.loads(val)
+    try:
+        parsed = json.loads(val)
+        return parsed if parsed is not None else []
+    except (json.JSONDecodeError, TypeError):
+        return []
 
 
 # ── Explorer ──────────────────────────────────────────────────────────────
@@ -101,6 +105,9 @@ def get_explorer(
     if search:
         q = q.filter(VwExplorerDetail.full_name.ilike(f"%{search}%"))
 
+    ALLOWED_SORTS = {'tier', 'step', 'full_name', 'transforms', 'ext_reads', 'lookup_count', 'name', 'conflict_count', 'chain_count', 'total_connections'}
+    if sort not in ALLOWED_SORTS:
+        raise HTTPException(400, f"Invalid sort: {sort}. Allowed: {', '.join(sorted(ALLOWED_SORTS))}")
     sort_col = getattr(VwExplorerDetail, sort, VwExplorerDetail.tier)
     total = q.count()
     rows = q.order_by(sort_col).offset(offset).limit(limit).all()

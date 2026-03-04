@@ -55,45 +55,51 @@ def _get_engines() -> dict:
         if _engines is not None:
             return _engines
 
-    from app.engines.embedding_engine import EmbeddingEngine
-    from app.engines.vector_store import VectorStore
-    from app.engines.query_engine import HybridSearchEngine, RAGChatEngine
+        try:
+            from app.engines.embedding_engine import EmbeddingEngine
+            from app.engines.vector_store import VectorStore
+            from app.engines.query_engine import HybridSearchEngine, RAGChatEngine
+        except ImportError as e:
+            raise HTTPException(
+                status_code=503,
+                detail={"error": f"AI Chat requires missing dependency: {e}. Install with: pip install -e '.[ai]'", "code": "MISSING_DEPENDENCY"},
+            )
 
-    # Auto-detect Databricks mode: override embedding and LLM providers
-    embed_mode = settings.embedding_mode
-    embed_model = settings.embedding_model
-    llm_provider = settings.llm_provider
-    llm_model = settings.llm_model
-    llm_key = settings.llm_api_key
+        # Auto-detect Databricks mode: override embedding and LLM providers
+        embed_mode = settings.embedding_mode
+        embed_model = settings.embedding_model
+        llm_provider = settings.llm_provider
+        llm_model = settings.llm_model
+        llm_key = settings.llm_api_key
 
-    if settings.databricks_app:
-        embed_mode = "databricks"
-        embed_model = settings.databricks_embedding_model
-        llm_provider = "databricks"
-        llm_model = settings.databricks_llm_model
-        llm_key = ""  # Databricks uses OAuth, not API keys
+        if settings.databricks_app:
+            embed_mode = "databricks"
+            embed_model = settings.databricks_embedding_model
+            llm_provider = "databricks"
+            llm_model = settings.databricks_llm_model
+            llm_key = ""  # Databricks uses OAuth, not API keys
 
-    embedding = EmbeddingEngine(
-        mode=embed_mode,
-        model=embed_model,
-        api_key=llm_key,
-    )
-    store = VectorStore(persist_dir=settings.chroma_persist_dir)
-    search = HybridSearchEngine(store, embedding)
-    chat = RAGChatEngine(
-        search,
-        llm_provider=llm_provider,
-        api_key=llm_key,
-        model=llm_model,
-    )
+        embedding = EmbeddingEngine(
+            mode=embed_mode,
+            model=embed_model,
+            api_key=llm_key,
+        )
+        store = VectorStore(persist_dir=settings.chroma_persist_dir)
+        search = HybridSearchEngine(store, embedding)
+        chat = RAGChatEngine(
+            search,
+            llm_provider=llm_provider,
+            api_key=llm_key,
+            model=llm_model,
+        )
 
-    _engines = {
-        "embedding": embedding,
-        "store": store,
-        "search": search,
-        "chat": chat,
-    }
-    return _engines
+        _engines = {
+            "embedding": embedding,
+            "store": store,
+            "search": search,
+            "chat": chat,
+        }
+        return _engines
 
 
 # ── Request/Response Models ───────────────────────────────────────────────

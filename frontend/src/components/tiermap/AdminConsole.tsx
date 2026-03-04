@@ -121,13 +121,13 @@ export default function AdminConsole({ onToast, onLoadUpload }: AdminConsoleProp
   ].reduce((sum, u) => sum + (u.session_count || 0), 0);
 
   return (
-    <div style={{ height: '100%', overflow: 'auto', padding: 24, background: '#0f172a' }}>
+    <div style={{ height: '100%', overflow: 'auto', padding: 24, background: '#1a2332' }}>
       {/* Header */}
       <div style={{ maxWidth: 900, margin: '0 auto' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
           <div>
             <h1 style={{ fontSize: 20, fontWeight: 700, color: '#e2e8f0', margin: 0 }}>Admin Console</h1>
-            <p style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>
+            <p style={{ fontSize: 12, color: '#8899aa', marginTop: 4 }}>
               Manage projects, uploads, and data. Deleting removes all associated analysis data.
             </p>
           </div>
@@ -137,7 +137,7 @@ export default function AdminConsole({ onToast, onLoadUpload }: AdminConsoleProp
             style={{
               padding: '8px 16px', borderRadius: 6, fontSize: 12, fontWeight: 600,
               background: totalUploads > 0 ? 'rgba(239,68,68,0.15)' : 'rgba(100,116,139,0.1)',
-              color: totalUploads > 0 ? '#EF4444' : '#475569',
+              color: totalUploads > 0 ? '#EF4444' : '#5a6a7a',
               border: `1px solid ${totalUploads > 0 ? 'rgba(239,68,68,0.3)' : 'rgba(100,116,139,0.2)'}`,
               cursor: totalUploads > 0 ? 'pointer' : 'not-allowed',
             }}
@@ -149,33 +149,33 @@ export default function AdminConsole({ onToast, onLoadUpload }: AdminConsoleProp
         {/* Stats bar */}
         <div style={{
           display: 'flex', gap: 24, padding: '12px 16px', borderRadius: 8,
-          background: '#111827', border: '1px solid #1e293b', marginBottom: 24,
+          background: '#243044', border: '1px solid #3a4a5e', marginBottom: 24,
         }}>
           <Stat label="Projects" value={projects.length} color="#3B82F6" />
           <Stat label="Uploads" value={totalUploads} color="#10B981" />
           <Stat label="Sessions" value={totalSessions} color="#A855F7" />
-          <Stat label="Orphan Uploads" value={orphanUploads.length} color={orphanUploads.length > 0 ? '#F59E0B' : '#475569'} />
+          <Stat label="Orphan Uploads" value={orphanUploads.length} color={orphanUploads.length > 0 ? '#F59E0B' : '#5a6a7a'} />
         </div>
 
         {loading && (
-          <div style={{ textAlign: 'center', padding: 40, color: '#64748b' }}>Loading...</div>
+          <div style={{ textAlign: 'center', padding: 40, color: '#8899aa' }}>Loading...</div>
         )}
 
         {/* Projects */}
         {!loading && projects.map(project => (
           <div key={project.id} style={{
-            marginBottom: 16, borderRadius: 8, border: '1px solid #1e293b',
-            background: '#111827', overflow: 'hidden',
+            marginBottom: 16, borderRadius: 8, border: '1px solid #3a4a5e',
+            background: '#243044', overflow: 'hidden',
           }}>
             {/* Project header */}
             <div style={{
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              padding: '12px 16px', borderBottom: '1px solid #1e293b',
+              padding: '12px 16px', borderBottom: '1px solid #3a4a5e',
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#3B82F6' }} />
                 <span style={{ fontSize: 14, fontWeight: 600, color: '#e2e8f0' }}>{project.name}</span>
-                <span style={{ fontSize: 11, color: '#64748b' }}>
+                <span style={{ fontSize: 11, color: '#8899aa' }}>
                   {project.uploads.length} upload{project.uploads.length !== 1 ? 's' : ''}
                 </span>
               </div>
@@ -195,7 +195,7 @@ export default function AdminConsole({ onToast, onLoadUpload }: AdminConsoleProp
 
             {/* Project uploads */}
             {project.uploads.length === 0 ? (
-              <div style={{ padding: '12px 16px', fontSize: 11, color: '#475569' }}>No uploads</div>
+              <div style={{ padding: '12px 16px', fontSize: 11, color: '#5a6a7a' }}>No uploads</div>
             ) : (
               project.uploads.map(upload => (
                 <UploadRow
@@ -213,15 +213,15 @@ export default function AdminConsole({ onToast, onLoadUpload }: AdminConsoleProp
         {!loading && orphanUploads.length > 0 && (
           <div style={{
             marginBottom: 16, borderRadius: 8, border: '1px solid rgba(245,158,11,0.3)',
-            background: '#111827', overflow: 'hidden',
+            background: '#243044', overflow: 'hidden',
           }}>
             <div style={{
               display: 'flex', alignItems: 'center', gap: 10,
-              padding: '12px 16px', borderBottom: '1px solid #1e293b',
+              padding: '12px 16px', borderBottom: '1px solid #3a4a5e',
             }}>
               <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#F59E0B' }} />
               <span style={{ fontSize: 14, fontWeight: 600, color: '#F59E0B' }}>Unassigned Uploads</span>
-              <span style={{ fontSize: 11, color: '#64748b' }}>
+              <span style={{ fontSize: 11, color: '#8899aa' }}>
                 {orphanUploads.length} upload{orphanUploads.length !== 1 ? 's' : ''} not in any project
               </span>
             </div>
@@ -238,8 +238,8 @@ export default function AdminConsole({ onToast, onLoadUpload }: AdminConsoleProp
 
         {!loading && projects.length === 0 && orphanUploads.length === 0 && (
           <div style={{
-            textAlign: 'center', padding: 48, color: '#475569', fontSize: 13,
-            border: '1px dashed #1e293b', borderRadius: 8,
+            textAlign: 'center', padding: 48, color: '#5a6a7a', fontSize: 13,
+            border: '1px dashed #3a4a5e', borderRadius: 8,
           }}>
             No projects or uploads. Upload an XML file from the dashboard to get started.
           </div>
@@ -253,7 +253,7 @@ export default function AdminConsole({ onToast, onLoadUpload }: AdminConsoleProp
           display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999,
         }}>
           <div style={{
-            background: '#1e293b', borderRadius: 12, padding: 24, maxWidth: 420, width: '90%',
+            background: '#3a4a5e', borderRadius: 12, padding: 24, maxWidth: 420, width: '90%',
             border: '1px solid rgba(239,68,68,0.3)',
           }}>
             <h3 style={{ fontSize: 16, fontWeight: 700, color: '#e2e8f0', margin: '0 0 8px' }}>
@@ -304,7 +304,7 @@ function Stat({ label, value, color }: { label: string; value: number; color: st
   return (
     <div>
       <div style={{ fontSize: 18, fontWeight: 700, color }}>{value.toLocaleString()}</div>
-      <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>{label}</div>
+      <div style={{ fontSize: 10, color: '#8899aa', marginTop: 2 }}>{label}</div>
     </div>
   );
 }
@@ -324,7 +324,7 @@ function UploadRow({ upload, onLoad, onDelete }: {
         <div style={{ fontSize: 12, fontWeight: 500, color: '#e2e8f0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {upload.filename}
         </div>
-        <div style={{ fontSize: 10, color: '#64748b', marginTop: 2, display: 'flex', gap: 8 }}>
+        <div style={{ fontSize: 10, color: '#8899aa', marginTop: 2, display: 'flex', gap: 8 }}>
           {upload.platform && <span>{upload.platform}</span>}
           <span>{upload.session_count.toLocaleString()} sessions</span>
           {upload.created_at && <span>{new Date(upload.created_at).toLocaleDateString()}</span>}

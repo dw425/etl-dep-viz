@@ -182,15 +182,15 @@ export default function GlobalSearchOverlay({
       <div
         style={{
           width: 560, maxHeight: 480,
-          background: '#1e293b', borderRadius: 12,
-          border: '1px solid #334155',
+          background: '#3a4a5e', borderRadius: 12,
+          border: '1px solid #4a5a6e',
           boxShadow: '0 25px 50px rgba(0,0,0,0.5)',
           overflow: 'hidden',
         }}
         onClick={e => e.stopPropagation()}
       >
         {/* Search input */}
-        <div style={{ padding: '12px 16px', borderBottom: '1px solid #334155' }}>
+        <div style={{ padding: '12px 16px', borderBottom: '1px solid #4a5a6e' }}>
           <input
             ref={inputRef}
             type="text"
@@ -209,7 +209,7 @@ export default function GlobalSearchOverlay({
         {/* Results */}
         <div style={{ maxHeight: 360, overflowY: 'auto', padding: '4px 0' }}>
           {results.length === 0 && (
-            <div style={{ padding: '16px 20px', color: '#64748b', textAlign: 'center' }}>
+            <div style={{ padding: '16px 20px', color: '#8899aa', textAlign: 'center' }}>
               No results found
             </div>
           )}
@@ -220,7 +220,7 @@ export default function GlobalSearchOverlay({
                 padding: '8px 16px',
                 display: 'flex', alignItems: 'center', gap: 10,
                 cursor: 'pointer',
-                background: i === selected ? '#334155' : 'transparent',
+                background: i === selected ? '#4a5a6e' : 'transparent',
               }}
               onMouseEnter={() => setSelected(i)}
               onClick={() => {
@@ -245,7 +245,7 @@ export default function GlobalSearchOverlay({
                 }}>
                   {r.label}
                 </div>
-                <div style={{ color: '#64748b', fontSize: 11 }}>{r.detail}</div>
+                <div style={{ color: '#8899aa', fontSize: 11 }}>{r.detail}</div>
               </div>
             </div>
           ))}
@@ -253,8 +253,8 @@ export default function GlobalSearchOverlay({
 
         {/* Footer */}
         <div style={{
-          padding: '8px 16px', borderTop: '1px solid #334155',
-          display: 'flex', gap: 16, color: '#475569', fontSize: 11,
+          padding: '8px 16px', borderTop: '1px solid #4a5a6e',
+          display: 'flex', gap: 16, color: '#5a6a7a', fontSize: 11,
         }}>
           <span>↑↓ navigate</span>
           <span>↵ select</span>

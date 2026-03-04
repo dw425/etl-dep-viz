@@ -91,7 +91,7 @@ export default function ExpressionViewer({ expression, onFieldClick }: Props) {
   return (
     <pre style={{
       padding: '8px 12px', margin: 0, fontSize: 11, fontFamily: 'monospace',
-      background: '#0f172a', borderRadius: 6, border: '1px solid #334155',
+      background: '#1a2332', borderRadius: 6, border: '1px solid #4a5a6e',
       color: '#e2e8f0', lineHeight: '1.6', whiteSpace: 'pre-wrap',
       overflowX: 'auto',
     }}>

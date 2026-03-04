@@ -195,21 +195,21 @@ export default function FlowWalkerView({ tierData, vectorResults, uploadId }: Pr
   return (
     <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
       {/* Left Panel: Flow Chain */}
-      <div style={{ width: 260, borderRight: '1px solid #334155', overflow: 'auto', flexShrink: 0 }}>
-        <div style={{ padding: '12px', borderBottom: '1px solid #334155' }}>
+      <div style={{ width: 260, borderRight: '1px solid #4a5a6e', overflow: 'auto', flexShrink: 0 }}>
+        <div style={{ padding: '12px', borderBottom: '1px solid #4a5a6e' }}>
           <input
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
             placeholder="Search sessions..."
             style={{
               width: '100%', padding: '6px 10px', borderRadius: 6,
-              border: '1px solid #334155', background: '#0f172a', color: '#e2e8f0',
+              border: '1px solid #4a5a6e', background: '#1a2332', color: '#e2e8f0',
               fontSize: 11, outline: 'none', boxSizing: 'border-box',
             }}
           />
           <div style={{ display: 'flex', gap: 4, marginTop: 6, flexWrap: 'wrap' }}>
             <select value={tierFilter} onChange={e => setTierFilter(e.target.value)}
-              style={{ flex: 1, padding: '3px 4px', borderRadius: 4, border: '1px solid #334155', background: '#0f172a', color: '#94a3b8', fontSize: 10 }}>
+              style={{ flex: 1, padding: '3px 4px', borderRadius: 4, border: '1px solid #4a5a6e', background: '#1a2332', color: '#94a3b8', fontSize: 10 }}>
               <option value="all">All Tiers</option>
               <option value="1-1">Tier 1</option>
               <option value="1-3">Tier 1-3</option>
@@ -227,7 +227,7 @@ export default function FlowWalkerView({ tierData, vectorResults, uploadId }: Pr
         {/* Upstream */}
         {flowData && flowData.upstream.length > 0 && (
           <div style={{ padding: '8px 12px' }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', marginBottom: 6 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: '#8899aa', textTransform: 'uppercase', marginBottom: 6 }}>
               Upstream ({flowData.upstream_count}){searchTerm && filteredUpstream.length < flowData.upstream.length && ` — ${filteredUpstream.length} matching`}
             </div>
             {filteredUpstream.map((u, i) => (
@@ -236,12 +236,12 @@ export default function FlowWalkerView({ tierData, vectorResults, uploadId }: Pr
                 onClick={() => loadFlow(u.session_id)}
                 style={{
                   padding: '6px 8px', borderRadius: 6, marginBottom: 4,
-                  border: '1px solid #1e293b', cursor: 'pointer', fontSize: 11,
+                  border: '1px solid #3a4a5e', cursor: 'pointer', fontSize: 11,
                   background: u.session_id === selectedSessionId ? 'rgba(59,130,246,0.15)' : 'transparent',
                 }}
               >
                 <div style={{ fontWeight: 600, color: '#e2e8f0' }}>{u.name}</div>
-                <div style={{ fontSize: 10, color: '#64748b', display: 'flex', gap: 6 }}>
+                <div style={{ fontSize: 10, color: '#8899aa', display: 'flex', gap: 6 }}>
                   <span style={{ color: tierColor(u.tier) }}>T{u.tier}</span>
                   {u.via_table && <span>via {u.via_table}</span>}
                 </div>
@@ -276,7 +276,7 @@ export default function FlowWalkerView({ tierData, vectorResults, uploadId }: Pr
         {/* Downstream */}
         {flowData && flowData.downstream.length > 0 && (
           <div style={{ padding: '8px 12px' }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', marginBottom: 6 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: '#8899aa', textTransform: 'uppercase', marginBottom: 6 }}>
               Downstream ({flowData.downstream_count}){searchTerm && filteredDownstream.length < flowData.downstream.length && ` — ${filteredDownstream.length} matching`}
             </div>
             {filteredDownstream.map((d, i) => (
@@ -285,11 +285,11 @@ export default function FlowWalkerView({ tierData, vectorResults, uploadId }: Pr
                 onClick={() => loadFlow(d.session_id)}
                 style={{
                   padding: '6px 8px', borderRadius: 6, marginBottom: 4,
-                  border: '1px solid #1e293b', cursor: 'pointer', fontSize: 11,
+                  border: '1px solid #3a4a5e', cursor: 'pointer', fontSize: 11,
                 }}
               >
                 <div style={{ fontWeight: 600, color: '#e2e8f0' }}>{d.name}</div>
-                <div style={{ fontSize: 10, color: '#64748b', display: 'flex', gap: 6 }}>
+                <div style={{ fontSize: 10, color: '#8899aa', display: 'flex', gap: 6 }}>
                   <span style={{ color: tierColor(d.tier) }}>T{d.tier}</span>
                   {d.via_table && <span>via {d.via_table}</span>}
                 </div>
@@ -305,8 +305,8 @@ export default function FlowWalkerView({ tierData, vectorResults, uploadId }: Pr
         )}
 
         {/* Session browser */}
-        <div style={{ padding: '8px 12px', borderTop: '1px solid #334155' }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', marginBottom: 6 }}>
+        <div style={{ padding: '8px 12px', borderTop: '1px solid #4a5a6e' }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#8899aa', textTransform: 'uppercase', marginBottom: 6 }}>
             All Sessions {filteredSessions.length < sessions.length && `(${filteredSessions.length} shown)`}
           </div>
           {filteredSessions.map(s => (
@@ -330,7 +330,7 @@ export default function FlowWalkerView({ tierData, vectorResults, uploadId }: Pr
       {/* Center Panel: Mapping Pipeline */}
       <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>
         {loading && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#8899aa' }}>
             Loading flow data...
           </div>
         )}
@@ -338,18 +338,18 @@ export default function FlowWalkerView({ tierData, vectorResults, uploadId }: Pr
         {!loading && loadError && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 8 }}>
             <div style={{ color: '#ef4444', fontSize: 13 }}>Failed to load flow data</div>
-            <div style={{ color: '#64748b', fontSize: 11, maxWidth: 400, textAlign: 'center' }}>{loadError}</div>
+            <div style={{ color: '#8899aa', fontSize: 11, maxWidth: 400, textAlign: 'center' }}>{loadError}</div>
           </div>
         )}
 
         {!loading && !loadError && !flowData && !selectedSessionId && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#8899aa' }}>
             Select a session to view its flow
           </div>
         )}
 
         {!loading && flowData && (
-          <Suspense fallback={<div style={{ color: '#64748b' }}>Loading...</div>}>
+          <Suspense fallback={<div style={{ color: '#8899aa' }}>Loading...</div>}>
             <div>
               <div style={{ fontSize: 14, fontWeight: 700, color: '#e2e8f0', marginBottom: 16 }}>
                 Mapping Pipeline: {(session?.full as string) || ''}
@@ -359,10 +359,10 @@ export default function FlowWalkerView({ tierData, vectorResults, uploadId }: Pr
               {!md && instances.length === 0 && (
                 <div style={{
                   padding: 24, textAlign: 'center', borderRadius: 10,
-                  background: 'rgba(100,116,139,0.08)', border: '1px dashed #334155',
+                  background: 'rgba(100,116,139,0.08)', border: '1px dashed #4a5a6e',
                 }}>
-                  <div style={{ fontSize: 13, color: '#64748b', marginBottom: 8 }}>No mapping detail available</div>
-                  <div style={{ fontSize: 11, color: '#475569' }}>
+                  <div style={{ fontSize: 13, color: '#8899aa', marginBottom: 8 }}>No mapping detail available</div>
+                  <div style={{ fontSize: 11, color: '#5a6a7a' }}>
                     Upstream/downstream chain and tables are shown in the side panels.
                     {flowData.tables_touched?.length > 0 && ` This session touches ${flowData.tables_touched.length} tables.`}
                   </div>
@@ -380,7 +380,7 @@ export default function FlowWalkerView({ tierData, vectorResults, uploadId }: Pr
                         border: '1px solid rgba(16,185,129,0.3)', fontSize: 11,
                       }}>
                         <div style={{ fontWeight: 600, color: '#10B981' }}>{inst.transformation_name as string}</div>
-                        <div style={{ fontSize: 10, color: '#64748b' }}>{inst.name as string}</div>
+                        <div style={{ fontSize: 10, color: '#8899aa' }}>{inst.name as string}</div>
                       </div>
                     ))}
                   </div>
@@ -409,26 +409,26 @@ export default function FlowWalkerView({ tierData, vectorResults, uploadId }: Pr
                           onClick={() => setExpandedTransform(isExpanded ? null : tName)}
                           style={{
                             padding: '8px 12px', borderRadius: 6,
-                            background: isExpanded ? 'rgba(59,130,246,0.15)' : '#111827',
-                            border: `1px solid ${isExpanded ? '#3b82f6' : '#1e293b'}`,
+                            background: isExpanded ? 'rgba(59,130,246,0.15)' : '#243044',
+                            border: `1px solid ${isExpanded ? '#3b82f6' : '#3a4a5e'}`,
                             cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                           }}
                         >
                           <div>
                             <span style={{ fontSize: 11, fontWeight: 600, color: '#e2e8f0' }}>{tName}</span>
-                            <span style={{ fontSize: 10, color: '#64748b', marginLeft: 8 }}>{tType}</span>
+                            <span style={{ fontSize: 10, color: '#8899aa', marginLeft: 8 }}>{tType}</span>
                           </div>
                           <div style={{ display: 'flex', gap: 6 }}>
-                            {instFields.length > 0 && <span style={{ fontSize: 10, color: '#64748b' }}>{instFields.length} fields</span>}
+                            {instFields.length > 0 && <span style={{ fontSize: 10, color: '#8899aa' }}>{instFields.length} fields</span>}
                             {sqlOvr && <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 3, background: 'rgba(96,165,250,0.2)', color: '#60a5fa' }}>SQL</span>}
                             {joinCond && <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 3, background: 'rgba(249,115,22,0.2)', color: '#F97316' }}>JOIN</span>}
                             {filterCond && <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 3, background: 'rgba(245,158,11,0.2)', color: '#F59E0B' }}>FILTER</span>}
                             {lkpCfg && <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 3, background: 'rgba(168,139,250,0.2)', color: '#A78BFA' }}>LKP</span>}
-                            <span style={{ fontSize: 11, color: '#64748b' }}>{isExpanded ? '\u25BC' : '\u25B6'}</span>
+                            <span style={{ fontSize: 11, color: '#8899aa' }}>{isExpanded ? '\u25BC' : '\u25B6'}</span>
                           </div>
                         </div>
                         {isExpanded && (
-                          <div style={{ padding: '8px 12px', background: '#0f172a', borderRadius: '0 0 6px 6px', border: '1px solid #1e293b', borderTop: 'none' }}>
+                          <div style={{ padding: '8px 12px', background: '#1a2332', borderRadius: '0 0 6px 6px', border: '1px solid #3a4a5e', borderTop: 'none' }}>
                             {/* SQL Override */}
                             {sqlOvr && <SqlViewer sql={sqlOvr.sql as string} title="SQL Override" />}
                             {/* Join condition */}
@@ -458,23 +458,23 @@ export default function FlowWalkerView({ tierData, vectorResults, uploadId }: Pr
                             {instFields.length > 0 && (
                               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10, marginTop: 8 }}>
                                 <thead>
-                                  <tr style={{ borderBottom: '1px solid #334155' }}>
-                                    <th style={{ textAlign: 'left', padding: '4px', color: '#64748b' }}>Field</th>
-                                    <th style={{ textAlign: 'left', padding: '4px', color: '#64748b' }}>Type</th>
-                                    <th style={{ textAlign: 'left', padding: '4px', color: '#64748b' }}>Port</th>
-                                    <th style={{ textAlign: 'left', padding: '4px', color: '#64748b' }}>Expr Type</th>
-                                    <th style={{ textAlign: 'left', padding: '4px', color: '#64748b' }}>Expression</th>
+                                  <tr style={{ borderBottom: '1px solid #4a5a6e' }}>
+                                    <th style={{ textAlign: 'left', padding: '4px', color: '#8899aa' }}>Field</th>
+                                    <th style={{ textAlign: 'left', padding: '4px', color: '#8899aa' }}>Type</th>
+                                    <th style={{ textAlign: 'left', padding: '4px', color: '#8899aa' }}>Port</th>
+                                    <th style={{ textAlign: 'left', padding: '4px', color: '#8899aa' }}>Expr Type</th>
+                                    <th style={{ textAlign: 'left', padding: '4px', color: '#8899aa' }}>Expression</th>
                                   </tr>
                                 </thead>
                                 <tbody>
                                   {instFields.map((f, fi) => (
                                     <tr key={fi} style={{
-                                      borderBottom: '1px solid #1e293b',
+                                      borderBottom: '1px solid #3a4a5e',
                                       background: selectedField === (f.name as string) ? 'rgba(59,130,246,0.1)' : 'transparent',
                                     }}>
                                       <td style={{ padding: '3px 4px', color: '#e2e8f0', fontWeight: 500 }}>{f.name as string}</td>
-                                      <td style={{ padding: '3px 4px', color: '#64748b' }}>{f.datatype as string}</td>
-                                      <td style={{ padding: '3px 4px', color: '#64748b' }}>{f.porttype as string}</td>
+                                      <td style={{ padding: '3px 4px', color: '#8899aa' }}>{f.datatype as string}</td>
+                                      <td style={{ padding: '3px 4px', color: '#8899aa' }}>{f.porttype as string}</td>
                                       {/* expression_type badge: derived=blue, aggregated=purple, constant=amber */}
                                       <td style={{ padding: '3px 4px' }}>
                                         <span style={{
@@ -484,7 +484,7 @@ export default function FlowWalkerView({ tierData, vectorResults, uploadId }: Pr
                                             (f.expression_type as string) === 'constant' ? 'rgba(245,158,11,0.15)' : 'transparent',
                                           color: (f.expression_type as string) === 'derived' ? '#60a5fa' :
                                             (f.expression_type as string) === 'aggregated' ? '#A78BFA' :
-                                            (f.expression_type as string) === 'constant' ? '#F59E0B' : '#64748b',
+                                            (f.expression_type as string) === 'constant' ? '#F59E0B' : '#8899aa',
                                         }}>
                                           {f.expression_type as string}
                                         </span>
@@ -516,7 +516,7 @@ export default function FlowWalkerView({ tierData, vectorResults, uploadId }: Pr
                         border: '1px solid rgba(239,68,68,0.3)', fontSize: 11,
                       }}>
                         <div style={{ fontWeight: 600, color: '#ef4444' }}>{inst.transformation_name as string}</div>
-                        <div style={{ fontSize: 10, color: '#64748b' }}>{inst.name as string}</div>
+                        <div style={{ fontSize: 10, color: '#8899aa' }}>{inst.name as string}</div>
                       </div>
                     ))}
                   </div>
@@ -526,7 +526,7 @@ export default function FlowWalkerView({ tierData, vectorResults, uploadId }: Pr
               {/* Connectors summary */}
               {connectors.length > 0 && (
                 <div style={{ marginBottom: 16 }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', marginBottom: 6 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: '#8899aa', textTransform: 'uppercase', marginBottom: 6 }}>
                     Field Connections ({connectors.length})
                   </div>
                   <div style={{ maxHeight: 200, overflow: 'auto', fontSize: 10 }}>
@@ -534,7 +534,7 @@ export default function FlowWalkerView({ tierData, vectorResults, uploadId }: Pr
                       <div key={i} style={{ padding: '2px 0', color: '#94a3b8', display: 'flex', gap: 4 }}>
                         <span style={{ color: '#10B981' }}>{c.from_instance as string}</span>
                         <span>.{c.from_field as string}</span>
-                        <span style={{ color: '#64748b' }}>{'\u2192'}</span>
+                        <span style={{ color: '#8899aa' }}>{'\u2192'}</span>
                         <span style={{ color: '#ef4444' }}>{c.to_instance as string}</span>
                         <span>.{c.to_field as string}</span>
                       </div>
@@ -548,7 +548,7 @@ export default function FlowWalkerView({ tierData, vectorResults, uploadId }: Pr
       </div>
 
       {/* Right Panel: Context */}
-      <div style={{ width: 280, borderLeft: '1px solid #334155', overflow: 'auto', flexShrink: 0, padding: 12 }}>
+      <div style={{ width: 280, borderLeft: '1px solid #4a5a6e', overflow: 'auto', flexShrink: 0, padding: 12 }}>
         {flowData && session && (
           <>
             {/* Session metadata */}
@@ -563,7 +563,7 @@ export default function FlowWalkerView({ tierData, vectorResults, uploadId }: Pr
                 ['Lookups', (session.lookups as string[])?.length || 0],
               ].map(([k, v]) => (
                 <div key={k as string} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', fontSize: 11 }}>
-                  <span style={{ color: '#64748b' }}>{k as string}</span>
+                  <span style={{ color: '#8899aa' }}>{k as string}</span>
                   <span style={{ color: '#e2e8f0', fontWeight: 500 }}>{String(v)}</span>
                 </div>
               ))}
@@ -590,7 +590,7 @@ export default function FlowWalkerView({ tierData, vectorResults, uploadId }: Pr
             {/* Connected sessions */}
             <div style={{ marginBottom: 16 }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: '#e2e8f0', marginBottom: 8 }}>Connections</div>
-              <div style={{ fontSize: 11, color: '#64748b' }}>
+              <div style={{ fontSize: 11, color: '#8899aa' }}>
                 {flowData.upstream_count} upstream, {flowData.downstream_count} downstream
               </div>
             </div>

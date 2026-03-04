@@ -153,8 +153,9 @@ def _create_engine():
         return create_engine(url, connect_args={"check_same_thread": False})
     else:
         eng = create_engine(
-            url, pool_size=10, max_overflow=20, pool_pre_ping=True,
-            connect_args={"options": "-c statement_timeout=30000"},
+            url, pool_size=5, max_overflow=10, pool_pre_ping=True,
+            pool_recycle=1800,
+            connect_args={"options": "-c statement_timeout=120000"},
         )
         if settings.databricks_app:
             _attach_token_refresh(eng)
@@ -380,6 +381,7 @@ class VwExplorerDetail(Base):
     __table_args__ = (
         Index("ix_vwexplorer_upload", "upload_id"),
         Index("ix_vwexplorer_tier", "upload_id", "tier"),
+        Index("ix_vwexplorer_name", "upload_id", "full_name"),
     )
 
 
@@ -635,7 +637,10 @@ class VwWaveAssignments(Base):
     scc_group_id = Column(Integer, nullable=True)
     is_cycle = Column(Integer, default=0)
 
-    __table_args__ = (Index("ix_vwwave_upload", "upload_id"),)
+    __table_args__ = (
+        Index("ix_vwwave_upload", "upload_id"),
+        Index("ix_vwwave_upload_wave", "upload_id", "wave_number"),
+    )
 
 
 class VwUmapCoords(Base):

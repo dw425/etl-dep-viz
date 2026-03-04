@@ -108,10 +108,10 @@ export function buildTierMapHTML(data: TierMapResult, constellation?: Constellat
 
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Tier Map — Session Dependency Diagram</title>
+<title>Lakehouse Optimizer — Session Dependency Diagram</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<style>*{margin:0;padding:0;box-sizing:border-box}body{overflow:hidden;background:#080C14}#root{width:100vw;height:100vh}::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#334155;border-radius:3px}::-webkit-scrollbar-thumb:hover{background:#475569}</style>
+<style>*{margin:0;padding:0;box-sizing:border-box}body{overflow:hidden;background:#1a2332}#root{width:100vw;height:100vh}::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#4a5a6e;border-radius:3px}::-webkit-scrollbar-thumb:hover{background:#5a6a7a}</style>
 </head><body><div id="root"></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"><\/script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"><\/script>
@@ -156,7 +156,7 @@ Object.entries(sessionData).forEach(([n,s])=>{
 Object.entries(allTargets).forEach(([t,w])=>{if(w.length>1)writeConflicts[t]=w;});
 Object.entries(allTargets).forEach(([t,w])=>{const r=allSources[t]?.filter(x=>!w.includes(x))||[];if(r.length>0)readAfterWrite[t]={writers:w,readers:r};});
 
-const C = {bg:"#080C14",surface:"#111827",border:"#1e293b",borderActive:"#3b82f6",text:"#e2e8f0",textMuted:"#64748b",textDim:"#475569",write:"#ef4444",read:"#22c55e",lookup:"#f59e0b",conflict:"#ef4444",chain:"#a855f7",accentBlue:"#60a5fa"};
+const C = {bg:"#1a2332",surface:"#243044",border:"#3a4a5e",borderActive:"#3b82f6",text:"#e2e8f0",textMuted:"#8899aa",textDim:"#5a6a7a",write:"#ef4444",read:"#22c55e",lookup:"#f59e0b",conflict:"#ef4444",chain:"#a855f7",accentBlue:"#60a5fa"};
 
 const connTypes = {
   write_conflict:{color:"#EF4444",label:"Write Conflict",dash:"",baseWidth:3},
@@ -515,7 +515,7 @@ const TierDiagram = ({filterIds}) => {
                     <div style={{fontSize:13,marginBottom:2}}>{ts.icon}</div>
                     <div style={{fontSize:10,fontWeight:700,color:ts.color,fontFamily:"'JetBrains Mono',monospace",lineHeight:1.2,wordBreak:"break-all"}}>{t.name}</div>
                     {(t.type==="conflict"||t.readers>0||t.lookupUsers>0)&&<div style={{fontSize:8,color:ts.color,marginTop:3,fontWeight:600,opacity:0.8}}>{t.type==="conflict"?t.conflictWriters+"W":""}{t.readers>0?" "+t.readers+"R":""}{t.lookupUsers>0?" "+t.lookupUsers+"L":""}</div>}
-                    <div style={{fontSize:8,color:"#64748B",marginTop:2,textTransform:"uppercase",letterSpacing:"0.05em"}}>{t.type}</div>
+                    <div style={{fontSize:8,color:"#8899aa",marginTop:2,textTransform:"uppercase",letterSpacing:"0.05em"}}>{t.type}</div>
                   </div>
                 );})}
               </div>
@@ -523,13 +523,13 @@ const TierDiagram = ({filterIds}) => {
           );})}
         </div>
       </div>
-      <div style={{width:260,borderLeft:"1px solid #1E293B",background:"rgba(15,23,42,0.6)",overflowY:"auto",flexShrink:0,display:"flex",flexDirection:"column"}}>
-        <div style={{padding:"10px 14px",borderBottom:"1px solid #1E293B",flexShrink:0}}>
+      <div style={{width:260,borderLeft:"1px solid #3a4a5e",background:"rgba(26,35,50,0.6)",overflowY:"auto",flexShrink:0,display:"flex",flexDirection:"column"}}>
+        <div style={{padding:"10px 14px",borderBottom:"1px solid #3a4a5e",flexShrink:0}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-            <div style={{fontSize:10,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:"0.1em"}}>Tier Visibility</div>
+            <div style={{fontSize:10,fontWeight:700,color:"#8899aa",textTransform:"uppercase",letterSpacing:"0.1em"}}>Tier Visibility</div>
             <div style={{display:"flex",gap:6}}>
-              <button onClick={()=>setHiddenTiers(new Set())} style={{fontSize:8,padding:"2px 6px",borderRadius:3,border:"1px solid #1E293B",background:"transparent",color:"#64748B",cursor:"pointer"}}>All</button>
-              <button onClick={()=>setHiddenTiers(new Set(tGroupsLocal.map(g=>g.tier)))} style={{fontSize:8,padding:"2px 6px",borderRadius:3,border:"1px solid #1E293B",background:"transparent",color:"#64748B",cursor:"pointer"}}>None</button>
+              <button onClick={()=>setHiddenTiers(new Set())} style={{fontSize:8,padding:"2px 6px",borderRadius:3,border:"1px solid #3a4a5e",background:"transparent",color:"#8899aa",cursor:"pointer"}}>All</button>
+              <button onClick={()=>setHiddenTiers(new Set(tGroupsLocal.map(g=>g.tier)))} style={{fontSize:8,padding:"2px 6px",borderRadius:3,border:"1px solid #3a4a5e",background:"transparent",color:"#8899aa",cursor:"pointer"}}>None</button>
             </div>
           </div>
           {tGroupsLocal.map(g=>{
@@ -538,33 +538,33 @@ const TierDiagram = ({filterIds}) => {
             const toggle=()=>setHiddenTiers(prev=>{const next=new Set(prev);next.has(g.tier)?next.delete(g.tier):next.add(g.tier);return next;});
             return(
               <div key={g.tier} onClick={toggle} style={{display:"flex",alignItems:"center",gap:6,marginBottom:5,cursor:"pointer",userSelect:"none",overflow:"hidden"}}>
-                <div style={{width:16,height:16,minWidth:16,borderRadius:3,flexShrink:0,border:"2px solid "+(hidden?"#475569":cfg.color),background:hidden?"transparent":cfg.color,display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.15s"}}>
+                <div style={{width:16,height:16,minWidth:16,borderRadius:3,flexShrink:0,border:"2px solid "+(hidden?"#5a6a7a":cfg.color),background:hidden?"transparent":cfg.color,display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.15s"}}>
                   {!hidden&&<span style={{color:"#fff",fontSize:9,fontWeight:900,lineHeight:1}}>✓</span>}
                 </div>
-                <div style={{fontSize:8,color:hidden?"#475569":"#CBD5E1",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",width:0,flexGrow:1,transition:"color 0.15s"}}>{cfg.label}</div>
-                <div style={{fontSize:8,fontFamily:"monospace",color:hidden?"#475569":cfg.color,flexShrink:0,whiteSpace:"nowrap"}}>
+                <div style={{fontSize:8,color:hidden?"#5a6a7a":"#CBD5E1",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",width:0,flexGrow:1,transition:"color 0.15s"}}>{cfg.label}</div>
+                <div style={{fontSize:8,fontFamily:"monospace",color:hidden?"#5a6a7a":cfg.color,flexShrink:0,whiteSpace:"nowrap"}}>
                   {g.sessions.length>0?g.sessions.length+"S":""}{g.sessions.length>0&&g.tables.length>0?"+":""}{g.tables.length>0?g.tables.length+"T":""}
                 </div>
               </div>
             );
           })}
         </div>
-        <div style={{padding:"12px 14px",borderBottom:"1px solid #1E293B",flexShrink:0}}><div style={{fontSize:10,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:"0.1em"}}>Node Detail</div></div>
+        <div style={{padding:"12px 14px",borderBottom:"1px solid #3a4a5e",flexShrink:0}}><div style={{fontSize:10,fontWeight:700,color:"#8899aa",textTransform:"uppercase",letterSpacing:"0.1em"}}>Node Detail</div></div>
         {sel?(()=>{const s=filteredSessions.find(x=>x.id===sel);const t=filteredTables.find(x=>x.id===sel);const nd=s||t;if(!nd)return null;const outs=activeConns.filter(c=>c.from===sel);const ins=activeConns.filter(c=>c.to===sel);return(
           <div style={{padding:14,flex:1}}>
             <div style={{fontSize:12,fontWeight:800,color:"#E2E8F0",fontFamily:"'JetBrains Mono',monospace",marginBottom:4}}>{nd.name}</div>
-            {s&&<div style={{fontSize:9,color:"#64748B",marginBottom:12,fontFamily:"monospace",wordBreak:"break-all"}}>{s.full}</div>}
-            {t&&<div style={{fontSize:9,color:"#64748B",marginBottom:12}}>{t.type} · tier {t.tier}</div>}
+            {s&&<div style={{fontSize:9,color:"#8899aa",marginBottom:12,fontFamily:"monospace",wordBreak:"break-all"}}>{s.full}</div>}
+            {t&&<div style={{fontSize:9,color:"#8899aa",marginBottom:12}}>{t.type} · tier {t.tier}</div>}
             {outs.length>0&&<div style={{marginBottom:12}}><div style={{fontSize:9,fontWeight:700,color:"#94A3B8",textTransform:"uppercase",marginBottom:6}}>Outputs → ({outs.length})</div>{outs.map((c,i)=>{const tgt=[...filteredSessions,...filteredTables].find(x=>x.id===c.to);const ct=connTypes[c.type]||connTypes.write_clean;return(<div key={i} style={{display:"flex",alignItems:"center",gap:5,marginBottom:4}}><div style={{width:8,height:3,borderRadius:1,background:ct.color,flexShrink:0}}/><span style={{fontSize:9,color:ct.color,fontWeight:600,flexShrink:0}}>{c.type.replace(/_/g," ")}</span><span style={{fontSize:9,color:"#CBD5E1",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>→ {tgt?.name||c.to}</span></div>);})}</div>}
             {ins.length>0&&<div style={{marginBottom:12}}><div style={{fontSize:9,fontWeight:700,color:"#94A3B8",textTransform:"uppercase",marginBottom:6}}>Inputs ← ({ins.length})</div>{ins.map((c,i)=>{const src=[...filteredSessions,...filteredTables].find(x=>x.id===c.from);const ct=connTypes[c.type]||connTypes.write_clean;return(<div key={i} style={{display:"flex",alignItems:"center",gap:5,marginBottom:4}}><div style={{width:8,height:3,borderRadius:1,background:ct.color,flexShrink:0}}/><span style={{fontSize:9,color:ct.color,fontWeight:600,flexShrink:0}}>{c.type.replace(/_/g," ")}</span><span style={{fontSize:9,color:"#CBD5E1",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>← {src?.name||c.from}</span></div>);})}</div>}
           </div>
-        );})():<div style={{padding:20,color:"#475569",fontSize:11,textAlign:"center",flex:1,display:"flex",alignItems:"center",justifyContent:"center"}}>Click a node to inspect</div>}
-        <div style={{padding:"10px 14px",borderTop:"1px solid #1E293B",flexShrink:0}}>
-          <div style={{fontSize:9,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:6}}>Connection Density</div>
+        );})():<div style={{padding:20,color:"#5a6a7a",fontSize:11,textAlign:"center",flex:1,display:"flex",alignItems:"center",justifyContent:"center"}}>Click a node to inspect</div>}
+        <div style={{padding:"10px 14px",borderTop:"1px solid #3a4a5e",flexShrink:0}}>
+          <div style={{fontSize:9,fontWeight:700,color:"#8899aa",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:6}}>Connection Density</div>
           {[...filteredSessions,...filteredTables].filter(n=>(connCounts[n.id]||0)>0).sort((a,b)=>(connCounts[b.id]||0)-(connCounts[a.id]||0)).slice(0,12).map(n=>(
             <div key={n.id} style={{display:"flex",alignItems:"center",gap:5,marginBottom:3}}>
-              <div style={{fontSize:8,color:"#64748B",width:12,textAlign:"right",fontFamily:"monospace"}}>{connCounts[n.id]||0}</div>
-              <div style={{flex:1,height:5,borderRadius:2,background:"#1E293B",overflow:"hidden"}}><div style={{height:"100%",borderRadius:2,width:Math.min((connCounts[n.id]||0)/8*100,100)+"%",background:(connCounts[n.id]||0)>4?"#EF4444":(connCounts[n.id]||0)>2?"#F59E0B":"#3B82F6"}}/></div>
+              <div style={{fontSize:8,color:"#8899aa",width:12,textAlign:"right",fontFamily:"monospace"}}>{connCounts[n.id]||0}</div>
+              <div style={{flex:1,height:5,borderRadius:2,background:"#3a4a5e",overflow:"hidden"}}><div style={{height:"100%",borderRadius:2,width:Math.min((connCounts[n.id]||0)/8*100,100)+"%",background:(connCounts[n.id]||0)>4?"#EF4444":(connCounts[n.id]||0)>2?"#F59E0B":"#3B82F6"}}/></div>
               <div style={{fontSize:8,color:"#94A3B8",fontFamily:"monospace",width:85,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{n.name}</div>
             </div>
           ))}
@@ -599,18 +599,18 @@ const MatrixView = ({filterIds}) => {
   return (
     <div style={{height:"100%",overflow:"auto",padding:24}}>
       <div style={{fontSize:18,fontWeight:700,color:"#E2E8F0",marginBottom:6}}>Many-to-Many Relationship Matrix</div>
-      <div style={{fontSize:14,color:"#64748B",marginBottom:16}}>Sessions (rows) × Tables (columns) — hover to highlight</div>
+      <div style={{fontSize:14,color:"#8899aa",marginBottom:16}}>Sessions (rows) × Tables (columns) — hover to highlight</div>
       <div style={{display:"flex",gap:16,marginBottom:20,flexWrap:"wrap"}}>
         {Object.entries(connTypes).map(([k,ct])=>(<div key={k} style={{display:"flex",alignItems:"center",gap:6}}><div style={{width:36,height:28,borderRadius:5,fontSize:14,fontWeight:800,background:ct.color+"33",color:ct.color,border:"1px solid "+ct.color+"66",display:"flex",alignItems:"center",justifyContent:"center"}}>{cl(k)}</div><span style={{fontSize:13,color:"#94A3B8"}}>{ct.label}</span></div>))}
       </div>
       <div style={{overflowX:"auto"}}>
         <table style={{borderCollapse:"collapse",fontSize:14,fontFamily:"'JetBrains Mono',monospace"}}>
           <thead><tr>
-            <th style={{padding:"10px 16px",background:"#1E293B",color:"#64748B",position:"sticky",left:0,zIndex:2,textAlign:"left",borderBottom:"2px solid #334155",fontSize:13}}>Session ↓ / Table →</th>
-            {filteredTables.map(t=>(<th key={t.id} onMouseEnter={()=>setHov(t.id)} onMouseLeave={()=>setHov(null)} style={{padding:"8px 8px",background:hov===t.id?"rgba(255,255,255,0.1)":"#1E293B",color:hov===t.id?"#fff":"#94A3B8",cursor:"pointer",writingMode:"vertical-lr",textOrientation:"mixed",minWidth:48,borderBottom:"2px solid #334155",borderRight:"1px solid #1a1f2e",fontWeight:t.type==="conflict"?700:500,fontSize:13,maxHeight:200}}>{t.name}</th>))}
+            <th style={{padding:"10px 16px",background:"#3a4a5e",color:"#8899aa",position:"sticky",left:0,zIndex:2,textAlign:"left",borderBottom:"2px solid #4a5a6e",fontSize:13}}>Session ↓ / Table →</th>
+            {filteredTables.map(t=>(<th key={t.id} onMouseEnter={()=>setHov(t.id)} onMouseLeave={()=>setHov(null)} style={{padding:"8px 8px",background:hov===t.id?"rgba(255,255,255,0.1)":"#3a4a5e",color:hov===t.id?"#fff":"#94A3B8",cursor:"pointer",writingMode:"vertical-lr",textOrientation:"mixed",minWidth:48,borderBottom:"2px solid #4a5a6e",borderRight:"1px solid #1a1f2e",fontWeight:t.type==="conflict"?700:500,fontSize:13,maxHeight:200}}>{t.name}</th>))}
           </tr></thead>
           <tbody>{filteredSessions.map(s=>{const cfg=getTierCfg(s.tier);return(<tr key={s.id}>
-            <td onMouseEnter={()=>setHov(s.id)} onMouseLeave={()=>setHov(null)} style={{padding:"12px 16px",background:hov===s.id?"rgba(255,255,255,0.1)":"#111827",color:hov===s.id?"#fff":cfg.color,position:"sticky",left:0,zIndex:1,cursor:"pointer",borderBottom:"1px solid #1a1f2e",fontWeight:600,whiteSpace:"nowrap",fontSize:14}}><span style={{color:"#64748B",marginRight:6}}>S{s.step}</span>{s.name}</td>
+            <td onMouseEnter={()=>setHov(s.id)} onMouseLeave={()=>setHov(null)} style={{padding:"12px 16px",background:hov===s.id?"rgba(255,255,255,0.1)":"#243044",color:hov===s.id?"#fff":cfg.color,position:"sticky",left:0,zIndex:1,cursor:"pointer",borderBottom:"1px solid #1a1f2e",fontWeight:600,whiteSpace:"nowrap",fontSize:14}}><span style={{color:"#8899aa",marginRight:6}}>S{s.step}</span>{s.name}</td>
             {filteredTables.map(t=>{const m=tierConnections.filter(c=>(c.from===s.id&&c.to===t.id)||(c.from===t.id&&c.to===s.id));const hi=hov===s.id||hov===t.id;return(
               <td key={t.id} style={{padding:5,background:m.length>0?(hi?"rgba(255,255,255,0.15)":(connTypes[m[0].type]?.color||"#3B82F6")+"18"):(hi?"rgba(255,255,255,0.02)":"transparent"),borderBottom:"1px solid #1a1f2e",borderRight:"1px solid #1a1f2e",textAlign:"center",verticalAlign:"middle"}}>
                 {m.map((x,i)=>{const ct=connTypes[x.type]||connTypes.write_clean;return(<div key={i} style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:38,height:32,borderRadius:5,fontSize:14,fontWeight:800,background:ct.color+"33",color:ct.color,border:"2px solid "+ct.color+"55",margin:2}}>{cl(x.type)}</div>);})}
@@ -783,32 +783,32 @@ const ConstellationView = ({onSelectCluster,selectedClusterId}) => {
   return (
     <div style={{display:"flex",height:"100%",overflow:"hidden"}}>
       {/* ── Left sidebar: chunk selector ── */}
-      <div style={{width:260,borderRight:"1px solid #1E293B",background:"rgba(15,23,42,0.6)",display:"flex",flexDirection:"column",overflow:"hidden",flexShrink:0}}>
+      <div style={{width:260,borderRight:"1px solid #3a4a5e",background:"rgba(26,35,50,0.6)",display:"flex",flexDirection:"column",overflow:"hidden",flexShrink:0}}>
         {/* Back / Clear */}
-        <button onClick={hasFilter?handleDeselectAll:handleDeselectAll} style={{padding:"8px 14px",background:"transparent",border:"none",borderBottom:"1px solid #1E293B",cursor:"pointer",display:"flex",alignItems:"center",gap:6,color:"#60A5FA",fontSize:11,fontWeight:600}}>
+        <button onClick={hasFilter?handleDeselectAll:handleDeselectAll} style={{padding:"8px 14px",background:"transparent",border:"none",borderBottom:"1px solid #3a4a5e",cursor:"pointer",display:"flex",alignItems:"center",gap:6,color:"#60A5FA",fontSize:11,fontWeight:600}}>
           {hasFilter?"Clear Selection ("+activeChunkIds.size+")":"\u2190 Back to Constellation"}
         </button>
 
         {/* Search + Sort */}
-        <div style={{padding:"8px 10px",borderBottom:"1px solid #1E293B"}}>
+        <div style={{padding:"8px 10px",borderBottom:"1px solid #3a4a5e"}}>
           <input type="text" placeholder="Filter clusters\u2026" value={clusterSearch} onChange={e=>setClusterSearch(e.target.value)}
-            style={{width:"100%",padding:"5px 10px",borderRadius:5,border:"1px solid #1E293B",background:"rgba(0,0,0,0.3)",color:"#E2E8F0",fontSize:11,outline:"none",fontFamily:"'JetBrains Mono',monospace"}}/>
+            style={{width:"100%",padding:"5px 10px",borderRadius:5,border:"1px solid #3a4a5e",background:"rgba(0,0,0,0.3)",color:"#E2E8F0",fontSize:11,outline:"none",fontFamily:"'JetBrains Mono',monospace"}}/>
           <div style={{display:"flex",gap:4,marginTop:6,flexWrap:"wrap"}}>
             {[["default","Default"],["sessions","Sessions"],["tiers","Tier"],["conflicts","Conflicts"]].map(([key,label])=>(
-              <button key={key} onClick={()=>setSortBy(key)} style={{padding:"2px 6px",borderRadius:3,border:"none",cursor:"pointer",background:sortBy===key?"rgba(59,130,246,0.15)":"rgba(255,255,255,0.03)",color:sortBy===key?"#60A5FA":"#475569",fontSize:9,fontWeight:600}}>{label}</button>
+              <button key={key} onClick={()=>setSortBy(key)} style={{padding:"2px 6px",borderRadius:3,border:"none",cursor:"pointer",background:sortBy===key?"rgba(59,130,246,0.15)":"rgba(255,255,255,0.03)",color:sortBy===key?"#60A5FA":"#5a6a7a",fontSize:9,fontWeight:600}}>{label}</button>
             ))}
           </div>
         </div>
 
         {/* Session search */}
-        <div style={{borderBottom:"1px solid #1E293B"}}>
-          <button onClick={()=>setShowSessionSearch(s=>!s)} style={{width:"100%",padding:"6px 10px",background:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:6,color:showSessionSearch?"#34D399":"#64748B",fontSize:10,fontWeight:600,borderLeft:showSessionSearch?"2px solid #10B981":"2px solid transparent"}}>
+        <div style={{borderBottom:"1px solid #3a4a5e"}}>
+          <button onClick={()=>setShowSessionSearch(s=>!s)} style={{width:"100%",padding:"6px 10px",background:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:6,color:showSessionSearch?"#34D399":"#8899aa",fontSize:10,fontWeight:600,borderLeft:showSessionSearch?"2px solid #10B981":"2px solid transparent"}}>
             Search Sessions {showSessionSearch?"\u25B2":"\u25BC"}
           </button>
           {showSessionSearch&&(
             <div style={{padding:"6px 10px"}}>
               <input type="text" placeholder="Find session by name\u2026" value={sessionSearch} onChange={e=>setSessionSearch(e.target.value)}
-                style={{width:"100%",padding:"5px 10px",borderRadius:5,border:"1px solid #1E293B",background:"rgba(0,0,0,0.3)",color:"#E2E8F0",fontSize:10,outline:"none",fontFamily:"'JetBrains Mono',monospace"}}/>
+                style={{width:"100%",padding:"5px 10px",borderRadius:5,border:"1px solid #3a4a5e",background:"rgba(0,0,0,0.3)",color:"#E2E8F0",fontSize:10,outline:"none",fontFamily:"'JetBrains Mono',monospace"}}/>
               {sessionResults.length>0&&(
                 <div style={{maxHeight:200,overflowY:"auto",marginTop:4}}>
                   {sessionResults.map(p=>{
@@ -816,7 +816,7 @@ const ConstellationView = ({onSelectCluster,selectedClusterId}) => {
                     const isFocused=focusedSessionId===p.session_id;
                     return(<div key={p.session_id} onClick={()=>{setFocusedSessionId(p.session_id);setHighlighted(new Set([p.session_id]));}} style={{padding:"4px 6px",borderRadius:4,cursor:"pointer",background:isFocused?"rgba(16,185,129,0.12)":"transparent",border:isFocused?"1px solid rgba(16,185,129,0.3)":"1px solid transparent",marginBottom:2}}>
                       <div style={{fontSize:9,fontWeight:600,color:isFocused?"#34D399":"#E2E8F0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'JetBrains Mono',monospace"}}>{p.name}</div>
-                      <div style={{fontSize:8,color:"#475569"}}>Tier {p.tier} {chunk?"\u00B7 "+chunk.label:""}</div>
+                      <div style={{fontSize:8,color:"#5a6a7a"}}>Tier {p.tier} {chunk?"\u00B7 "+chunk.label:""}</div>
                     </div>);
                   })}
                 </div>
@@ -835,8 +835,8 @@ const ConstellationView = ({onSelectCluster,selectedClusterId}) => {
         </div>
 
         {/* Select All / Deselect All */}
-        <div style={{padding:"6px 10px",borderBottom:"1px solid #1E293B"}}>
-          <button onClick={allSelected?handleDeselectAll:handleSelectAll} style={{width:"100%",padding:"5px 8px",borderRadius:4,border:"1px solid "+(hasFilter?"rgba(59,130,246,0.4)":"#1E293B"),background:hasFilter?"rgba(59,130,246,0.08)":"rgba(0,0,0,0.2)",color:hasFilter?"#60A5FA":"#64748B",fontSize:10,fontWeight:600,cursor:"pointer"}}>
+        <div style={{padding:"6px 10px",borderBottom:"1px solid #3a4a5e"}}>
+          <button onClick={allSelected?handleDeselectAll:handleSelectAll} style={{width:"100%",padding:"5px 8px",borderRadius:4,border:"1px solid "+(hasFilter?"rgba(59,130,246,0.4)":"#3a4a5e"),background:hasFilter?"rgba(59,130,246,0.08)":"rgba(0,0,0,0.2)",color:hasFilter?"#60A5FA":"#8899aa",fontSize:10,fontWeight:600,cursor:"pointer"}}>
             {allSelected?"Deselect All":"Select All"}
             {hasFilter&&!allSelected&&<span style={{marginLeft:6,fontSize:9,opacity:0.7}}>({activeChunkIds.size} selected)</span>}
           </button>
@@ -848,10 +848,10 @@ const ConstellationView = ({onSelectCluster,selectedClusterId}) => {
             const isActive=activeChunkIds.has(chunk.id);
             const tierRange=chunk.tier_range||[1,1];
             const tierCount=tierRange[1]-tierRange[0]+1;
-            return(<div key={chunk.id} onClick={()=>handleChunkToggle(chunk.id)} style={{padding:"10px 12px",marginBottom:4,borderRadius:8,cursor:"pointer",background:isActive?"rgba(59,130,246,0.1)":"rgba(0,0,0,0.2)",border:"1px solid "+(isActive?"#3B82F6":"#1E293B"),transition:"all 0.15s"}}>
+            return(<div key={chunk.id} onClick={()=>handleChunkToggle(chunk.id)} style={{padding:"10px 12px",marginBottom:4,borderRadius:8,cursor:"pointer",background:isActive?"rgba(59,130,246,0.1)":"rgba(0,0,0,0.2)",border:"1px solid "+(isActive?"#3B82F6":"#3a4a5e"),transition:"all 0.15s"}}>
               <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
                 {/* Checkbox */}
-                <div style={{width:10,height:10,borderRadius:2,flexShrink:0,border:"1.5px solid "+(isActive?"#3B82F6":"#475569"),background:isActive?"#3B82F6":"transparent",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                <div style={{width:10,height:10,borderRadius:2,flexShrink:0,border:"1.5px solid "+(isActive?"#3B82F6":"#5a6a7a"),background:isActive?"#3B82F6":"transparent",display:"flex",alignItems:"center",justifyContent:"center"}}>
                   {isActive&&<span style={{color:"#fff",fontSize:7,fontWeight:900,lineHeight:1}}>{"\u2713"}</span>}
                 </div>
                 <div style={{width:8,height:8,borderRadius:"50%",background:chunk.color,flexShrink:0}}/>
@@ -866,9 +866,9 @@ const ConstellationView = ({onSelectCluster,selectedClusterId}) => {
                   ))}
                 </div>
               )}
-              <div style={{fontSize:9,color:"#64748B",marginBottom:3}}>Tier {tierRange[0]}\u2013{tierRange[1]}</div>
+              <div style={{fontSize:9,color:"#8899aa",marginBottom:3}}>Tier {tierRange[0]}\u2013{tierRange[1]}</div>
               {(chunk.pivot_tables||[]).length>0&&(
-                <div style={{fontSize:8,color:"#475569",fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{chunk.pivot_tables.slice(0,2).join(", ")}</div>
+                <div style={{fontSize:8,color:"#5a6a7a",fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{chunk.pivot_tables.slice(0,2).join(", ")}</div>
               )}
               {((chunk.conflict_count||0)>0||(chunk.chain_count||0)>0)&&(
                 <div style={{display:"flex",gap:4,marginTop:4}}>
@@ -878,18 +878,18 @@ const ConstellationView = ({onSelectCluster,selectedClusterId}) => {
               )}
             </div>);
           })}
-          {filteredChunks.length===0&&<div style={{padding:20,textAlign:"center",color:"#475569",fontSize:11}}>No clusters match</div>}
+          {filteredChunks.length===0&&<div style={{padding:20,textAlign:"center",color:"#5a6a7a",fontSize:11}}>No clusters match</div>}
         </div>
 
         {/* Footer */}
-        <div style={{padding:"6px 12px",borderTop:"1px solid #1E293B",fontSize:9,color:"#64748B",textAlign:"center"}}>
+        <div style={{padding:"6px 12px",borderTop:"1px solid #3a4a5e",fontSize:9,color:"#8899aa",textAlign:"center"}}>
           {hasFilter&&<span style={{color:"#60A5FA"}}>{activeChunkIds.size} selected \u00B7 </span>}
           {filteredChunks.length}/{constellationChunks.length} clusters \u00B7 {filteredChunks.reduce((a,c)=>a+c.session_count,0)} sessions
         </div>
       </div>
 
       {/* ── SVG canvas ── */}
-      <div style={{flex:1,position:"relative",background:"#080C14"}}>
+      <div style={{flex:1,position:"relative",background:"#1a2332"}}>
         <svg ref={svgRef} width="100%" height="100%" onWheel={handleWheel} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp} style={{cursor:dragRef.current?"grabbing":"grab"}}>
           <g transform={"translate("+transform.x+","+transform.y+") scale("+transform.k+")"}>
             {/* Hulls */}
@@ -946,20 +946,20 @@ const ConstellationView = ({onSelectCluster,selectedClusterId}) => {
               const rect=svg.getBoundingClientRect();
               const cx=rect.width/2;const cy=rect.height/2;
               setTransform(prev=>{const nk=Math.max(0.3,Math.min(20,prev.k*b.factor));return{x:cx-(cx-prev.x)*nk/prev.k,y:cy-(cy-prev.y)*nk/prev.k,k:nk};});
-            }} style={{width:28,height:28,borderRadius:5,border:"1px solid rgba(255,255,255,0.1)",background:"rgba(15,23,42,0.85)",color:"#94A3B8",fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{b.label}</button>
+            }} style={{width:28,height:28,borderRadius:5,border:"1px solid rgba(255,255,255,0.1)",background:"rgba(26,35,50,0.85)",color:"#94A3B8",fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{b.label}</button>
           ))}
         </div>
 
         {/* Tooltip */}
         {hov&&(
-          <div style={{position:"absolute",top:10,left:10,padding:"6px 12px",borderRadius:6,background:"rgba(15,23,42,0.92)",border:"1px solid rgba(148,163,184,0.3)",fontSize:10,color:"#E2E8F0",pointerEvents:"none",fontFamily:"'JetBrains Mono',monospace"}}>
+          <div style={{position:"absolute",top:10,left:10,padding:"6px 12px",borderRadius:6,background:"rgba(26,35,50,0.92)",border:"1px solid rgba(148,163,184,0.3)",fontSize:10,color:"#E2E8F0",pointerEvents:"none",fontFamily:"'JetBrains Mono',monospace"}}>
             <div style={{fontWeight:700}}>{hov.name}</div>
             <div style={{color:"#94A3B8"}}>Tier {hov.tier}{hov.critical?" (critical)":""} \u00B7 {chunkMap.get(hov.chunk_id)?.label||""}</div>
           </div>
         )}
 
         {/* Minimap */}
-        <div style={{position:"absolute",bottom:40,left:10,width:160,height:120,background:"rgba(15,23,42,0.85)",border:"1px solid rgba(30,41,59,0.6)",borderRadius:6,overflow:"hidden"}}>
+        <div style={{position:"absolute",bottom:40,left:10,width:160,height:120,background:"rgba(26,35,50,0.85)",border:"1px solid rgba(30,41,59,0.6)",borderRadius:6,overflow:"hidden"}}>
           <svg width={160} height={120} style={{display:"block"}}>
             {constellationPoints.map(p=>{
               const color=chunkColorMap.get(p.chunk_id)||"#3B82F6";
@@ -969,16 +969,16 @@ const ConstellationView = ({onSelectCluster,selectedClusterId}) => {
         </div>
 
         {/* Stats bar */}
-        <div style={{position:"absolute",bottom:12,left:180,padding:"6px 14px",borderRadius:8,background:"rgba(15,23,42,0.85)",border:"1px solid rgba(30,41,59,0.6)",display:"flex",gap:16,fontSize:10,color:"#64748B"}}>
+        <div style={{position:"absolute",bottom:12,left:180,padding:"6px 14px",borderRadius:8,background:"rgba(26,35,50,0.85)",border:"1px solid rgba(30,41,59,0.6)",display:"flex",gap:16,fontSize:10,color:"#8899aa"}}>
           <span><strong style={{color:"#E2E8F0"}}>{constellationPoints.length.toLocaleString()}</strong> Sessions</span>
           <span><strong style={{color:"#3B82F6"}}>{constellationChunks.length}</strong> Clusters</span>
           {criticalCount>0&&<span><strong style={{color:"#EF4444"}}>{criticalCount}</strong> Critical</span>}
-          <span style={{color:"#475569"}}>Scroll/drag \u00B7 Shift+click=path</span>
+          <span style={{color:"#5a6a7a"}}>Scroll/drag \u00B7 Shift+click=path</span>
         </div>
       </div>
 
       {/* ── Right sidebar: algorithm list + display controls ── */}
-      <div style={{width:220,flexShrink:0,borderLeft:"1px solid rgba(30,41,59,0.6)",background:"rgba(15,23,42,0.6)",overflowY:"auto",display:"flex",flexDirection:"column"}}>
+      <div style={{width:220,flexShrink:0,borderLeft:"1px solid rgba(30,41,59,0.6)",background:"rgba(26,35,50,0.6)",overflowY:"auto",display:"flex",flexDirection:"column"}}>
         <div style={{padding:"12px 14px",borderBottom:"1px solid rgba(30,41,59,0.6)"}}>
           <div style={{fontSize:10,fontWeight:700,color:"#10B981",textTransform:"uppercase",letterSpacing:"0.1em"}}>Clustering Algorithm</div>
         </div>
@@ -988,11 +988,11 @@ const ConstellationView = ({onSelectCluster,selectedClusterId}) => {
             const isActive=key===activeAlgo;
             return(<div key={key} style={{padding:"10px 12px",marginBottom:6,borderRadius:8,background:isActive?"rgba(16,185,129,0.1)":"rgba(0,0,0,0.2)",border:"1px solid "+(isActive?"#10B981":"rgba(30,41,59,0.4)"),opacity:isActive?1:0.8}}>
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
-                <span style={{fontSize:14,lineHeight:1,color:isActive?"#34D399":"#64748B"}}>{meta.icon}</span>
+                <span style={{fontSize:14,lineHeight:1,color:isActive?"#34D399":"#8899aa"}}>{meta.icon}</span>
                 <span style={{fontSize:11,fontWeight:700,color:isActive?"#34D399":"#CBD5E1"}}>{meta.name}</span>
                 {isActive&&<span style={{marginLeft:"auto",fontSize:8,fontWeight:700,padding:"1px 5px",borderRadius:3,background:"rgba(16,185,129,0.2)",color:"#34D399"}}>ACTIVE</span>}
               </div>
-              <div style={{fontSize:9,color:isActive?"rgba(52,211,153,0.7)":"#475569",lineHeight:1.4}}>{meta.desc}</div>
+              <div style={{fontSize:9,color:isActive?"rgba(52,211,153,0.7)":"#5a6a7a",lineHeight:1.4}}>{meta.desc}</div>
             </div>);
           })}
         </div>
@@ -1003,7 +1003,7 @@ const ConstellationView = ({onSelectCluster,selectedClusterId}) => {
           {[{label:"Connection Lines",value:showEdges,setter:setShowEdges},{label:"Cluster Shading",value:showHulls,setter:setShowHulls}].map(({label,value,setter})=>(
             <div key={label} style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
               <span style={{fontSize:10,color:"#CBD5E1"}}>{label}</span>
-              <div onClick={()=>setter(v=>!v)} style={{width:28,height:16,borderRadius:8,cursor:"pointer",background:value?"#10B981":"#334155",position:"relative",transition:"background 0.15s"}}>
+              <div onClick={()=>setter(v=>!v)} style={{width:28,height:16,borderRadius:8,cursor:"pointer",background:value?"#10B981":"#4a5a6e",position:"relative",transition:"background 0.15s"}}>
                 <div style={{width:12,height:12,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:value?14:2,transition:"left 0.15s"}}/>
               </div>
             </div>
@@ -1081,7 +1081,7 @@ const DrillThroughPanel = ({filter, onFilterChange, matchingCount}) => {
   const macroKeys = useMemo(()=>Object.keys(vectorResults?.v1_communities?.macro_communities??{}).map(Number).sort((a,b)=>a-b),[]);
 
   const Section = ({id,label,children}) => (
-    <div style={{borderBottom:"1px solid #1E293B"}}>
+    <div style={{borderBottom:"1px solid #3a4a5e"}}>
       <div onClick={()=>toggle(id)} style={{padding:"8px 12px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:10,fontWeight:700,color:"#94A3B8",textTransform:"uppercase",letterSpacing:"0.05em"}}>
         {label}<span style={{fontSize:9,transition:"transform 0.15s",display:"inline-block",transform:expanded[id]?"rotate(90deg)":"rotate(0deg)"}}>▶</span>
       </div>
@@ -1090,18 +1090,18 @@ const DrillThroughPanel = ({filter, onFilterChange, matchingCount}) => {
   );
 
   const FilterBtn = ({active,onClick,label,count,color}) => (
-    <button onClick={onClick} style={{padding:"4px 10px",borderRadius:5,border:"1px solid "+(active?"rgba(59,130,246,0.5)":"#1E293B"),background:active?"rgba(59,130,246,0.15)":"transparent",color:active?"#60A5FA":"#94A3B8",fontSize:10,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>
-      {color&&<span style={{width:6,height:6,borderRadius:"50%",background:color,display:"inline-block"}}/>}{label}{count!=null&&<span style={{fontSize:8,color:"#475569",marginLeft:2}}>{count}</span>}
+    <button onClick={onClick} style={{padding:"4px 10px",borderRadius:5,border:"1px solid "+(active?"rgba(59,130,246,0.5)":"#3a4a5e"),background:active?"rgba(59,130,246,0.15)":"transparent",color:active?"#60A5FA":"#94A3B8",fontSize:10,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>
+      {color&&<span style={{width:6,height:6,borderRadius:"50%",background:color,display:"inline-block"}}/>}{label}{count!=null&&<span style={{fontSize:8,color:"#5a6a7a",marginLeft:2}}>{count}</span>}
     </button>
   );
 
   return (
-    <div style={{width:"100%",height:"100%",overflowY:"auto",background:"rgba(15,23,42,0.6)"}}>
-      <div style={{padding:"10px 12px",borderBottom:"1px solid #1E293B",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+    <div style={{width:"100%",height:"100%",overflowY:"auto",background:"rgba(26,35,50,0.6)"}}>
+      <div style={{padding:"10px 12px",borderBottom:"1px solid #3a4a5e",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div style={{fontSize:11,fontWeight:700,color:"#E2E8F0"}}>Drill-Through Filters</div>
         {activeCount>0&&<button onClick={clearAll} style={{fontSize:9,padding:"2px 8px",borderRadius:4,border:"1px solid rgba(239,68,68,0.4)",background:"transparent",color:"#EF4444",cursor:"pointer"}}>Clear All</button>}
       </div>
-      {matchingCount!=null&&<div style={{padding:"6px 12px",borderBottom:"1px solid #1E293B",fontSize:10,color:"#60A5FA"}}>{matchingCount} matching sessions</div>}
+      {matchingCount!=null&&<div style={{padding:"6px 12px",borderBottom:"1px solid #3a4a5e",fontSize:10,color:"#60A5FA"}}>{matchingCount} matching sessions</div>}
       {hasComplexity&&<Section id="complexity" label="Complexity">
         <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
           {BUCKET_ORDER.map(b=>(<FilterBtn key={b} active={filter.complexity_bucket===b} color={BUCKET_COLORS[b]} label={b} count={bucketCounts[b]} onClick={()=>onFilterChange({...filter,complexity_bucket:filter.complexity_bucket===b?undefined:b})}/>))}
@@ -1176,8 +1176,8 @@ const ComplexityView = ({filterIds}) => {
         {BUCKET_ORDER.map(b=>dist[b]>0?<div key={b} style={{width:(dist[b]/total*100)+"%",background:BUCKET_COLORS[b],display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:700,color:"#fff",minWidth:dist[b]>0?30:0}} title={b+": "+dist[b]}>{dist[b]}</div>:null)}
       </div>
       <div style={{display:"flex",gap:6,marginBottom:12}}>
-        <button onClick={()=>setSortBy("score")} style={{fontSize:10,padding:"3px 10px",borderRadius:4,border:"1px solid "+(sortBy==="score"?"#3B82F6":"#1E293B"),background:sortBy==="score"?"rgba(59,130,246,0.15)":"transparent",color:sortBy==="score"?"#60A5FA":"#64748B",cursor:"pointer"}}>By Score</button>
-        <button onClick={()=>setSortBy("name")} style={{fontSize:10,padding:"3px 10px",borderRadius:4,border:"1px solid "+(sortBy==="name"?"#3B82F6":"#1E293B"),background:sortBy==="name"?"rgba(59,130,246,0.15)":"transparent",color:sortBy==="name"?"#60A5FA":"#64748B",cursor:"pointer"}}>By Name</button>
+        <button onClick={()=>setSortBy("score")} style={{fontSize:10,padding:"3px 10px",borderRadius:4,border:"1px solid "+(sortBy==="score"?"#3B82F6":"#3a4a5e"),background:sortBy==="score"?"rgba(59,130,246,0.15)":"transparent",color:sortBy==="score"?"#60A5FA":"#8899aa",cursor:"pointer"}}>By Score</button>
+        <button onClick={()=>setSortBy("name")} style={{fontSize:10,padding:"3px 10px",borderRadius:4,border:"1px solid "+(sortBy==="name"?"#3B82F6":"#3a4a5e"),background:sortBy==="name"?"rgba(59,130,246,0.15)":"transparent",color:sortBy==="name"?"#60A5FA":"#8899aa",cursor:"pointer"}}>By Name</button>
       </div>
       <div style={{display:"flex",gap:16}}>
         <div style={{width:340,flexShrink:0,overflowY:"auto",maxHeight:500}}>
@@ -1195,7 +1195,7 @@ const ComplexityView = ({filterIds}) => {
           {(sel.dimensions||[]).map(d=>(
             <div key={d.name} style={{marginBottom:6}}>
               <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:C.textMuted,marginBottom:2}}><span>{d.name}</span><span>{(d.normalized*100).toFixed(0)}%</span></div>
-              <div style={{height:6,borderRadius:3,background:"#1E293B",overflow:"hidden"}}><div style={{height:"100%",borderRadius:3,background:d.normalized>0.7?"#EF4444":d.normalized>0.4?"#F59E0B":"#22C55E",width:(d.normalized*100)+"%"}}/></div>
+              <div style={{height:6,borderRadius:3,background:"#3a4a5e",overflow:"hidden"}}><div style={{height:"100%",borderRadius:3,background:d.normalized>0.7?"#EF4444":d.normalized>0.4?"#F59E0B":"#22C55E",width:(d.normalized*100)+"%"}}/></div>
             </div>
           ))}
         </div>}
@@ -1244,7 +1244,7 @@ const WavePlanView = ({filterIds}) => {
                   {hasScc&&<span style={{fontSize:8,padding:"2px 6px",borderRadius:4,background:"rgba(245,158,11,0.1)",color:"#F59E0B",fontWeight:700}}>SCC</span>}
                   {w.prerequisite_waves?.length>0&&<span style={{fontSize:9,color:C.textDim}}>After: {w.prerequisite_waves.map(p=>"W"+p).join(", ")}</span>}
                 </div>
-                <div style={{height:6,borderRadius:3,background:"#1E293B",marginTop:6,overflow:"hidden"}}><div style={{height:"100%",borderRadius:3,background:color,width:(w.session_count/maxSessions*100)+"%"}}/></div>
+                <div style={{height:6,borderRadius:3,background:"#3a4a5e",marginTop:6,overflow:"hidden"}}><div style={{height:"100%",borderRadius:3,background:color,width:(w.session_count/maxSessions*100)+"%"}}/></div>
               </div>
               <span style={{fontSize:10,color:C.textDim}}>{isExp?"▼":"▶"}</span>
             </div>
@@ -1365,8 +1365,8 @@ const ConsensusRadarView = ({filterIds}) => {
         ))}
       </div>
       <div style={{display:"flex",gap:6,marginBottom:12}}>
-        <button onClick={()=>setSortBy("score")} style={{fontSize:10,padding:"3px 10px",borderRadius:4,border:"1px solid "+(sortBy==="score"?"#3B82F6":"#1E293B"),background:sortBy==="score"?"rgba(59,130,246,0.15)":"transparent",color:sortBy==="score"?"#60A5FA":"#64748B",cursor:"pointer"}}>By Score</button>
-        <button onClick={()=>setSortBy("contested")} style={{fontSize:10,padding:"3px 10px",borderRadius:4,border:"1px solid "+(sortBy==="contested"?"#3B82F6":"#1E293B"),background:sortBy==="contested"?"rgba(59,130,246,0.15)":"transparent",color:sortBy==="contested"?"#60A5FA":"#64748B",cursor:"pointer"}}>By Contested</button>
+        <button onClick={()=>setSortBy("score")} style={{fontSize:10,padding:"3px 10px",borderRadius:4,border:"1px solid "+(sortBy==="score"?"#3B82F6":"#3a4a5e"),background:sortBy==="score"?"rgba(59,130,246,0.15)":"transparent",color:sortBy==="score"?"#60A5FA":"#8899aa",cursor:"pointer"}}>By Score</button>
+        <button onClick={()=>setSortBy("contested")} style={{fontSize:10,padding:"3px 10px",borderRadius:4,border:"1px solid "+(sortBy==="contested"?"#3B82F6":"#3a4a5e"),background:sortBy==="contested"?"rgba(59,130,246,0.15)":"transparent",color:sortBy==="contested"?"#60A5FA":"#8899aa",cursor:"pointer"}}>By Contested</button>
       </div>
       <div style={{display:"flex",gap:16}}>
         <div style={{width:300,flexShrink:0,overflowY:"auto",maxHeight:500}}>
@@ -1439,7 +1439,7 @@ const HeatMapView = ({filterIds}) => {
     });
 
     // Headers
-    ctx.font="11px Inter,sans-serif";ctx.fillStyle="#64748B";ctx.textAlign="center";
+    ctx.font="11px Inter,sans-serif";ctx.fillStyle="#8899aa";ctx.textAlign="center";
     tiers.forEach((t,i)=>{ctx.fillText("T"+t,LW+i*CW+CW/2,28);});
     ctx.textAlign="right";
     buckets.forEach((b,i)=>{ctx.fillStyle=BUCKET_COLORS[b];ctx.fillText(b,LW-8,44+i*CH+CH/2+4);});
@@ -1506,9 +1506,9 @@ const TableExplorerView = ({filterIds}) => {
 
   return (
     <div style={{display:"flex",height:"100%",overflow:"hidden"}}>
-      <div style={{width:320,borderRight:"1px solid #1E293B",display:"flex",flexDirection:"column",flexShrink:0}}>
-        <div style={{padding:8,borderBottom:"1px solid #1E293B"}}>
-          <input type="text" placeholder="Search tables..." value={search} onChange={e=>setSearch(e.target.value)} style={{width:"100%",padding:"5px 10px",borderRadius:5,border:"1px solid #1E293B",background:"rgba(0,0,0,0.3)",color:"#E2E8F0",fontSize:10,outline:"none",fontFamily:"'JetBrains Mono',monospace"}}/>
+      <div style={{width:320,borderRight:"1px solid #3a4a5e",display:"flex",flexDirection:"column",flexShrink:0}}>
+        <div style={{padding:8,borderBottom:"1px solid #3a4a5e"}}>
+          <input type="text" placeholder="Search tables..." value={search} onChange={e=>setSearch(e.target.value)} style={{width:"100%",padding:"5px 10px",borderRadius:5,border:"1px solid #3a4a5e",background:"rgba(0,0,0,0.3)",color:"#E2E8F0",fontSize:10,outline:"none",fontFamily:"'JetBrains Mono',monospace"}}/>
         </div>
         <div style={{flex:1,overflowY:"auto",padding:4}}>
           {tableList.map(t=>(
@@ -1592,10 +1592,10 @@ const DuplicatesView = ({filterIds}) => {
 
   return (
     <div style={{display:"flex",height:"100%",overflow:"hidden"}}>
-      <div style={{width:320,borderRight:"1px solid #1E293B",display:"flex",flexDirection:"column",flexShrink:0}}>
-        <div style={{padding:"8px 10px",borderBottom:"1px solid #1E293B",display:"flex",gap:4,flexWrap:"wrap"}}>
+      <div style={{width:320,borderRight:"1px solid #3a4a5e",display:"flex",flexDirection:"column",flexShrink:0}}>
+        <div style={{padding:"8px 10px",borderBottom:"1px solid #3a4a5e",display:"flex",gap:4,flexWrap:"wrap"}}>
           {[["all","All",groups.length],["exact","Exact",counts.exact],["near","Near",counts.near],["partial","Partial",counts.partial]].map(([k,l,c])=>(
-            <button key={k} onClick={()=>setFilterType(k)} style={{fontSize:9,padding:"3px 8px",borderRadius:4,border:"1px solid "+(filterType===k?"#3B82F6":"#1E293B"),background:filterType===k?"rgba(59,130,246,0.15)":"transparent",color:filterType===k?"#60A5FA":"#64748B",cursor:"pointer"}}>{l} ({c})</button>
+            <button key={k} onClick={()=>setFilterType(k)} style={{fontSize:9,padding:"3px 8px",borderRadius:4,border:"1px solid "+(filterType===k?"#3B82F6":"#3a4a5e"),background:filterType===k?"rgba(59,130,246,0.15)":"transparent",color:filterType===k?"#60A5FA":"#8899aa",cursor:"pointer"}}>{l} ({c})</button>
           ))}
         </div>
         <div style={{flex:1,overflowY:"auto",padding:4}}>
@@ -1727,7 +1727,7 @@ const InfrastructureView = () => {
       const pos=positions.get(s.id);if(!pos)return;
       const r=Math.min(Math.max(s.session_count*2+15,20),50);
       const isActive=hovSystem===s.id||selSystem===s.id;
-      const envColor=ENV_COLORS[s.env]||"#64748B";
+      const envColor=ENV_COLORS[s.env]||"#8899aa";
       ctx.beginPath();ctx.arc(pos.x,pos.y,r,0,2*Math.PI);
       ctx.fillStyle=isActive?"rgba(59,130,246,0.2)":"rgba(30,41,59,0.8)";ctx.fill();
       ctx.strokeStyle=isActive?"#60A5FA":envColor;ctx.lineWidth=isActive?3:2;ctx.stroke();
@@ -1781,11 +1781,11 @@ const InfrastructureView = () => {
 
   return (
     <div style={{display:"flex",height:"100%",overflow:"hidden"}}>
-      <div style={{width:180,borderRight:"1px solid #1E293B",overflowY:"auto",padding:8,flexShrink:0}}>
+      <div style={{width:180,borderRight:"1px solid #3a4a5e",overflowY:"auto",padding:8,flexShrink:0}}>
         <div style={{fontSize:10,fontWeight:700,color:C.textMuted,marginBottom:8,textTransform:"uppercase"}}>Environments</div>
         {Object.entries(envGroups).map(([env,ids])=>(
           <div key={env} style={{marginBottom:10}}>
-            <div style={{fontSize:9,fontWeight:700,color:ENV_COLORS[env]||"#64748B",marginBottom:4}}>{env.toUpperCase()}</div>
+            <div style={{fontSize:9,fontWeight:700,color:ENV_COLORS[env]||"#8899aa",marginBottom:4}}>{env.toUpperCase()}</div>
             {ids.map(id=>{const s=systems.find(x=>x.id===id);return s?<div key={id} onClick={()=>setSelSystem(p=>p===id?null:id)} style={{padding:"4px 8px",borderRadius:4,cursor:"pointer",fontSize:9,color:selSystem===id?"#60A5FA":"#94A3B8",background:selSystem===id?"rgba(59,130,246,0.1)":"transparent"}}>{s.name} ({s.session_count}S)</div>:null;})}
           </div>
         ))}
@@ -1793,7 +1793,7 @@ const InfrastructureView = () => {
       <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",position:"relative"}}>
         <canvas ref={canvasRef} onClick={handleCanvasClick} onMouseMove={handleCanvasMove} onMouseLeave={()=>setHovSystem(null)}/>
       </div>
-      <div style={{width:240,borderLeft:"1px solid #1E293B",overflowY:"auto",padding:12,flexShrink:0}}>
+      <div style={{width:240,borderLeft:"1px solid #3a4a5e",overflowY:"auto",padding:12,flexShrink:0}}>
         {selSys?<div>
           <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:4}}>{selSys.name}</div>
           <div style={{fontSize:10,color:C.textDim,marginBottom:8}}>{selSys.type} · {selSys.env}</div>
@@ -1862,16 +1862,16 @@ const App = function App() {
 
   return (
     <div style={{width:"100%",height:"100vh",background:C.bg,color:C.text,fontFamily:"'Inter',-apple-system,sans-serif",display:"flex",flexDirection:"column",overflow:"hidden"}}>
-      <div style={{padding:"10px 20px",borderBottom:"1px solid #1E293B",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,background:"rgba(15,23,42,0.9)",backdropFilter:"blur(12px)"}}>
+      <div style={{padding:"10px 20px",borderBottom:"1px solid #3a4a5e",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,background:"rgba(26,35,50,0.9)",backdropFilter:"blur(12px)"}}>
         <div style={{display:"flex",alignItems:"center",gap:14}}>
-          <span style={{fontSize:15,fontWeight:800,letterSpacing:"-0.02em"}}>Tier Map</span>
-          <span style={{fontSize:12,color:"#64748B"}}>Session Dependency Diagram</span>
+          <span style={{fontSize:15,fontWeight:800,letterSpacing:"-0.02em"}}>Lakehouse Optimizer</span>
+          <span style={{fontSize:12,color:"#8899aa"}}>Session Dependency Diagram</span>
           <div style={{display:"flex",gap:2,marginLeft:8,flexWrap:"wrap"}}>
-            {views.map(v=>(<button key={v.id} onClick={()=>setView(v.id)} style={{padding:"5px 12px",borderRadius:6,border:"none",cursor:"pointer",fontSize:11,fontWeight:600,background:view===v.id?"rgba(59,130,246,0.2)":"transparent",color:view===v.id?"#60A5FA":"#64748B",transition:"all 0.15s"}}>{v.icon} {v.label}</button>))}
+            {views.map(v=>(<button key={v.id} onClick={()=>setView(v.id)} style={{padding:"5px 12px",borderRadius:6,border:"none",cursor:"pointer",fontSize:11,fontWeight:600,background:view===v.id?"rgba(59,130,246,0.2)":"transparent",color:view===v.id?"#60A5FA":"#8899aa",transition:"all 0.15s"}}>{v.icon} {v.label}</button>))}
           </div>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:16}}>
-          {hasVectors&&<button onClick={()=>setShowDrillPanel(p=>!p)} style={{padding:"4px 12px",borderRadius:6,border:"1px solid "+(showDrillPanel||activeFilterCount>0?"#3B82F6":"#1E293B"),background:showDrillPanel?"rgba(59,130,246,0.15)":"transparent",color:showDrillPanel||activeFilterCount>0?"#60A5FA":"#64748B",cursor:"pointer",fontSize:10,fontWeight:600,display:"flex",alignItems:"center",gap:4}}>
+          {hasVectors&&<button onClick={()=>setShowDrillPanel(p=>!p)} style={{padding:"4px 12px",borderRadius:6,border:"1px solid "+(showDrillPanel||activeFilterCount>0?"#3B82F6":"#3a4a5e"),background:showDrillPanel?"rgba(59,130,246,0.15)":"transparent",color:showDrillPanel||activeFilterCount>0?"#60A5FA":"#8899aa",cursor:"pointer",fontSize:10,fontWeight:600,display:"flex",alignItems:"center",gap:4}}>
             Filters{activeFilterCount>0&&<span style={{background:"#3B82F6",color:"#fff",borderRadius:"50%",width:16,height:16,display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:8,fontWeight:800}}>{activeFilterCount}</span>}
           </button>}
           {selectedClusterId&&(
@@ -1883,10 +1883,10 @@ const App = function App() {
           {(view==="tier"||view==="matrix")&&<div style={{display:"flex",gap:10,fontSize:9}}>
             {Object.entries(connTypes).map(([k,ct])=>(<div key={k} style={{display:"flex",alignItems:"center",gap:3}}><div style={{width:14,height:ct.baseWidth+1,borderRadius:1,background:ct.color,...(ct.dash?{backgroundImage:"repeating-linear-gradient(90deg,"+ct.color+" 0px,"+ct.color+" 3px,transparent 3px,transparent 6px)"}:{})}}/><span style={{color:"#94A3B8"}}>{ct.label}</span></div>))}
           </div>}
-          <span style={{fontSize:9,color:"#475569",fontFamily:"monospace"}}>{exportTimestamp}</span>
+          <span style={{fontSize:9,color:"#5a6a7a",fontFamily:"monospace"}}>{exportTimestamp}</span>
         </div>
       </div>
-      <div style={{padding:"6px 20px",borderBottom:"1px solid #1E293B",display:"flex",gap:20,fontSize:10,color:"#64748B",flexShrink:0}}>
+      <div style={{padding:"6px 20px",borderBottom:"1px solid #3a4a5e",display:"flex",gap:20,fontSize:10,color:"#8899aa",flexShrink:0}}>
         <span><strong style={{color:"#E2E8F0"}}>{tierStats.session_count}</strong> Sessions</span>
         <span><strong style={{color:"#10B981"}}>{tierStats.source_tables}</strong> Sources</span>
         {tierStats.write_conflicts>0&&<span style={{color:"#EF4444"}}><strong>{tierStats.write_conflicts}</strong> Conflicts</span>}
@@ -1895,7 +1895,7 @@ const App = function App() {
         <span style={{color:"#94A3B8"}}><strong style={{color:"#E2E8F0"}}>{tierStats.max_tier}</strong> Tier Depth</span>
       </div>
       <div style={{flex:1,overflow:"hidden",display:"flex"}}>
-        {showDrillPanel&&hasVectors&&<div style={{width:240,borderRight:"1px solid #1E293B",flexShrink:0,overflow:"hidden"}}>
+        {showDrillPanel&&hasVectors&&<div style={{width:240,borderRight:"1px solid #3a4a5e",flexShrink:0,overflow:"hidden"}}>
           <DrillThroughPanel filter={drillFilter} onFilterChange={setDrillFilter} matchingCount={combinedFilterIds?combinedFilterIds.size:null}/>
         </div>}
         <div style={{flex:1,overflow:"hidden",padding:noPaddingViews.has(view)?0:20}}>

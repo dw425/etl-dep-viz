@@ -67,7 +67,7 @@ function getTypeColor(type: string): string {
   for (const [key, color] of Object.entries(TYPE_COLORS)) {
     if (type.toLowerCase().includes(key.toLowerCase())) return color;
   }
-  return '#64748b';
+  return '#8899aa';
 }
 
 /**
@@ -177,7 +177,7 @@ export default function LineageBuilder({ tierData, selectedSession, onSessionSel
     }}>
       {/* Header */}
       <div style={{
-        padding: '12px 16px', borderBottom: '1px solid #1e293b',
+        padding: '12px 16px', borderBottom: '1px solid #3a4a5e',
         display: 'flex', alignItems: 'center', gap: 12,
       }}>
         <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>Column Lineage</h3>
@@ -186,7 +186,7 @@ export default function LineageBuilder({ tierData, selectedSession, onSessionSel
           onChange={e => { setSessionId(e.target.value); loadLineage(e.target.value); }}
           style={{
             flex: 1, maxWidth: 300, padding: '4px 8px', fontSize: 11,
-            background: '#1e293b', border: '1px solid #334155', borderRadius: 4,
+            background: '#3a4a5e', border: '1px solid #4a5a6e', borderRadius: 4,
             color: '#e2e8f0',
           }}
         >
@@ -196,7 +196,7 @@ export default function LineageBuilder({ tierData, selectedSession, onSessionSel
           ))}
         </select>
         {lineageData && (
-          <span style={{ fontSize: 10, color: '#64748b' }}>
+          <span style={{ fontSize: 10, color: '#8899aa' }}>
             {lineageData.connector_count} connectors | {instanceGroups.length} transforms
           </span>
         )}
@@ -205,17 +205,17 @@ export default function LineageBuilder({ tierData, selectedSession, onSessionSel
       {/* Content */}
       <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>
         {loading && (
-          <div style={{ textAlign: 'center', padding: 32, color: '#64748b' }}>Loading lineage...</div>
+          <div style={{ textAlign: 'center', padding: 32, color: '#8899aa' }}>Loading lineage...</div>
         )}
 
         {!loading && !lineageData && !sessionId && (
-          <div style={{ textAlign: 'center', padding: 32, color: '#64748b' }}>
+          <div style={{ textAlign: 'center', padding: 32, color: '#8899aa' }}>
             Select a session above to view column-level lineage.
           </div>
         )}
 
         {!loading && lineageData?.message && (
-          <div style={{ textAlign: 'center', padding: 32, color: '#64748b' }}>{lineageData.message}</div>
+          <div style={{ textAlign: 'center', padding: 32, color: '#8899aa' }}>{lineageData.message}</div>
         )}
 
         {!loading && lineageData && !lineageData.message && (
@@ -237,8 +237,8 @@ export default function LineageBuilder({ tierData, selectedSession, onSessionSel
                       background: color, flexShrink: 0,
                     }} />
                     <span style={{ fontSize: 11, fontWeight: 600, color }}>{group.name}</span>
-                    <span style={{ fontSize: 9, color: '#64748b' }}>{group.type}</span>
-                    <span style={{ fontSize: 9, color: '#475569', marginLeft: 'auto' }}>
+                    <span style={{ fontSize: 9, color: '#8899aa' }}>{group.type}</span>
+                    <span style={{ fontSize: 9, color: '#5a6a7a', marginLeft: 'auto' }}>
                       {group.columns.length} fields
                     </span>
                   </div>
@@ -258,16 +258,16 @@ export default function LineageBuilder({ tierData, selectedSession, onSessionSel
                           }}
                         >
                           <span style={{ color: isHighlighted ? '#e2e8f0' : '#94a3b8', minWidth: 120 }}>{col.field}</span>
-                          <span style={{ color: '#475569', fontSize: 9 }}>{col.datatype}</span>
+                          <span style={{ color: '#5a6a7a', fontSize: 9 }}>{col.datatype}</span>
                           {col.expression_type !== 'passthrough' && (
                             <span style={{
                               fontSize: 8, padding: '1px 4px', borderRadius: 2,
                               background: col.expression_type === 'derived' ? '#A855F722' :
                                 col.expression_type === 'aggregated' ? '#F59E0B22' :
-                                col.expression_type === 'lookup' ? '#3B82F622' : '#64748b22',
+                                col.expression_type === 'lookup' ? '#3B82F622' : '#8899aa22',
                               color: col.expression_type === 'derived' ? '#A855F7' :
                                 col.expression_type === 'aggregated' ? '#F59E0B' :
-                                col.expression_type === 'lookup' ? '#3B82F6' : '#64748b',
+                                col.expression_type === 'lookup' ? '#3B82F6' : '#8899aa',
                             }}>
                               {col.expression_type}
                             </span>
@@ -276,7 +276,7 @@ export default function LineageBuilder({ tierData, selectedSession, onSessionSel
                       );
                     })}
                     {group.columns.length > 30 && (
-                      <div style={{ padding: '3px 12px', fontSize: 9, color: '#475569' }}>
+                      <div style={{ padding: '3px 12px', fontSize: 9, color: '#5a6a7a' }}>
                         +{group.columns.length - 30} more fields
                       </div>
                     )}
@@ -288,7 +288,7 @@ export default function LineageBuilder({ tierData, selectedSession, onSessionSel
         )}
 
         {!loading && !lineageData && !sessionId && (
-          <div style={{ textAlign: 'center', padding: 32, color: '#64748b' }}>
+          <div style={{ textAlign: 'center', padding: 32, color: '#8899aa' }}>
             Select a session to view column-level lineage
           </div>
         )}

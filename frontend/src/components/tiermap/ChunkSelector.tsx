@@ -7,8 +7,8 @@ import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import type { ConstellationChunk, ConstellationPoint, TableReferenceEntry } from '../../types/tiermap';
 
 const C = {
-  bg: '#080C14', surface: '#111827', border: '#1e293b',
-  text: '#e2e8f0', muted: '#64748b', dim: '#475569',
+  bg: '#1a2332', surface: '#243044', border: '#3a4a5e',
+  text: '#e2e8f0', muted: '#8899aa', dim: '#5a6a7a',
 };
 
 const TIER_COLORS = ['#3B82F6','#EAB308','#A855F7','#10B981','#F97316','#06B6D4','#EC4899','#84CC16'];
@@ -123,7 +123,7 @@ export default function ChunkSelector({
 
   return (
     <div style={{
-      width: 260, borderRight: `1px solid ${C.border}`, background: 'rgba(15,23,42,0.6)',
+      width: 260, borderRight: `1px solid ${C.border}`, background: 'rgba(26,35,50,0.6)',
       display: 'flex', flexDirection: 'column', overflow: 'hidden', flexShrink: 0,
     }}>
       {/* Back / Clear button */}
@@ -367,7 +367,7 @@ export default function ChunkSelector({
                 {/* Checkbox indicator */}
                 <div style={{
                   width: 10, height: 10, borderRadius: 2, flexShrink: 0,
-                  border: `1.5px solid ${isActive ? '#3B82F6' : '#475569'}`,
+                  border: `1.5px solid ${isActive ? '#3B82F6' : '#5a6a7a'}`,
                   background: isActive ? '#3B82F6' : 'transparent',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                 }}>

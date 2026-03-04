@@ -204,7 +204,7 @@ export default function AlgorithmLab({ tierData }: Props) {
     const t = transformRef.current;
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = '#0F172A';
+    ctx.fillStyle = '#1a2332';
     ctx.fillRect(0, 0, w, h);
 
     const pad = 40;
@@ -220,7 +220,7 @@ export default function AlgorithmLab({ tierData }: Props) {
     if (!isRaw) {
       for (const [chunkId, hull] of chunkHulls) {
         if (hull.length < 3) continue;
-        const color = chunkColorMap.get(chunkId) || '#475569';
+        const color = chunkColorMap.get(chunkId) || '#5a6a7a';
         ctx.beginPath();
         ctx.moveTo(sx(hull[0][0]), sy(hull[0][1]));
         for (let i = 1; i < hull.length; i++) {
@@ -272,9 +272,9 @@ export default function AlgorithmLab({ tierData }: Props) {
       const inFilter = !hasFilters || filteredIds.has(p.session_id);
       let color: string;
       if (isRaw) {
-        color = inFilter ? '#64748B' : 'rgba(100,116,139,0.1)';
+        color = inFilter ? '#8899aa' : 'rgba(100,116,139,0.1)';
       } else {
-        const base = chunkColorMap.get(p.chunk_id) || '#64748B';
+        const base = chunkColorMap.get(p.chunk_id) || '#8899aa';
         color = inFilter ? base : hexToRgba(base, 0.1);
       }
 
@@ -313,7 +313,7 @@ export default function AlgorithmLab({ tierData }: Props) {
       ctx.fillStyle = 'rgba(30,41,59,0.95)';
       roundRect(ctx, cx, cy, cardW, cardH, 6);
       ctx.fill();
-      ctx.strokeStyle = '#475569';
+      ctx.strokeStyle = '#5a6a7a';
       ctx.lineWidth = 1;
       roundRect(ctx, cx, cy, cardW, cardH, 6);
       ctx.stroke();
@@ -474,11 +474,11 @@ export default function AlgorithmLab({ tierData }: Props) {
   const currentChunks = displayResult?.constellation.chunks ?? [];
 
   return (
-    <div style={{ display: 'flex', height: '100%', background: '#0F172A', color: '#E2E8F0', fontFamily: 'monospace' }}>
+    <div style={{ display: 'flex', height: '100%', background: '#1a2332', color: '#E2E8F0', fontFamily: 'monospace' }}>
       {/* ── Left Sidebar ── */}
-      <div style={{ width: 260, borderRight: '1px solid #1E293B', display: 'flex', flexDirection: 'column', overflow: 'hidden', flexShrink: 0 }}>
+      <div style={{ width: 260, borderRight: '1px solid #3a4a5e', display: 'flex', flexDirection: 'column', overflow: 'hidden', flexShrink: 0 }}>
         {/* Header */}
-        <div style={{ padding: '12px 14px', borderBottom: '1px solid #1E293B', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ padding: '12px 14px', borderBottom: '1px solid #3a4a5e', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span style={{ fontWeight: 700, fontSize: 14 }}>Algorithm Lab</span>
           <div style={{ display: 'flex', gap: 6 }}>
             <button onClick={handleReset} style={btnStyle} title="Reset to raw">Reset</button>
@@ -491,7 +491,7 @@ export default function AlgorithmLab({ tierData }: Props) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginBottom: 12 }}>
             {Array.from(algosByCategory.entries()).map(([cat, algos]) => algos.length > 0 && (
               <React.Fragment key={cat}>
-                <div style={{ fontSize: 9, color: '#64748B', textTransform: 'uppercase', letterSpacing: 1, padding: '6px 0 2px' }}>{cat}</div>
+                <div style={{ fontSize: 9, color: '#8899aa', textTransform: 'uppercase', letterSpacing: 1, padding: '6px 0 2px' }}>{cat}</div>
                 {algos.map(([key, info]) => (
                   <button
                     key={key}
@@ -504,7 +504,7 @@ export default function AlgorithmLab({ tierData }: Props) {
                       width: '100%', textAlign: 'left',
                     }}
                   >
-                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: selectedAlgo === key ? '#3B82F6' : '#475569', flexShrink: 0 }} />
+                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: selectedAlgo === key ? '#3B82F6' : '#5a6a7a', flexShrink: 0 }} />
                     <span style={{ flex: 1 }}>{info.name}</span>
                     <span style={{ fontSize: 9, padding: '1px 4px', borderRadius: 3, background: SPEED_COLORS[info.speed] + '22', color: SPEED_COLORS[info.speed] }}>
                       {info.speed}
@@ -540,7 +540,7 @@ export default function AlgorithmLab({ tierData }: Props) {
                         step={spec.type === 'float' ? 0.1 : 1}
                         value={algoParams[key] ?? spec.default}
                         onChange={e => setAlgoParams(p => ({ ...p, [key]: Number(e.target.value) }))}
-                        style={{ width: 50, background: '#1E293B', border: '1px solid #334155', borderRadius: 3, color: '#E2E8F0', padding: '2px 4px', fontSize: 11, textAlign: 'right' }}
+                        style={{ width: 50, background: '#3a4a5e', border: '1px solid #4a5a6e', borderRadius: 3, color: '#E2E8F0', padding: '2px 4px', fontSize: 11, textAlign: 'right' }}
                       />
                     </div>
                   </div>
@@ -561,10 +561,10 @@ export default function AlgorithmLab({ tierData }: Props) {
                 type="number"
                 value={seedValue}
                 onChange={e => setSeedValue(Number(e.target.value))}
-                style={{ width: 60, background: '#1E293B', border: '1px solid #334155', borderRadius: 3, color: '#E2E8F0', padding: '2px 4px', fontSize: 11, textAlign: 'right' }}
+                style={{ width: 60, background: '#3a4a5e', border: '1px solid #4a5a6e', borderRadius: 3, color: '#E2E8F0', padding: '2px 4px', fontSize: 11, textAlign: 'right' }}
               />
             )}
-            {!lockSeed && <span style={{ fontSize: 10, color: '#64748B' }}>Random each run</span>}
+            {!lockSeed && <span style={{ fontSize: 10, color: '#8899aa' }}>Random each run</span>}
           </div>
 
           {/* Run button */}
@@ -573,7 +573,7 @@ export default function AlgorithmLab({ tierData }: Props) {
             disabled={running}
             style={{
               width: '100%', padding: '8px 0', marginBottom: 14,
-              background: running ? '#334155' : '#3B82F6', color: '#fff',
+              background: running ? '#4a5a6e' : '#3B82F6', color: '#fff',
               border: 'none', borderRadius: 5, cursor: running ? 'wait' : 'pointer',
               fontWeight: 600, fontSize: 13, fontFamily: 'monospace',
             }}
@@ -590,7 +590,7 @@ export default function AlgorithmLab({ tierData }: Props) {
                 <MetricCard label="Silhouette" value={metrics.silhouette.toFixed(3)} color={metricColor(metrics.silhouette, -1, 1)} />
                 <MetricCard label="Clusters" value={String(metrics.n_clusters)} color="#3B82F6" />
                 <MetricCard label="Entropy" value={metrics.entropy.toFixed(2)} color="#A855F7" />
-                <MetricCard label="Duration" value={`${metrics.duration_ms}ms`} color="#64748B" />
+                <MetricCard label="Duration" value={`${metrics.duration_ms}ms`} color="#8899aa" />
               </div>
             </>
           )}
@@ -610,8 +610,8 @@ export default function AlgorithmLab({ tierData }: Props) {
                   })}
                   style={{
                     padding: '2px 6px', fontSize: 10, borderRadius: 3, cursor: 'pointer',
-                    background: filterTiers.has(t) ? '#3B82F6' : '#1E293B',
-                    border: `1px solid ${filterTiers.has(t) ? '#3B82F6' : '#334155'}`,
+                    background: filterTiers.has(t) ? '#3B82F6' : '#3a4a5e',
+                    border: `1px solid ${filterTiers.has(t) ? '#3B82F6' : '#4a5a6e'}`,
                     color: filterTiers.has(t) ? '#fff' : '#94A3B8',
                   }}
                 >
@@ -635,8 +635,8 @@ export default function AlgorithmLab({ tierData }: Props) {
                     })}
                     style={{
                       padding: '2px 6px', fontSize: 9, borderRadius: 3, cursor: 'pointer',
-                      background: filterClusters.has(c.id) ? c.color : '#1E293B',
-                      border: `1px solid ${filterClusters.has(c.id) ? c.color : '#334155'}`,
+                      background: filterClusters.has(c.id) ? c.color : '#3a4a5e',
+                      border: `1px solid ${filterClusters.has(c.id) ? c.color : '#4a5a6e'}`,
                       color: filterClusters.has(c.id) ? '#fff' : '#94A3B8',
                     }}
                   >
@@ -653,7 +653,7 @@ export default function AlgorithmLab({ tierData }: Props) {
               placeholder="Search sessions..."
               value={searchText}
               onChange={e => setSearchText(e.target.value)}
-              style={{ width: '100%', background: '#1E293B', border: '1px solid #334155', borderRadius: 3, color: '#E2E8F0', padding: '4px 6px', fontSize: 11, boxSizing: 'border-box' }}
+              style={{ width: '100%', background: '#3a4a5e', border: '1px solid #4a5a6e', borderRadius: 3, color: '#E2E8F0', padding: '4px 6px', fontSize: 11, boxSizing: 'border-box' }}
             />
           </div>
 
@@ -674,13 +674,13 @@ export default function AlgorithmLab({ tierData }: Props) {
           />
           {/* Algorithm badge overlay */}
           {meta && (
-            <div style={{ position: 'absolute', top: 10, left: 10, background: 'rgba(15,23,42,0.85)', padding: '4px 10px', borderRadius: 4, fontSize: 11, color: '#94A3B8', border: '1px solid #1E293B' }}>
+            <div style={{ position: 'absolute', top: 10, left: 10, background: 'rgba(26,35,50,0.85)', padding: '4px 10px', borderRadius: 4, fontSize: 11, color: '#94A3B8', border: '1px solid #3a4a5e' }}>
               {algorithms[meta.algorithm]?.name ?? meta.algorithm}
-              {meta.seed != null && <span style={{ marginLeft: 6, color: '#64748B' }}>seed={meta.seed}</span>}
+              {meta.seed != null && <span style={{ marginLeft: 6, color: '#8899aa' }}>seed={meta.seed}</span>}
             </div>
           )}
           {!displayResult && (
-            <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', color: '#475569', fontSize: 14, textAlign: 'center', pointerEvents: 'none' }}>
+            <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', color: '#5a6a7a', fontSize: 14, textAlign: 'center', pointerEvents: 'none' }}>
               Select an algorithm and click Run
             </div>
           )}
@@ -688,10 +688,10 @@ export default function AlgorithmLab({ tierData }: Props) {
 
         {/* Run History */}
         {history.length > 0 && (
-          <div style={{ borderTop: '1px solid #1E293B', maxHeight: 180, overflow: 'auto', flexShrink: 0 }}>
+          <div style={{ borderTop: '1px solid #3a4a5e', maxHeight: 180, overflow: 'auto', flexShrink: 0 }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
               <thead>
-                <tr style={{ color: '#64748B', textAlign: 'left' }}>
+                <tr style={{ color: '#8899aa', textAlign: 'left' }}>
                   <th style={thStyle}>#</th>
                   <th style={thStyle}>Algorithm</th>
                   <th style={thStyle}>Clusters</th>
@@ -714,14 +714,14 @@ export default function AlgorithmLab({ tierData }: Props) {
                       style={{
                         cursor: 'pointer',
                         background: isActive ? '#1E3A5F' : 'transparent',
-                        borderBottom: '1px solid #1E293B',
+                        borderBottom: '1px solid #3a4a5e',
                       }}
                     >
                       <td style={tdStyle}>{i + 1}</td>
                       <td style={tdStyle}>
                         {algorithms[rm.algorithm]?.name ?? rm.algorithm}
                         {Object.keys(rm.params).length > 0 && (
-                          <span style={{ color: '#64748B', marginLeft: 4 }}>
+                          <span style={{ color: '#8899aa', marginLeft: 4 }}>
                             ({Object.entries(rm.params).map(([k, v]) => `${k}=${v}`).join(', ')})
                           </span>
                         )}
@@ -753,7 +753,7 @@ export default function AlgorithmLab({ tierData }: Props) {
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ fontSize: 10, fontWeight: 600, color: '#64748B', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>
+    <div style={{ fontSize: 10, fontWeight: 600, color: '#8899aa', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>
       {children}
     </div>
   );
@@ -761,8 +761,8 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 
 function MetricCard({ label, value, color }: { label: string; value: string; color: string }) {
   return (
-    <div style={{ background: '#1E293B', borderRadius: 4, padding: '6px 8px', border: '1px solid #334155' }}>
-      <div style={{ fontSize: 9, color: '#64748B', marginBottom: 2 }}>{label}</div>
+    <div style={{ background: '#3a4a5e', borderRadius: 4, padding: '6px 8px', border: '1px solid #4a5a6e' }}>
+      <div style={{ fontSize: 9, color: '#8899aa', marginBottom: 2 }}>{label}</div>
       <div style={{ fontSize: 14, fontWeight: 700, color }}>{value}</div>
     </div>
   );
@@ -799,10 +799,10 @@ function metricColor(value: number, min: number, max: number): string {
 }
 
 const btnStyle: React.CSSProperties = {
-  padding: '3px 8px', fontSize: 10, background: '#1E293B',
-  border: '1px solid #334155', borderRadius: 3, color: '#94A3B8',
+  padding: '3px 8px', fontSize: 10, background: '#3a4a5e',
+  border: '1px solid #4a5a6e', borderRadius: 3, color: '#94A3B8',
   cursor: 'pointer', fontFamily: 'monospace',
 };
 
-const thStyle: React.CSSProperties = { padding: '6px 8px', borderBottom: '1px solid #334155', fontWeight: 600 };
+const thStyle: React.CSSProperties = { padding: '6px 8px', borderBottom: '1px solid #4a5a6e', fontWeight: 600 };
 const tdStyle: React.CSSProperties = { padding: '5px 8px', color: '#CBD5E1' };

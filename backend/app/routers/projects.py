@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.database import Project, Upload, get_db
@@ -52,10 +53,19 @@ def list_projects(user_id: str | None = None, db: Session = Depends(get_db)):
     Returns:
         List of project summary dicts with id, name, description, upload_count, etc.
     """
-    q = db.query(Project).order_by(Project.updated_at.desc())
+    upload_counts = (
+        db.query(Upload.project_id, func.count(Upload.id).label("cnt"))
+        .group_by(Upload.project_id)
+        .subquery()
+    )
+    q = (
+        db.query(Project, upload_counts.c.cnt)
+        .outerjoin(upload_counts, Project.id == upload_counts.c.project_id)
+        .order_by(Project.updated_at.desc())
+    )
     if user_id:
         q = q.filter(Project.user_id == user_id)
-    projects = q.all()
+    rows = q.all()
     return [
         {
             "id": p.id,
@@ -64,9 +74,9 @@ def list_projects(user_id: str | None = None, db: Session = Depends(get_db)):
             "user_id": p.user_id,
             "created_at": p.created_at.isoformat() if p.created_at else None,
             "updated_at": p.updated_at.isoformat() if p.updated_at else None,
-            "upload_count": db.query(Upload).filter(Upload.project_id == p.id).count(),
+            "upload_count": cnt or 0,
         }
-        for p in projects
+        for p, cnt in rows
     ]
 
 

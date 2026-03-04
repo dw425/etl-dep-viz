@@ -23,10 +23,10 @@ const PULSE_DURATION = 1200; // ms per pulse cycle
 const PAD = 40;
 
 const C = {
-  bg: '#080C14',
+  bg: '#1a2332',
   text: '#e2e8f0',
-  muted: '#64748b',
-  dim: '#475569',
+  muted: '#8899aa',
+  dim: '#5a6a7a',
 };
 
 const ONBOARDING_KEY = 'edv-umap-guide-dismissed';
@@ -743,7 +743,7 @@ export default function UMAPView({ vectorResults, onSessionSelect }: Props) {
           style={{
             padding: '3px 8px', fontSize: 10, borderRadius: 4, cursor: 'pointer',
             border: `1px solid ${rectSelectMode ? 'rgba(59,130,246,0.5)' : 'rgba(100,116,139,0.3)'}`,
-            background: rectSelectMode ? 'rgba(59,130,246,0.15)' : 'rgba(15,23,42,0.8)',
+            background: rectSelectMode ? 'rgba(59,130,246,0.15)' : 'rgba(26,35,50,0.8)',
             color: rectSelectMode ? '#60A5FA' : C.muted,
           }}
         >
@@ -822,7 +822,7 @@ export default function UMAPView({ vectorResults, onSessionSelect }: Props) {
               }} style={{
                 width: 28, height: 28, borderRadius: 5,
                 border: '1px solid rgba(255,255,255,0.1)',
-                background: 'rgba(15,23,42,0.85)', color: '#94a3b8', fontSize: 14,
+                background: 'rgba(26,35,50,0.85)', color: '#94a3b8', fontSize: 14,
                 cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
               }}>{b.label}</button>
             ))}
@@ -837,7 +837,7 @@ export default function UMAPView({ vectorResults, onSessionSelect }: Props) {
             }} title="Reset zoom" style={{
               width: 28, height: 28, borderRadius: 5,
               border: '1px solid rgba(255,255,255,0.1)',
-              background: 'rgba(15,23,42,0.85)', color: '#94a3b8', fontSize: 10,
+              background: 'rgba(26,35,50,0.85)', color: '#94a3b8', fontSize: 10,
               cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>1:1</button>
           </div>

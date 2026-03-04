@@ -7,10 +7,12 @@
 import React, { useMemo, useState } from 'react';
 import type { TierMapResult } from '../../types/tiermap';
 import TierFilterSidebar, { type TierFilters, getDefaultTierFilters, applyTierFilters } from '../shared/TierFilterSidebar';
+import SessionSearchBar from '../shared/SessionSearchBar';
 
 interface Props {
   /** Full tier map result containing sessions, tables, and connections */
   data: TierMapResult;
+  onSessionSelect?: (sessionId: string) => void;
 }
 
 /** A group of sessions that share similar table footprints */
@@ -66,10 +68,11 @@ function computeTableSet(s: any): Set<string> {
  * Left sidebar: paginated group list with match-type filter tabs (all/exact/near/partial).
  * Right detail: per-session card showing reads, writes, and lookups.
  */
-export default function DuplicatePipelines({ data }: Props) {
+export default function DuplicatePipelines({ data, onSessionSelect }: Props) {
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
   const [filterType, setFilterType] = useState<'all' | 'exact' | 'near' | 'partial'>('all');
   const [tierFilters, setTierFilters] = useState<TierFilters>(getDefaultTierFilters);
+  const [searchTerm, setSearchTerm] = useState('');
   const filteredData = useMemo(() => applyTierFilters(data, tierFilters), [data, tierFilters]);
 
   const groups = useMemo(() => {
@@ -150,7 +153,10 @@ export default function DuplicatePipelines({ data }: Props) {
   }, [filteredData]);
 
   const [groupPage, setGroupPage] = useState(1);
-  const allFiltered = filterType === 'all' ? groups : groups.filter(g => g.matchType === filterType);
+  const typeFiltered = filterType === 'all' ? groups : groups.filter(g => g.matchType === filterType);
+  const allFiltered = searchTerm
+    ? typeFiltered.filter(g => g.sessions.some(s => s.name.toLowerCase().includes(searchTerm) || s.full.toLowerCase().includes(searchTerm)))
+    : typeFiltered;
   const filtered = allFiltered.slice(0, groupPage * 100);
   const selected = selectedGroup ? groups.find(g => g.id === selectedGroup) : null;
 
@@ -161,11 +167,12 @@ export default function DuplicatePipelines({ data }: Props) {
   return (
     <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
       {/* Left sidebar */}
-      <div style={{ width: 340, flexShrink: 0, display: 'flex', flexDirection: 'column', borderRight: '1px solid #1e293b' }}>
-        <div style={{ padding: '12px 16px', borderBottom: '1px solid #1e293b' }}>
+      <div style={{ width: 340, flexShrink: 0, display: 'flex', flexDirection: 'column', borderRight: '1px solid #3a4a5e' }}>
+        <div style={{ padding: '12px 16px', borderBottom: '1px solid #3a4a5e' }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: '#e2e8f0', marginBottom: 8 }}>
             Duplicate Pipelines
           </div>
+          <SessionSearchBar placeholder="Search sessions..." onSearch={setSearchTerm} matchCount={searchTerm ? allFiltered.length : undefined} />
           <div style={{ display: 'flex', gap: 4 }}>
             {[
               { key: 'all', label: `All (${groups.length})` },
@@ -179,7 +186,7 @@ export default function DuplicatePipelines({ data }: Props) {
                 style={{
                   fontSize: 9, padding: '3px 8px', borderRadius: 4, border: 'none', cursor: 'pointer',
                   background: filterType === f.key ? (f.color ? `${f.color}20` : 'rgba(59,130,246,0.2)') : 'rgba(255,255,255,0.05)',
-                  color: filterType === f.key ? (f.color || '#60a5fa') : '#64748b',
+                  color: filterType === f.key ? (f.color || '#60a5fa') : '#8899aa',
                   fontWeight: filterType === f.key ? 700 : 500,
                 }}
               >
@@ -191,7 +198,7 @@ export default function DuplicatePipelines({ data }: Props) {
 
         <div style={{ flex: 1, overflowY: 'auto', padding: '8px 12px' }}>
           {filtered.length === 0 ? (
-            <div style={{ fontSize: 11, color: '#64748b', textAlign: 'center', padding: 20 }}>
+            <div style={{ fontSize: 11, color: '#8899aa', textAlign: 'center', padding: 20 }}>
               No duplicate groups found
             </div>
           ) : (
@@ -217,11 +224,11 @@ export default function DuplicatePipelines({ data }: Props) {
                         {g.sessions.length} sessions
                       </span>
                     </div>
-                    <span style={{ fontSize: 9, color: '#64748b' }}>
+                    <span style={{ fontSize: 9, color: '#8899aa' }}>
                       {Math.round(g.similarity * 100)}% match
                     </span>
                   </div>
-                  <div style={{ fontSize: 9, color: '#64748b', marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <div style={{ fontSize: 9, color: '#8899aa', marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {g.sessions.slice(0, 3).map(s => s.name).join(', ')}
                     {g.sessions.length > 3 && ` +${g.sessions.length - 3} more`}
                   </div>
@@ -233,8 +240,8 @@ export default function DuplicatePipelines({ data }: Props) {
             <button
               onClick={() => setGroupPage(p => p + 1)}
               style={{
-                fontSize: 10, padding: '6px 12px', borderRadius: 4, border: '1px solid #334155',
-                background: '#1e293b', color: '#94a3b8', cursor: 'pointer', width: '100%', marginTop: 4,
+                fontSize: 10, padding: '6px 12px', borderRadius: 4, border: '1px solid #4a5a6e',
+                background: '#3a4a5e', color: '#94a3b8', cursor: 'pointer', width: '100%', marginTop: 4,
               }}
             >
               Show more ({allFiltered.length - filtered.length} remaining)
@@ -251,7 +258,7 @@ export default function DuplicatePipelines({ data }: Props) {
               <div style={{ fontSize: 14, fontWeight: 700, color: '#e2e8f0' }}>
                 {selected.matchType.charAt(0).toUpperCase() + selected.matchType.slice(1)} Match Group
               </div>
-              <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
+              <div style={{ fontSize: 11, color: '#8899aa', marginTop: 4 }}>
                 {selected.sessions.length} sessions with {Math.round(selected.similarity * 100)}% table overlap
               </div>
             </div>
@@ -259,7 +266,7 @@ export default function DuplicatePipelines({ data }: Props) {
             {selected.sessions.map(s => (
               <div key={s.id} style={{
                 marginBottom: 12, padding: 12, borderRadius: 8,
-                background: '#111827', border: '1px solid #1e293b',
+                background: '#243044', border: '1px solid #3a4a5e',
               }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: '#e2e8f0', fontFamily: "'JetBrains Mono', monospace" }}>
                   {s.full || s.name}
@@ -268,19 +275,19 @@ export default function DuplicatePipelines({ data }: Props) {
                   {s.sources.length > 0 && (
                     <div>
                       <div style={{ fontSize: 9, color: '#22C55E', fontWeight: 700 }}>READS ({s.sources.length})</div>
-                      <div style={{ fontSize: 9, color: '#64748b', marginTop: 2 }}>{s.sources.join(', ')}</div>
+                      <div style={{ fontSize: 9, color: '#8899aa', marginTop: 2 }}>{s.sources.join(', ')}</div>
                     </div>
                   )}
                   {s.targets.length > 0 && (
                     <div>
                       <div style={{ fontSize: 9, color: '#EF4444', fontWeight: 700 }}>WRITES ({s.targets.length})</div>
-                      <div style={{ fontSize: 9, color: '#64748b', marginTop: 2 }}>{s.targets.join(', ')}</div>
+                      <div style={{ fontSize: 9, color: '#8899aa', marginTop: 2 }}>{s.targets.join(', ')}</div>
                     </div>
                   )}
                   {s.lookups.length > 0 && (
                     <div>
                       <div style={{ fontSize: 9, color: '#F59E0B', fontWeight: 700 }}>LOOKUPS ({s.lookups.length})</div>
-                      <div style={{ fontSize: 9, color: '#64748b', marginTop: 2 }}>{s.lookups.join(', ')}</div>
+                      <div style={{ fontSize: 9, color: '#8899aa', marginTop: 2 }}>{s.lookups.join(', ')}</div>
                     </div>
                   )}
                 </div>
@@ -290,7 +297,7 @@ export default function DuplicatePipelines({ data }: Props) {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', opacity: 0.4 }}>
             <div style={{ fontSize: 32, marginBottom: 12 }}>&#9664;</div>
-            <div style={{ fontSize: 12, color: '#64748b' }}>Select a duplicate group to compare pipelines</div>
+            <div style={{ fontSize: 12, color: '#8899aa' }}>Select a duplicate group to compare pipelines</div>
           </div>
         )}
       </div>

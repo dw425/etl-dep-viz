@@ -996,6 +996,7 @@ def reconstruct_constellation(db: Session, upload_id: int) -> dict | None:
         VwConstellationPoints.upload_id == upload_id
     ).all()
     if not points:
+        logger.info("No constellation points found for upload %d", upload_id)
         return None
 
     chunks = db.query(VwConstellationChunks).filter(
@@ -1004,12 +1005,15 @@ def reconstruct_constellation(db: Session, upload_id: int) -> dict | None:
     edges = db.query(VwConstellationEdges).filter(
         VwConstellationEdges.upload_id == upload_id
     ).all()
+    logger.info("Reconstructing constellation for upload %d: %d chunks, %d points, %d edges",
+                upload_id, len(chunks), len(points), len(edges))
 
     def _jl(val):
-        if not val:
+        if not val or val == 'null':
             return []
         try:
-            return json.loads(val) if isinstance(val, str) else val
+            parsed = json.loads(val) if isinstance(val, str) else val
+            return parsed if parsed is not None else []
         except (json.JSONDecodeError, TypeError):
             return []
 
@@ -1074,12 +1078,14 @@ def reconstruct_vector_results(db: Session, upload_id: int) -> dict | None:
     Returns None if no vector data exists for the upload_id.
     """
     results = {}
+    logger.info("Reconstructing vector results for upload %d", upload_id)
 
     def _jl(val):
-        if not val:
+        if not val or val == 'null':
             return []
         try:
-            return json.loads(val) if isinstance(val, str) else val
+            parsed = json.loads(val) if isinstance(val, str) else val
+            return parsed if parsed is not None else []
         except (json.JSONDecodeError, TypeError):
             return []
 
@@ -1111,19 +1117,27 @@ def reconstruct_vector_results(db: Session, upload_id: int) -> dict | None:
         VwWaveAssignments.upload_id == upload_id
     ).all()
     if wave_rows:
-        waves = {}
+        waves: dict[int, dict] = {}
         for r in wave_rows:
             w = r.wave_number
             if w not in waves:
-                waves[w] = {'wave': w, 'sessions': []}
-            waves[w]['sessions'].append({
-                'session_id': r.session_id,
-                'name': r.name,
-                'scc_group_id': r.scc_group_id,
-                'is_cycle': bool(r.is_cycle),
-            })
+                waves[w] = {'session_ids': [], 'scc_groups': set()}
+            waves[w]['session_ids'].append(r.session_id)
+            if r.scc_group_id is not None:
+                waves[w]['scc_groups'].add(r.scc_group_id)
         results['v4_wave_plan'] = {
-            'waves': sorted(waves.values(), key=lambda w: w['wave']),
+            'waves': [
+                {
+                    'wave_number': w,
+                    'session_ids': data['session_ids'],
+                    'scc_groups': sorted(data['scc_groups']),
+                    'prerequisite_waves': [w - 1] if w > 1 else [],
+                    'session_count': len(data['session_ids']),
+                    'estimated_hours_low': 0,
+                    'estimated_hours_high': 0,
+                }
+                for w, data in sorted(waves.items())
+            ],
         }
 
     # V3 — UMAP / Dimensionality Reduction
@@ -1235,4 +1249,8 @@ def reconstruct_vector_results(db: Session, upload_id: int) -> dict | None:
             ],
         }
 
+    if results:
+        logger.info("Reconstructed vectors for upload %d: %s", upload_id, list(results.keys()))
+    else:
+        logger.warning("No vector data found for upload %d", upload_id)
     return results if results else None

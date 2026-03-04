@@ -6,7 +6,7 @@ import React from 'react';
 import type { ConstellationChunk, CrossChunkEdge } from '../../types/tiermap';
 
 const C = {
-  border: '#1e293b', text: '#e2e8f0', muted: '#64748b',
+  border: '#3a4a5e', text: '#e2e8f0', muted: '#8899aa',
 };
 
 interface ChunkSummaryProps {
@@ -42,7 +42,7 @@ export default function ChunkSummary({ chunks, totalSessions, crossChunkEdges }:
       padding: '6px 20px', borderBottom: `1px solid ${C.border}`,
       display: 'flex', gap: 20, fontSize: 10, color: C.muted,
       alignItems: 'center', flexWrap: 'wrap', flexShrink: 0,
-      background: 'rgba(15,23,42,0.8)',
+      background: 'rgba(26,35,50,0.8)',
     }}>
       {/* Chunk color dot + name */}
       <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>

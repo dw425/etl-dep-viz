@@ -137,7 +137,7 @@ export default function InfraCanvas({ nodes, edges, nodePositions, zones, hovere
 
       const thickness = Math.min(Math.max(Math.log2(edge.session_count + 1), 1), 5);
       const isBidi = edge.direction === 'bidirectional';
-      const color = isBidi ? '#F59E0B' : '#64748B';
+      const color = isBidi ? '#F59E0B' : '#8899aa';
 
       // Edge connection points on rect boundaries
       const start = edgePoint(from.x, from.y, to.x, to.y);
@@ -180,7 +180,7 @@ export default function InfraCanvas({ nodes, edges, nodePositions, zones, hovere
       // Edge label at midpoint of curve
       const labelX = (start.x + 2 * cpx + end.x) / 4;
       const labelY = (start.y + 2 * cpy + end.y) / 4;
-      ctx.fillStyle = '#64748B';
+      ctx.fillStyle = '#8899aa';
       ctx.font = '9px Inter, system-ui, sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText(`${edge.session_count}`, labelX, labelY - 4);
@@ -208,9 +208,9 @@ export default function InfraCanvas({ nodes, edges, nodePositions, zones, hovere
 
       // Card background
       roundRect(ctx, x, y, NODE_W, NODE_H, 8);
-      ctx.fillStyle = isSelected ? '#1E293B' : '#0F172A';
+      ctx.fillStyle = isSelected ? '#3a4a5e' : '#1a2332';
       ctx.fill();
-      ctx.strokeStyle = isSelected ? envColor : (isHovered ? envColor + 'A0' : '#334155');
+      ctx.strokeStyle = isSelected ? envColor : (isHovered ? envColor + 'A0' : '#4a5a6e');
       ctx.lineWidth = isSelected ? 2 : 1;
       ctx.stroke();
 
@@ -231,7 +231,7 @@ export default function InfraCanvas({ nodes, edges, nodePositions, zones, hovere
       ctx.fillText(node.system_type.toUpperCase(), pos.x, pos.y + 8);
 
       // Stats line
-      ctx.fillStyle = '#64748B';
+      ctx.fillStyle = '#8899aa';
       ctx.font = '9px Inter, system-ui, sans-serif';
       ctx.fillText(`${node.session_count} sess \u00B7 ${node.table_count} tbl`, pos.x, pos.y + 20);
     }

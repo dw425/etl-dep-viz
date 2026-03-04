@@ -75,21 +75,14 @@ import ErrorBoundary from '../shared/ErrorBoundary';
 
 // ── Lazy imports (code-split heavy views to keep initial bundle small) ────────
 const ComplexityOverlay = lazy(() => import('./ComplexityOverlay'));
-const WavePlanView = lazy(() => import('./WavePlanView'));
 const HeatMapView = lazy(() => import('./HeatMapView'));
-const UMAPView = lazy(() => import('./UMAPView'));
-const WaveSimulator = lazy(() => import('./WaveSimulator'));
 const ConcentrationView = lazy(() => import('./ConcentrationView'));
-const ConsensusRadar = lazy(() => import('./ConsensusRadar'));
 const LayerContainer = lazy(() => import('../../navigation/LayerContainer'));
-const L1AInfra = lazy(() => import('../../layers/L1A_InfrastructureTopology'));
 const TableExplorer = lazy(() => import('./TableExplorer'));
 const DuplicatePipelines = lazy(() => import('./DuplicatePipelines'));
 const ChunkingStrategy = lazy(() => import('./ChunkingStrategy'));
 const UserProfileView = lazy(() => import('./UserProfileView'));
 const FlowWalkerView = lazy(() => import('./FlowWalker'));
-const LineageBuilder = lazy(() => import('./LineageBuilder'));
-const ImpactAnalysisView = lazy(() => import('./ImpactAnalysis'));
 const HelpOverlay = lazy(() => import('../shared/HelpOverlay'));
 const AIChat = lazy(() => import('../chat/AIChat'));
 const AdminConsole = lazy(() => import('./AdminConsole'));
@@ -102,8 +95,8 @@ const ExportHTMLModal = lazy(() => import('./ExportHTMLModal'));
 //   1. Adding its id to ViewId  2. Adding it to VIEWS  3. Rendering it below.
 type ViewId = 'tier' | 'constellation' | 'explorer' | 'conflicts' | 'order' | 'matrix'
   | 'tables' | 'duplicates' | 'chunking'
-  | 'complexity' | 'waves' | 'heatmap' | 'umap' | 'simulator' | 'concentration' | 'consensus'
-  | 'layers' | 'infra' | 'profile' | 'flowwalker' | 'lineage' | 'impact' | 'chat' | 'admin'
+  | 'complexity' | 'heatmap' | 'concentration'
+  | 'layers' | 'profile' | 'flowwalker' | 'chat' | 'admin'
   | 'decisiontree' | 'algorithmlab';
 
 // Group determines tab section: core, harmonize, vector, nav
@@ -118,18 +111,11 @@ const VIEWS: { id: ViewId; label: string; icon: string; group?: 'core' | 'vector
   { id: 'duplicates', label: 'Duplicates', icon: '\u2261', group: 'harmonize' },
   { id: 'chunking', label: 'Chunking', icon: '\u2699', group: 'harmonize' },
   { id: 'complexity', label: 'Complexity', icon: '\u25A3', group: 'vector' },
-  { id: 'waves', label: 'Waves', icon: '\u224B', group: 'vector' },
   { id: 'heatmap', label: 'Heat Map', icon: '\u2593', group: 'vector' },
-  { id: 'umap', label: 'UMAP', icon: '\u25CE', group: 'vector' },
-  { id: 'simulator', label: 'Simulator', icon: '\u223F', group: 'vector' },
   { id: 'concentration', label: 'Gravity', icon: '\u2295', group: 'vector' },
-  { id: 'consensus', label: 'Consensus', icon: '\u25C8', group: 'vector' },
   { id: 'algorithmlab', label: 'Algorithm Lab', icon: '\u2697', group: 'vector' },
   { id: 'layers', label: 'Layers', icon: '\u25CF', group: 'nav' },
-  { id: 'infra', label: 'Infra', icon: '\u229E', group: 'nav' },
   { id: 'flowwalker', label: 'Flow', icon: '\u21C4', group: 'nav' },
-  { id: 'lineage', label: 'Lineage', icon: '\u2192', group: 'nav' },
-  { id: 'impact', label: 'Impact', icon: '\u26A1', group: 'nav' },
   { id: 'decisiontree', label: 'Decision Tree', icon: '\uD83C\uDF32', group: 'nav' },
   { id: 'chat', label: 'AI Chat', icon: '\uD83D\uDCAC', group: 'nav' },
 ];
@@ -139,8 +125,8 @@ function VectorFallback({ label, phase = 1, onRun, onRunDirect }: { label: strin
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 16 }}>
       <div style={{ fontSize: 36, opacity: 0.3 }}>&#x25A3;</div>
-      <div style={{ fontSize: 14, fontWeight: 600, color: '#64748b' }}>{label} — No Data Yet</div>
-      <div style={{ fontSize: 11, color: '#475569', maxWidth: 320, textAlign: 'center' }}>
+      <div style={{ fontSize: 14, fontWeight: 600, color: '#8899aa' }}>{label} — No Data Yet</div>
+      <div style={{ fontSize: 11, color: '#5a6a7a', maxWidth: 320, textAlign: 'center' }}>
         {running
           ? `Running Phase ${phase} analysis...`
           : phase === 1
@@ -772,7 +758,7 @@ export function DependencyApp() {
               padding: 32, textAlign: 'center',
             }}>
               <div style={{ fontSize: 24, fontWeight: 800, color: T.text, marginBottom: 4 }}>
-                Welcome to Pipeline Analyzer
+                Welcome to Lakehouse Optimizer
               </div>
               <div style={{ fontSize: 11, color: T.textMuted, marginBottom: 16 }}>Powered by Blueprint</div>
               <div style={{ fontSize: 13, color: T.textMuted, lineHeight: 2, marginBottom: 24, textAlign: 'left' }}>
@@ -801,7 +787,7 @@ export function DependencyApp() {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <div style={{ fontSize: 28, fontWeight: 800, color: T.text, letterSpacing: '-0.02em' }}>
-            ETL Dependency Visualizer
+            Lakehouse Optimizer
           </div>
           <div style={{ display: 'flex', gap: 6 }}>
             <button
@@ -1084,11 +1070,18 @@ export function DependencyApp() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           {/* Logo — clicking resets to dashboard (tierData = null) */}
           <div
-            style={{ cursor: 'pointer', lineHeight: 1.2 }}
+            style={{ cursor: 'pointer', lineHeight: 1.2, display: 'flex', alignItems: 'center', gap: 8 }}
             onClick={() => { setTierData(null); setConstellation(null); setUploadId(null); setSelectedChunkIds(new Set()); }}
           >
-            <div style={{ fontSize: 14, fontWeight: 700, color: T.text, letterSpacing: '-0.02em' }}>Pipeline Analyzer</div>
-            <div style={{ fontSize: 10, color: T.textMuted, fontWeight: 400 }}>Powered by Blueprint</div>
+            <svg width="28" height="28" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <polygon points="16,2 28,26 4,26" fill="#4361EE" opacity="0.9"/>
+              <polygon points="16,8 24,24 8,24" fill="#4361EE" opacity="0.6"/>
+              <polygon points="16,14 20,22 12,22" fill="#4361EE" opacity="0.3"/>
+            </svg>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: T.text, letterSpacing: '-0.02em' }}>Lakehouse Optimizer</div>
+              <div style={{ fontSize: 10, color: T.textMuted, fontWeight: 400 }}>Powered by Blueprint</div>
+            </div>
           </div>
           {/* ── Tab bar — vector tabs disabled until vector analysis has run ── */}
           <div style={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
@@ -1208,16 +1201,16 @@ export function DependencyApp() {
             const PLATFORM_COLORS: Record<string, string> = {
               'Oracle': '#EF4444', 'SQL Server': '#3B82F6', 'Teradata': '#F97316',
               'DB2': '#10B981', 'Sybase': '#A855F7', 'Informix': '#06B6D4',
-              'ODBC': '#64748b', 'Unknown': '#475569',
+              'ODBC': '#8899aa', 'Unknown': '#5a6a7a',
             };
             return [...platforms.entries()].map(([dbtype, count]) => (
               <span key={dbtype} style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
                 <span style={{
                   width: 6, height: 6, borderRadius: 3,
-                  background: PLATFORM_COLORS[dbtype] || '#64748b',
+                  background: PLATFORM_COLORS[dbtype] || '#8899aa',
                   display: 'inline-block',
                 }} />
-                <strong style={{ color: PLATFORM_COLORS[dbtype] || '#64748b' }}>{count}</strong> {dbtype}
+                <strong style={{ color: PLATFORM_COLORS[dbtype] || '#8899aa' }}>{count}</strong> {dbtype}
               </span>
             ));
           })()}
@@ -1261,7 +1254,7 @@ export function DependencyApp() {
         {/* ── View content — each view is conditionally rendered; lazy views are
                   wrapped in Suspense. Edge-to-edge views use padding=0. ── */}
         <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-          <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, color: '#64748b' }}>Loading view...</div>}>
+          <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, color: '#8899aa' }}>Loading view...</div>}>
             <div style={{ flex: 1, overflow: 'hidden', padding: (['tier', 'matrix', 'constellation', 'tables', 'duplicates', 'heatmap', 'umap', 'decisiontree', 'flowwalker', 'algorithmlab'].includes(view)) ? 0 : 20 }}>
               {/* ── Core views ── */}
               {view === 'tier' && scopedTierData && (
@@ -1291,10 +1284,10 @@ export function DependencyApp() {
                 <ErrorBoundary><ExplorerView data={scopedTierData} /></ErrorBoundary>
               )}
               {view === 'conflicts' && scopedTierData && (
-                <ErrorBoundary><ConflictsView data={scopedTierData} /></ErrorBoundary>
+                <ErrorBoundary><ConflictsView data={scopedTierData} onSessionSelect={() => navigateView('flowwalker')} /></ErrorBoundary>
               )}
               {view === 'order' && scopedTierData && (
-                <ErrorBoundary><ExecOrderView data={scopedTierData} /></ErrorBoundary>
+                <ErrorBoundary><ExecOrderView data={scopedTierData} onSessionSelect={() => navigateView('flowwalker')} /></ErrorBoundary>
               )}
               {view === 'matrix' && scopedTierData && (
                 <ErrorBoundary><MatrixView data={scopedTierData} /></ErrorBoundary>
@@ -1304,14 +1297,14 @@ export function DependencyApp() {
               {view === 'tables' && scopedTierData && (
                 <ErrorBoundary>
                   <div style={{ overflow: 'hidden', height: '100%' }}>
-                    <TableExplorer data={scopedTierData} />
+                    <TableExplorer data={scopedTierData} onSessionSelect={() => navigateView('flowwalker')} />
                   </div>
                 </ErrorBoundary>
               )}
               {view === 'duplicates' && scopedTierData && (
                 <ErrorBoundary>
                   <div style={{ overflow: 'hidden', height: '100%' }}>
-                    <DuplicatePipelines data={scopedTierData} />
+                    <DuplicatePipelines data={scopedTierData} onSessionSelect={() => navigateView('flowwalker')} />
                   </div>
                 </ErrorBoundary>
               )}
@@ -1335,35 +1328,15 @@ export function DependencyApp() {
                   <ErrorBoundary><div style={{ overflow: 'auto', height: '100%' }}><ComplexityOverlay complexity={vectorResults.v11_complexity} /></div></ErrorBoundary>
                 ) : <VectorFallback label="Complexity" onRun={() => navigateView('chunking')} onRunDirect={tierData ? () => analyzeVectors(tierData, 1, uploadId ?? undefined).then(r => { setVectorResults(prev => ({ ...prev, ...r })); addToast(`Vector analysis complete: ${Object.keys(r).filter(k => k.startsWith('v')).length} vectors`, 'success'); }).catch(e => addToast(e.message)) : undefined} />
               )}
-              {view === 'waves' && (
-                vectorResults?.v4_wave_plan ? (
-                  <ErrorBoundary><div style={{ overflow: 'auto', height: '100%' }}><WavePlanView wavePlan={vectorResults.v4_wave_plan} /></div></ErrorBoundary>
-                ) : <VectorFallback label="Wave Plan" onRun={() => navigateView('chunking')} onRunDirect={tierData ? () => analyzeVectors(tierData, 1, uploadId ?? undefined).then(r => { setVectorResults(prev => ({ ...prev, ...r })); addToast(`Vector analysis complete: ${Object.keys(r).filter(k => k.startsWith('v')).length} vectors`, 'success'); }).catch(e => addToast(e.message)) : undefined} />
-              )}
               {view === 'heatmap' && (
                 vectorResults?.v11_complexity && tierData ? (
                   <ErrorBoundary><div style={{ overflow: 'hidden', height: '100%' }}><HeatMapView complexity={vectorResults.v11_complexity} tierData={tierData} vectorResults={vectorResults} onSessionSelect={(sid) => { navigateView('flowwalker'); }} /></div></ErrorBoundary>
                 ) : <VectorFallback label="Heat Map" onRun={() => navigateView('chunking')} onRunDirect={tierData ? () => analyzeVectors(tierData, 1, uploadId ?? undefined).then(r => { setVectorResults(prev => ({ ...prev, ...r })); addToast(`Vector analysis complete: ${Object.keys(r).filter(k => k.startsWith('v')).length} vectors`, 'success'); }).catch(e => addToast(e.message)) : undefined} />
               )}
-              {view === 'umap' && (
-                vectorResults?.v3_dimensionality_reduction ? (
-                  <ErrorBoundary><div style={{ overflow: 'hidden', height: '100%' }}><UMAPView vectorResults={vectorResults} onSessionSelect={() => navigateView('flowwalker')} /></div></ErrorBoundary>
-                ) : <VectorFallback label="UMAP" phase={2} onRun={() => setRightPanel('vectors')} onRunDirect={tierData ? () => analyzeVectors(tierData, 2, uploadId ?? undefined).then(r => { setVectorResults(prev => ({ ...prev, ...r })); addToast(`Vector analysis complete: ${Object.keys(r).filter(k => k.startsWith('v')).length} vectors`, 'success'); }).catch(e => addToast(e.message)) : undefined} />
-              )}
-              {view === 'simulator' && (
-                vectorResults?.v9_wave_function && tierData ? (
-                  <ErrorBoundary><div style={{ overflow: 'auto', height: '100%' }}><WaveSimulator waveFunction={vectorResults.v9_wave_function} tierData={tierData} /></div></ErrorBoundary>
-                ) : <VectorFallback label="Simulator" phase={2} onRun={() => setRightPanel('vectors')} onRunDirect={tierData ? () => analyzeVectors(tierData, 2, uploadId ?? undefined).then(r => { setVectorResults(prev => ({ ...prev, ...r })); addToast(`Vector analysis complete: ${Object.keys(r).filter(k => k.startsWith('v')).length} vectors`, 'success'); }).catch(e => addToast(e.message)) : undefined} />
-              )}
               {view === 'concentration' && (
                 vectorResults?.v10_concentration ? (
                   <ErrorBoundary><div style={{ overflow: 'auto', height: '100%' }}><ConcentrationView concentration={vectorResults.v10_concentration} /></div></ErrorBoundary>
                 ) : <VectorFallback label="Gravity" phase={2} onRun={() => setRightPanel('vectors')} onRunDirect={tierData ? () => analyzeVectors(tierData, 2, uploadId ?? undefined).then(r => { setVectorResults(prev => ({ ...prev, ...r })); addToast(`Vector analysis complete: ${Object.keys(r).filter(k => k.startsWith('v')).length} vectors`, 'success'); }).catch(e => addToast(e.message)) : undefined} />
-              )}
-              {view === 'consensus' && (
-                vectorResults?.v8_ensemble_consensus ? (
-                  <ErrorBoundary><div style={{ overflow: 'auto', height: '100%' }}><ConsensusRadar ensemble={vectorResults.v8_ensemble_consensus} /></div></ErrorBoundary>
-                ) : <VectorFallback label="Consensus" phase={3} onRun={() => setRightPanel('vectors')} onRunDirect={tierData ? () => analyzeVectors(tierData, 3, uploadId ?? undefined).then(r => { setVectorResults(prev => ({ ...prev, ...r })); addToast(`Vector analysis complete: ${Object.keys(r).filter(k => k.startsWith('v')).length} vectors`, 'success'); }).catch(e => addToast(e.message)) : undefined} />
               )}
 
               {/* Algorithm Lab */}
@@ -1385,13 +1358,6 @@ export function DependencyApp() {
                   </NavigationProvider>
                 </ErrorBoundary>
               )}
-              {view === 'infra' && tierData && (
-                <ErrorBoundary>
-                  <div style={{ overflow: 'auto', height: '100%' }}>
-                    <L1AInfra tierData={tierData} vectorResults={vectorResults} onNavigateView={v => navigateView(v as ViewId)} />
-                  </div>
-                </ErrorBoundary>
-              )}
 
               {/* Flow Walker */}
               {view === 'flowwalker' && tierData && (
@@ -1402,23 +1368,6 @@ export function DependencyApp() {
                 </ErrorBoundary>
               )}
 
-              {/* Lineage Builder (Items 53-54) */}
-              {view === 'lineage' && tierData && (
-                <ErrorBoundary>
-                  <div style={{ overflow: 'hidden', height: '100%' }}>
-                    <LineageBuilder tierData={tierData} />
-                  </div>
-                </ErrorBoundary>
-              )}
-
-              {/* Impact Analysis (Item 55) */}
-              {view === 'impact' && tierData && (
-                <ErrorBoundary>
-                  <div style={{ overflow: 'hidden', height: '100%' }}>
-                    <ImpactAnalysisView tierData={tierData} />
-                  </div>
-                </ErrorBoundary>
-              )}
 
               {/* Decision Tree */}
               {view === 'decisiontree' && tierData && (

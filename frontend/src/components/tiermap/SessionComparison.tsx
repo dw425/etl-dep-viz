@@ -72,7 +72,7 @@ export default function SessionComparison({ sessionA, sessionB, onClose }: Sessi
       g.append('polygon')
         .attr('points', points.map(p => p.join(',')).join(' '))
         .attr('fill', 'none')
-        .attr('stroke', '#334155')
+        .attr('stroke', '#4a5a6e')
         .attr('stroke-width', 0.5);
     }
 
@@ -84,7 +84,7 @@ export default function SessionComparison({ sessionA, sessionB, onClose }: Sessi
       g.append('line')
         .attr('x1', 0).attr('y1', 0)
         .attr('x2', x).attr('y2', y)
-        .attr('stroke', '#334155').attr('stroke-width', 0.5);
+        .attr('stroke', '#4a5a6e').attr('stroke-width', 0.5);
       g.append('text')
         .attr('x', Math.cos(angle) * (radius + 18))
         .attr('y', Math.sin(angle) * (radius + 18))
@@ -136,7 +136,7 @@ export default function SessionComparison({ sessionA, sessionB, onClose }: Sessi
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>Session Comparison</h3>
         <button onClick={onClose} style={{
-          background: 'transparent', border: '1px solid #475569',
+          background: 'transparent', border: '1px solid #5a6a7a',
           borderRadius: 4, color: '#94a3b8', cursor: 'pointer', padding: '4px 8px',
         }}>
           Close
@@ -163,7 +163,7 @@ export default function SessionComparison({ sessionA, sessionB, onClose }: Sessi
       {/* Detail table */}
       <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 12, fontSize: 12 }}>
         <thead>
-          <tr style={{ borderBottom: '1px solid #334155' }}>
+          <tr style={{ borderBottom: '1px solid #4a5a6e' }}>
             <th style={{ textAlign: 'left', padding: '6px 8px', color: '#94a3b8' }}>Metric</th>
             <th style={{ textAlign: 'right', padding: '6px 8px', color: '#3B82F6' }}>{sessionA.name}</th>
             <th style={{ textAlign: 'right', padding: '6px 8px', color: '#A855F7' }}>{sessionB.name}</th>
@@ -172,13 +172,13 @@ export default function SessionComparison({ sessionA, sessionB, onClose }: Sessi
         </thead>
         <tbody>
           {dimensions.map(d => (
-            <tr key={d.key} style={{ borderBottom: '1px solid #1e293b' }}>
+            <tr key={d.key} style={{ borderBottom: '1px solid #3a4a5e' }}>
               <td style={{ padding: '4px 8px' }}>{d.label}</td>
               <td style={{ padding: '4px 8px', textAlign: 'right' }}>{d.valueA}</td>
               <td style={{ padding: '4px 8px', textAlign: 'right' }}>{d.valueB}</td>
               <td style={{
                 padding: '4px 8px', textAlign: 'right',
-                color: d.valueA > d.valueB ? '#3B82F6' : d.valueB > d.valueA ? '#A855F7' : '#64748b',
+                color: d.valueA > d.valueB ? '#3B82F6' : d.valueB > d.valueA ? '#A855F7' : '#8899aa',
               }}>
                 {d.valueA === d.valueB ? '=' : d.valueA > d.valueB ? `+${d.valueA - d.valueB}` : `-${d.valueB - d.valueA}`}
               </td>

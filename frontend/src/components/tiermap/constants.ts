@@ -8,13 +8,13 @@ import type { TierMapResult, TierSession, TierTable, TierConn } from '../../type
 // ── Color tokens (dark theme) ─────────────────────────────────────────────────
 
 export const C = {
-  bg: '#080C14',
-  surface: '#111827',
-  border: '#1e293b',
+  bg: '#1a2332',
+  surface: '#243044',
+  border: '#3a4a5e',
   borderActive: '#3b82f6',
   text: '#e2e8f0',
-  textMuted: '#64748b',
-  textDim: '#475569',
+  textMuted: '#8899aa',
+  textDim: '#5a6a7a',
   write: '#ef4444',
   read: '#22c55e',
   lookup: '#f59e0b',

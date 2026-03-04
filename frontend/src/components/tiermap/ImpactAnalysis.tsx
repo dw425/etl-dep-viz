@@ -100,7 +100,7 @@ export default function ImpactAnalysis({ tierData, selectedSession, onSessionSel
     }}>
       {/* Header */}
       <div style={{
-        padding: '12px 16px', borderBottom: '1px solid #1e293b',
+        padding: '12px 16px', borderBottom: '1px solid #3a4a5e',
         display: 'flex', alignItems: 'center', gap: 12,
       }}>
         <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>Impact Analysis</h3>
@@ -109,7 +109,7 @@ export default function ImpactAnalysis({ tierData, selectedSession, onSessionSel
           onChange={e => { setSessionId(e.target.value); loadImpact(e.target.value); }}
           style={{
             flex: 1, maxWidth: 300, padding: '4px 8px', fontSize: 11,
-            background: '#1e293b', border: '1px solid #334155', borderRadius: 4,
+            background: '#3a4a5e', border: '1px solid #4a5a6e', borderRadius: 4,
             color: '#e2e8f0',
           }}
         >
@@ -118,7 +118,7 @@ export default function ImpactAnalysis({ tierData, selectedSession, onSessionSel
             <option key={s.id} value={s.id}>{s.name} ({s.id})</option>
           ))}
         </select>
-        <label style={{ fontSize: 10, color: '#64748b', display: 'flex', alignItems: 'center', gap: 4 }}>
+        <label style={{ fontSize: 10, color: '#8899aa', display: 'flex', alignItems: 'center', gap: 4 }}>
           Hops:
           <input
             type="number"
@@ -126,7 +126,7 @@ export default function ImpactAnalysis({ tierData, selectedSession, onSessionSel
             onChange={e => setMaxHops(Math.max(1, Math.min(50, Number(e.target.value))))}
             style={{
               width: 40, padding: '2px 4px', fontSize: 10,
-              background: '#1e293b', border: '1px solid #334155', borderRadius: 3,
+              background: '#3a4a5e', border: '1px solid #4a5a6e', borderRadius: 3,
               color: '#e2e8f0', textAlign: 'center',
             }}
           />
@@ -136,7 +136,7 @@ export default function ImpactAnalysis({ tierData, selectedSession, onSessionSel
       {/* Summary bar */}
       {impactData && (
         <div style={{
-          padding: '8px 16px', borderBottom: '1px solid #1e293b',
+          padding: '8px 16px', borderBottom: '1px solid #3a4a5e',
           display: 'flex', gap: 16, fontSize: 11,
         }}>
           <div>
@@ -157,13 +157,13 @@ export default function ImpactAnalysis({ tierData, selectedSession, onSessionSel
       {/* Content */}
       <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>
         {loading && (
-          <div style={{ textAlign: 'center', padding: 32, color: '#64748b' }}>
+          <div style={{ textAlign: 'center', padding: 32, color: '#8899aa' }}>
             Analyzing impact...
           </div>
         )}
 
         {!loading && impactData && depthGroups.length === 0 && (
-          <div style={{ textAlign: 'center', padding: 32, color: '#64748b' }}>
+          <div style={{ textAlign: 'center', padding: 32, color: '#8899aa' }}>
             No downstream impact found for this session.
           </div>
         )}
@@ -201,19 +201,19 @@ export default function ImpactAnalysis({ tierData, selectedSession, onSessionSel
                             onClick={() => onSessionSelect?.(item.id)}
                             style={{
                               padding: '4px 10px', fontSize: 10, borderRadius: 4,
-                              background: '#1e293b', border: `1px solid ${color}44`,
+                              background: '#3a4a5e', border: `1px solid ${color}44`,
                               cursor: 'pointer',
                             }}
                           >
                             <span style={{ color }}>{item.name}</span>
-                            <span style={{ color: '#475569', marginLeft: 6 }}>T{item.tier}</span>
+                            <span style={{ color: '#5a6a7a', marginLeft: 6 }}>T{item.tier}</span>
                           </div>
                         ) : (
                           <div
                             key={item.id}
                             style={{
                               padding: '4px 10px', fontSize: 10, borderRadius: 4,
-                              background: '#0f172a', border: '1px solid #334155',
+                              background: '#1a2332', border: '1px solid #4a5a6e',
                             }}
                           >
                             <span style={{ color: '#10B981' }}>{item.name}</span>
@@ -224,7 +224,7 @@ export default function ImpactAnalysis({ tierData, selectedSession, onSessionSel
                             onClick={() => setExpandedDepths(prev => { const n = new Set(prev); n.add(group.depth); return n; })}
                             style={{
                               padding: '4px 10px', fontSize: 10, borderRadius: 4,
-                              background: '#1e293b', border: '1px solid #334155', color: '#60a5fa',
+                              background: '#3a4a5e', border: '1px solid #4a5a6e', color: '#60a5fa',
                               cursor: 'pointer',
                             }}
                           >
@@ -241,7 +241,7 @@ export default function ImpactAnalysis({ tierData, selectedSession, onSessionSel
         )}
 
         {!loading && !impactData && !sessionId && (
-          <div style={{ textAlign: 'center', padding: 32, color: '#64748b' }}>
+          <div style={{ textAlign: 'center', padding: 32, color: '#8899aa' }}>
             Select a source session to analyze downstream impact
           </div>
         )}

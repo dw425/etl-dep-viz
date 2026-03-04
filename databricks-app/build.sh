@@ -9,7 +9,7 @@ echo "=== Building frontend ==="
 cd frontend && npm ci && npm run build && cd ..
 
 echo "=== Installing Python dependencies ==="
-# Install core backend deps (skip heavy ML extras like umap/hdbscan/chromadb)
+# Install core backend deps including chromadb for AI Chat
 pip install \
   "fastapi>=0.115.0" \
   "uvicorn[standard]>=0.30.0" \
@@ -26,7 +26,8 @@ pip install \
   "pandas>=2.0.0" \
   "chardet>=5.0.0" \
   "httpx>=0.24" \
-  "psycopg2-binary>=2.9.0"
+  "psycopg2-binary>=2.9.0" \
+  "chromadb>=0.5.0"
 
 # Make backend importable
 pip install -e "./backend" --no-deps
