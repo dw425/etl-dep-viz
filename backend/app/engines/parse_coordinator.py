@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -30,8 +31,8 @@ from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-# Maximum parallel parse workers
-_MAX_WORKERS = 4
+# Maximum parallel parse workers (configurable via EDV_PARSE_WORKERS)
+_MAX_WORKERS = int(os.environ.get("EDV_PARSE_WORKERS", "4"))
 
 
 @dataclass

@@ -127,6 +127,8 @@ def _attach_token_refresh(eng):
         client_id = os.environ.get("DATABRICKS_CLIENT_ID", "")
         client_secret = os.environ.get("DATABRICKS_CLIENT_SECRET", "")
         if host and client_id and client_secret:
+            if not host.startswith("https://"):
+                host = f"https://{host}"
             token_url = f"{host}/oidc/v1/token"
             data = f"grant_type=client_credentials&client_id={client_id}&client_secret={client_secret}&scope=all-apis"
             req = urllib.request.Request(

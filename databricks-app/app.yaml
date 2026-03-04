@@ -3,10 +3,8 @@ command:
   - "databricks-app/build.sh"
 
 env:
-  - name: DATABRICKS_APP_PORT
-    description: "Port assigned by Databricks Apps runtime"
   - name: EDV_DATABASE_URL
-    description: "Lakebase PostgreSQL connection string"
+    value: "postgresql://dan%40bpcs.com:token@instance-82144a08-ea5e-4dfc-8a6f-d39f235c7252.database.azuredatabricks.net:5432/etl_dep_viz?sslmode=require"
   - name: EDV_DATABRICKS_APP
     value: "true"
   - name: EDV_CORS_ORIGINS

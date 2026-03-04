@@ -1,0 +1,21 @@
+# Don't sync these to the Databricks workspace
+node_modules/
+.git/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+.coverage
+htmlcov/
+.pytest_cache/
+*.egg-info/
+backend/static/
+backend/chroma_data/
+backend/etl_dep_viz.db
+*.db
+.docker/
+.env
+.env.local
+.env.production
+.claude/

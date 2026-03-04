@@ -21,7 +21,7 @@ from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, Query, Request, Response
+from fastapi import FastAPI, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -451,6 +451,142 @@ app.include_router(exports_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
 app.include_router(views_router, prefix="/api")
 app.include_router(projects_router, prefix="/api")
+
+# ── SQLite → PostgreSQL Migration Endpoint ─────────────────────────────────
+
+MIGRATE_TABLES = [
+    "user_profiles", "projects", "uploads", "activity_log",
+    "session_records", "table_records", "connection_records", "connection_profiles",
+    "vw_tier_layout", "vw_galaxy_nodes", "vw_explorer_detail",
+    "vw_write_conflicts", "vw_read_chains", "vw_exec_order",
+    "vw_matrix_cells", "vw_table_profiles",
+    "vw_duplicate_groups", "vw_duplicate_members",
+    "vw_constellation_chunks", "vw_constellation_points", "vw_constellation_edges",
+    "vw_complexity_scores", "vw_wave_assignments", "vw_umap_coords",
+    "vw_communities", "vw_wave_function",
+    "vw_concentration_groups", "vw_concentration_members", "vw_ensemble",
+]
+
+
+_migrate_status: dict = {"state": "idle"}
+
+
+def _run_migration(db_path: str):
+    """Background migration worker — streams rows from SQLite to PostgreSQL."""
+    import sqlite3 as sqlite3_mod
+    from app.models.database import engine
+    from sqlalchemy import text as sa_text
+
+    _migrate_status.update(state="running", current_table="", migrated_rows=0, tables={}, error="")
+
+    try:
+        src = sqlite3_mod.connect(db_path)
+
+        for table in MIGRATE_TABLES:
+            _migrate_status["current_table"] = table
+            try:
+                cur = src.execute(f'SELECT COUNT(*) FROM "{table}"')
+                count = cur.fetchone()[0]
+                if count == 0:
+                    _migrate_status["tables"][table] = 0
+                    continue
+
+                cur = src.execute(f'PRAGMA table_info("{table}")')
+                columns = [row[1] for row in cur.fetchall()]
+                col_list = ", ".join(f'"{c}"' for c in columns)
+                placeholders = ", ".join(f":{c}" for c in columns)
+                insert_sql = sa_text(f'INSERT INTO "{table}" ({col_list}) VALUES ({placeholders})')
+
+                # Get valid upload_ids to filter orphaned rows
+                valid_upload_ids = None
+                if "upload_id" in columns:
+                    valid_cur = src.execute('SELECT id FROM uploads')
+                    valid_upload_ids = {row[0] for row in valid_cur.fetchall()}
+
+                with engine.begin() as conn:
+                    conn.execute(sa_text(f'DELETE FROM "{table}"'))
+
+                    # Stream rows with fetchmany to limit memory usage
+                    cur = src.execute(f'SELECT * FROM "{table}"')
+                    uid_idx = columns.index("upload_id") if "upload_id" in columns else None
+                    skipped = 0
+                    while True:
+                        rows = cur.fetchmany(100)
+                        if not rows:
+                            break
+                        # Filter out orphaned rows
+                        if uid_idx is not None and valid_upload_ids is not None:
+                            filtered = [r for r in rows if r[uid_idx] in valid_upload_ids]
+                            skipped += len(rows) - len(filtered)
+                            rows = filtered
+                        if rows:
+                            batch = [dict(zip(columns, row)) for row in rows]
+                            conn.execute(insert_sql, batch)
+
+                    if skipped:
+                        logger.info("Skipped %d orphaned rows in %s", skipped, table)
+
+                    if "id" in columns:
+                        try:
+                            conn.execute(sa_text(
+                                f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), "
+                                f"(SELECT MAX(CAST(id AS INTEGER)) FROM \"{table}\"))"
+                            ))
+                        except Exception:
+                            pass
+
+                _migrate_status["tables"][table] = count
+                _migrate_status["migrated_rows"] += count
+                logger.info("Migrated %s: %d rows", table, count)
+            except Exception as e:
+                _migrate_status["tables"][table] = f"error: {e}"
+                logger.error("Failed to migrate %s: %s", table, e)
+
+        src.close()
+        _migrate_status["state"] = "done"
+        logger.info("Migration complete: %d rows", _migrate_status["migrated_rows"])
+    except Exception as e:
+        _migrate_status.update(state="error", error=str(e))
+        logger.error("Migration failed: %s", e)
+    finally:
+        if os.path.exists(db_path):
+            os.unlink(db_path)
+
+
+@app.post("/api/admin/migrate-sqlite")
+async def migrate_sqlite(file: UploadFile):
+    """Upload SQLite file and start background migration into Lakebase.
+
+    Usage: curl -X POST -F "file=@backend/etl_dep_viz.db" URL/api/admin/migrate-sqlite
+    Returns immediately; check progress at GET /api/admin/migrate-status.
+    """
+    import tempfile
+    import threading
+
+    if _migrate_status.get("state") == "running":
+        return JSONResponse(status_code=409, content={"detail": "Migration already in progress"})
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    total_bytes = 0
+    while True:
+        chunk = await file.read(4 * 1024 * 1024)
+        if not chunk:
+            break
+        tmp.write(chunk)
+        total_bytes += len(chunk)
+    tmp.close()
+    logger.info("Received SQLite upload: %d bytes -> %s", total_bytes, tmp.name)
+
+    # Start migration in background thread
+    threading.Thread(target=_run_migration, args=(tmp.name,), daemon=True).start()
+    return {"status": "started", "file_size": total_bytes}
+
+
+@app.get("/api/admin/migrate-status")
+async def migrate_status():
+    """Check migration progress."""
+    return _migrate_status
+
 
 # ── Static File Serving (Production) ──────────────────────────────────────
 # In the Docker image Vite builds into backend/static/. When that directory
