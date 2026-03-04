@@ -1013,42 +1013,53 @@ def reconstruct_constellation(db: Session, upload_id: int) -> dict | None:
         except (json.JSONDecodeError, TypeError):
             return []
 
+    chunk_list = [
+        {
+            'id': c.chunk_id,
+            'label': c.label,
+            'algorithm': c.algorithm,
+            'session_count': c.session_count,
+            'table_count': c.table_count,
+            'tier_range': [c.tier_min or 0, c.tier_max or 0],
+            'pivot_tables': _jl(c.pivot_tables_json),
+            'session_ids': _jl(c.session_ids_json),
+            'table_names': _jl(c.table_names_json),
+            'conflict_count': c.conflict_count,
+            'chain_count': c.chain_count,
+            'critical_count': c.critical_count,
+            'color': c.color or '#6366f1',
+        }
+        for c in chunks
+    ]
+    point_list = [
+        {
+            'session_id': p.session_id,
+            'chunk_id': p.chunk_id,
+            'x': p.x,
+            'y': p.y,
+            'tier': p.tier,
+            'critical': bool(p.is_critical),
+            'name': p.name,
+        }
+        for p in points
+    ]
+    edge_list = [
+        {'from_chunk': e.from_chunk, 'to_chunk': e.to_chunk, 'count': e.count}
+        for e in edges
+    ]
+
     return {
-        'chunks': [
-            {
-                'chunk_id': c.chunk_id,
-                'label': c.label,
-                'algorithm': c.algorithm,
-                'session_count': c.session_count,
-                'table_count': c.table_count,
-                'tier_min': c.tier_min,
-                'tier_max': c.tier_max,
-                'pivot_tables': _jl(c.pivot_tables_json),
-                'session_ids': _jl(c.session_ids_json),
-                'table_names': _jl(c.table_names_json),
-                'conflict_count': c.conflict_count,
-                'chain_count': c.chain_count,
-                'critical_count': c.critical_count,
-                'color': c.color,
-            }
-            for c in chunks
-        ],
-        'points': [
-            {
-                'session_id': p.session_id,
-                'chunk_id': p.chunk_id,
-                'x': p.x,
-                'y': p.y,
-                'tier': p.tier,
-                'is_critical': bool(p.is_critical),
-                'name': p.name,
-            }
-            for p in points
-        ],
-        'cross_chunk_edges': [
-            {'from_chunk': e.from_chunk, 'to_chunk': e.to_chunk, 'count': e.count}
-            for e in edges
-        ],
+        'chunks': chunk_list,
+        'points': point_list,
+        'cross_chunk_edges': edge_list,
+        'stats': {
+            'total_sessions': len(point_list),
+            'total_chunks': len(chunk_list),
+            'largest_chunk': max((c['session_count'] for c in chunk_list), default=0),
+            'smallest_chunk': min((c['session_count'] for c in chunk_list), default=0),
+            'orphan_sessions': 0,
+            'cross_chunk_edge_count': len(edge_list),
+        },
     }
 
 

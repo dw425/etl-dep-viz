@@ -1228,7 +1228,7 @@ export function DependencyApp() {
       {view === 'constellation' && hasChunkSelection && constellation && (
         <ChunkSummary
           chunks={selectedChunks}
-          totalSessions={tierData.sessions.length}
+          totalSessions={tierData.sessions?.length ?? 0}
           crossChunkEdges={constellation.cross_chunk_edges}
         />
       )}
