@@ -625,28 +625,50 @@ const MatrixView = ({filterIds}) => {
 
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// VIEW 6: CONSTELLATION (SVG-based static renderer)
+// VIEW 6: CONSTELLATION (SVG-based renderer matching ConstellationCanvas)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+const TIER_COLORS_CONST = ['#3B82F6','#EAB308','#A855F7','#10B981','#F97316','#06B6D4','#EC4899','#84CC16'];
+function tierColorConst(t){return TIER_COLORS_CONST[Math.max(0,Math.floor(t)-1)%TIER_COLORS_CONST.length];}
+
+const ALGO_META_CONST = {
+  louvain:{name:"Louvain",icon:"\u25CE",desc:"Modularity-based community detection"},
+  tier:{name:"Tier Groups",icon:"\u2261",desc:"Group sessions by execution tier"},
+  components:{name:"Connected Components",icon:"\u25C7",desc:"Natural graph islands"},
+  label_prop:{name:"Label Propagation",icon:"\u21B9",desc:"Fast iterative label spreading"},
+  greedy_mod:{name:"Greedy Modularity",icon:"\u25A3",desc:"Agglomerative merge"},
+  process_group:{name:"Process Group",icon:"\u229E",desc:"Group by process group / workflow"},
+  table_gravity:{name:"Table Gravity",icon:"\u2299",desc:"Cluster around most-referenced tables"},
+  gradient_scale:{name:"Gradient Scale",icon:"\u25D0",desc:"Density heatmap with peak markers"},
+};
+const ALGO_KEYS_CONST = Object.keys(ALGO_META_CONST);
+
 const ConstellationView = ({onSelectCluster,selectedClusterId}) => {
-  const [search,setSearch] = useState("");
+  const [clusterSearch,setClusterSearch] = useState("");
+  const [sortBy,setSortBy] = useState("default");
   const [hov,setHov] = useState(null);
   const [highlighted,setHighlighted] = useState(new Set());
+  const [activeChunkIds,setActiveChunkIds] = useState(new Set());
   const svgRef = useRef(null);
   const [transform,setTransform] = useState({x:0,y:0,k:1});
   const dragRef = useRef(null);
+  const [showEdges,setShowEdges] = useState(true);
+  const [showHulls,setShowHulls] = useState(true);
+  const [showSessionSearch,setShowSessionSearch] = useState(false);
+  const [sessionSearch,setSessionSearch] = useState("");
+  const [focusedSessionId,setFocusedSessionId] = useState(null);
+  const activeAlgo = (constellationChunks[0]||{}).id ? "louvain" : "louvain";
 
   const chunkMap = useMemo(()=>{const m=new Map();constellationChunks.forEach(c=>m.set(c.id,c));return m;},[]);
   const chunkColorMap = useMemo(()=>{const m=new Map();constellationChunks.forEach(c=>m.set(c.id,c.color));return m;},[]);
 
-  // Hulls
+  // Hulls via Graham scan
   const hulls = useMemo(()=>{
     const grouped=new Map();
     constellationPoints.forEach(p=>{if(!grouped.has(p.chunk_id))grouped.set(p.chunk_id,[]);grouped.get(p.chunk_id).push(p);});
     const result=[];
     for(const[id,pts]of grouped){
       if(pts.length<3)continue;
-      // Simple convex hull (Graham scan)
       const sorted=[...pts].sort((a,b)=>a.x-b.x||a.y-b.y);
       const cross=(o,a,b)=>(a.x-o.x)*(b.y-o.y)-(a.y-o.y)*(b.x-o.x);
       const lower=[];for(const p of sorted){while(lower.length>=2&&cross(lower[lower.length-2],lower[lower.length-1],p)<=0)lower.pop();lower.push(p);}
@@ -658,12 +680,17 @@ const ConstellationView = ({onSelectCluster,selectedClusterId}) => {
     return result;
   },[chunkColorMap]);
 
-  // Search results
-  const searchResults = useMemo(()=>{
-    if(!search.trim())return[];
-    const q=search.toLowerCase();
-    return constellationPoints.filter(p=>p.name.toLowerCase().includes(q)).slice(0,20);
-  },[search]);
+  // Centroids for cluster labels
+  const centroids = useMemo(()=>{
+    const m=new Map();
+    const grouped=new Map();
+    constellationPoints.forEach(p=>{if(!grouped.has(p.chunk_id))grouped.set(p.chunk_id,[]);grouped.get(p.chunk_id).push(p);});
+    for(const[id,pts]of grouped){
+      if(pts.length<5)continue;
+      m.set(id,{x:pts.reduce((a,p)=>a+p.x,0)/pts.length,y:pts.reduce((a,p)=>a+p.y,0)/pts.length});
+    }
+    return m;
+  },[]);
 
   // Session-table map for linked sessions
   const sessionTableMap = useMemo(()=>{
@@ -683,6 +710,26 @@ const ConstellationView = ({onSelectCluster,selectedClusterId}) => {
     for(const[s,st]of sessionTableMap){if(s===sid)continue;for(const t of st){if(tables.has(t)){linked.add(s);break;}}}
     setHighlighted(linked);
   },[sessionTableMap]);
+
+  // Filtered & sorted chunks
+  const filteredChunks = useMemo(()=>{
+    let list = [...constellationChunks];
+    if(clusterSearch.trim()){
+      const q=clusterSearch.toLowerCase();
+      list=list.filter(c=>c.label.toLowerCase().includes(q)||(c.pivot_tables||[]).some(t=>t.toLowerCase().includes(q)));
+    }
+    if(sortBy==="sessions")list.sort((a,b)=>b.session_count-a.session_count);
+    else if(sortBy==="tiers")list.sort((a,b)=>(a.tier_range||[1])[0]-(b.tier_range||[1])[0]);
+    else if(sortBy==="conflicts")list.sort((a,b)=>(b.conflict_count||0)-(a.conflict_count||0));
+    return list;
+  },[clusterSearch,sortBy]);
+
+  // Session search results
+  const sessionResults = useMemo(()=>{
+    if(!sessionSearch.trim())return[];
+    const q=sessionSearch.toLowerCase();
+    return constellationPoints.filter(p=>p.name.toLowerCase().includes(q)).slice(0,20);
+  },[sessionSearch]);
 
   const W=800,H=600,PAD=40;
   const sx=(nx)=>PAD+nx*(W-PAD*2);
@@ -704,112 +751,263 @@ const ConstellationView = ({onSelectCluster,selectedClusterId}) => {
   },[]);
 
   const handleMouseDown = useCallback((e)=>{
-    if(e.target.tagName==="circle"||e.target.tagName==="polygon")return;
+    if(e.target.tagName==="circle"||e.target.tagName==="polygon"||e.target.tagName==="text")return;
     dragRef.current={startX:e.clientX-transform.x,startY:e.clientY-transform.y};
   },[transform]);
-
   const handleMouseMove = useCallback((e)=>{
     if(!dragRef.current)return;
     setTransform(prev=>({...prev,x:e.clientX-dragRef.current.startX,y:e.clientY-dragRef.current.startY}));
   },[]);
-
   const handleMouseUp = useCallback(()=>{dragRef.current=null;},[]);
 
   const hasHighlight=highlighted.size>0;
-  const hasFilter=!!selectedClusterId;
+  const hasFilter=activeChunkIds.size>0;
+  const criticalCount=constellationPoints.filter(p=>p.critical).length;
+
+  const handleChunkToggle = useCallback((chunkId)=>{
+    setActiveChunkIds(prev=>{
+      const next=new Set(prev);
+      if(next.has(chunkId))next.delete(chunkId);else next.add(chunkId);
+      return next;
+    });
+  },[]);
+
+  const handleSelectAll = useCallback(()=>{
+    setActiveChunkIds(new Set(constellationChunks.map(c=>c.id)));
+  },[]);
+
+  const handleDeselectAll = useCallback(()=>{setActiveChunkIds(new Set());},[]);
+
+  const allSelected = activeChunkIds.size===constellationChunks.length&&constellationChunks.length>0;
 
   return (
     <div style={{display:"flex",height:"100%",overflow:"hidden"}}>
-      {/* Left sidebar: cluster list + search */}
-      <div style={{width:240,borderRight:"1px solid #1E293B",background:"rgba(15,23,42,0.6)",display:"flex",flexDirection:"column",overflow:"hidden",flexShrink:0}}>
+      {/* ── Left sidebar: chunk selector ── */}
+      <div style={{width:260,borderRight:"1px solid #1E293B",background:"rgba(15,23,42,0.6)",display:"flex",flexDirection:"column",overflow:"hidden",flexShrink:0}}>
+        {/* Back / Clear */}
+        <button onClick={hasFilter?handleDeselectAll:handleDeselectAll} style={{padding:"8px 14px",background:"transparent",border:"none",borderBottom:"1px solid #1E293B",cursor:"pointer",display:"flex",alignItems:"center",gap:6,color:"#60A5FA",fontSize:11,fontWeight:600}}>
+          {hasFilter?"Clear Selection ("+activeChunkIds.size+")":"\u2190 Back to Constellation"}
+        </button>
+
+        {/* Search + Sort */}
         <div style={{padding:"8px 10px",borderBottom:"1px solid #1E293B"}}>
-          <input type="text" placeholder="Search sessions..." value={search} onChange={e=>setSearch(e.target.value)}
-            style={{width:"100%",padding:"5px 10px",borderRadius:5,border:"1px solid #1E293B",background:"rgba(0,0,0,0.3)",color:"#E2E8F0",fontSize:10,outline:"none",fontFamily:"'JetBrains Mono',monospace"}}/>
+          <input type="text" placeholder="Filter clusters\u2026" value={clusterSearch} onChange={e=>setClusterSearch(e.target.value)}
+            style={{width:"100%",padding:"5px 10px",borderRadius:5,border:"1px solid #1E293B",background:"rgba(0,0,0,0.3)",color:"#E2E8F0",fontSize:11,outline:"none",fontFamily:"'JetBrains Mono',monospace"}}/>
+          <div style={{display:"flex",gap:4,marginTop:6,flexWrap:"wrap"}}>
+            {[["default","Default"],["sessions","Sessions"],["tiers","Tier"],["conflicts","Conflicts"]].map(([key,label])=>(
+              <button key={key} onClick={()=>setSortBy(key)} style={{padding:"2px 6px",borderRadius:3,border:"none",cursor:"pointer",background:sortBy===key?"rgba(59,130,246,0.15)":"rgba(255,255,255,0.03)",color:sortBy===key?"#60A5FA":"#475569",fontSize:9,fontWeight:600}}>{label}</button>
+            ))}
+          </div>
         </div>
-        {search.trim()&&searchResults.length>0&&(
-          <div style={{maxHeight:200,overflowY:"auto",borderBottom:"1px solid #1E293B",padding:"4px 8px"}}>
-            {searchResults.map(p=>{
-              const chunk=chunkMap.get(p.chunk_id);
-              return(<div key={p.session_id} onClick={()=>{setHighlighted(new Set([p.session_id]));}} style={{padding:"4px 6px",borderRadius:4,cursor:"pointer",fontSize:9,color:"#E2E8F0",fontFamily:"monospace"}}>
-                {p.name}<div style={{fontSize:8,color:"#475569"}}>Tier {p.tier} · {chunk?.label||""}</div>
-              </div>);
-            })}
-            {searchResults.length>0&&searchResults[0]&&(
-              <button onClick={()=>findLinked(searchResults[0].session_id)} style={{width:"100%",marginTop:4,padding:"4px 8px",borderRadius:4,border:"1px solid rgba(245,158,11,0.4)",background:"rgba(245,158,11,0.08)",color:"#F59E0B",fontSize:9,cursor:"pointer"}}>Show Linked Sessions</button>
-            )}
-          </div>
-        )}
-        {hasHighlight&&(
-          <div style={{padding:"4px 10px",borderBottom:"1px solid #1E293B",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <span style={{fontSize:9,color:"#F59E0B"}}>{highlighted.size} highlighted</span>
-            <button onClick={()=>setHighlighted(new Set())} style={{fontSize:9,color:"#F59E0B",background:"transparent",border:"none",cursor:"pointer",textDecoration:"underline"}}>Clear</button>
-          </div>
-        )}
-        <div style={{flex:1,overflowY:"auto",padding:"6px 8px"}}>
-          {selectedClusterId&&(
-            <button onClick={()=>onSelectCluster(null)} style={{width:"100%",marginBottom:6,padding:"5px 8px",borderRadius:4,border:"1px solid #60A5FA",background:"transparent",color:"#60A5FA",fontSize:9,cursor:"pointer"}}>
-              Clear cluster filter
-            </button>
+
+        {/* Session search */}
+        <div style={{borderBottom:"1px solid #1E293B"}}>
+          <button onClick={()=>setShowSessionSearch(s=>!s)} style={{width:"100%",padding:"6px 10px",background:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:6,color:showSessionSearch?"#34D399":"#64748B",fontSize:10,fontWeight:600,borderLeft:showSessionSearch?"2px solid #10B981":"2px solid transparent"}}>
+            Search Sessions {showSessionSearch?"\u25B2":"\u25BC"}
+          </button>
+          {showSessionSearch&&(
+            <div style={{padding:"6px 10px"}}>
+              <input type="text" placeholder="Find session by name\u2026" value={sessionSearch} onChange={e=>setSessionSearch(e.target.value)}
+                style={{width:"100%",padding:"5px 10px",borderRadius:5,border:"1px solid #1E293B",background:"rgba(0,0,0,0.3)",color:"#E2E8F0",fontSize:10,outline:"none",fontFamily:"'JetBrains Mono',monospace"}}/>
+              {sessionResults.length>0&&(
+                <div style={{maxHeight:200,overflowY:"auto",marginTop:4}}>
+                  {sessionResults.map(p=>{
+                    const chunk=chunkMap.get(p.chunk_id);
+                    const isFocused=focusedSessionId===p.session_id;
+                    return(<div key={p.session_id} onClick={()=>{setFocusedSessionId(p.session_id);setHighlighted(new Set([p.session_id]));}} style={{padding:"4px 6px",borderRadius:4,cursor:"pointer",background:isFocused?"rgba(16,185,129,0.12)":"transparent",border:isFocused?"1px solid rgba(16,185,129,0.3)":"1px solid transparent",marginBottom:2}}>
+                      <div style={{fontSize:9,fontWeight:600,color:isFocused?"#34D399":"#E2E8F0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'JetBrains Mono',monospace"}}>{p.name}</div>
+                      <div style={{fontSize:8,color:"#475569"}}>Tier {p.tier} {chunk?"\u00B7 "+chunk.label:""}</div>
+                    </div>);
+                  })}
+                </div>
+              )}
+              {focusedSessionId&&(
+                <button onClick={()=>findLinked(focusedSessionId)} style={{width:"100%",marginTop:4,padding:"5px 8px",borderRadius:4,border:"1px solid rgba(245,158,11,0.4)",background:"rgba(245,158,11,0.08)",color:"#F59E0B",fontSize:9,fontWeight:600,cursor:"pointer"}}>Show Linked Sessions (shared tables)</button>
+              )}
+              {hasHighlight&&(
+                <div style={{marginTop:4,padding:"4px 8px",borderRadius:4,background:"rgba(245,158,11,0.06)",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                  <span style={{fontSize:9,color:"#F59E0B"}}>{highlighted.size} sessions highlighted</span>
+                  <button onClick={()=>{setFocusedSessionId(null);setHighlighted(new Set());}} style={{background:"transparent",border:"none",color:"#F59E0B",fontSize:9,cursor:"pointer",textDecoration:"underline"}}>Clear</button>
+                </div>
+              )}
+            </div>
           )}
-          {constellationChunks.map(chunk=>{
-            const isActive=selectedClusterId===chunk.id;
-            return(<div key={chunk.id} onClick={()=>onSelectCluster(isActive?null:chunk.id)} style={{padding:"8px 10px",marginBottom:3,borderRadius:6,cursor:"pointer",background:isActive?"rgba(59,130,246,0.1)":"rgba(0,0,0,0.2)",border:"1px solid "+(isActive?"#3B82F6":"#1E293B")}}>
-              <div style={{display:"flex",alignItems:"center",gap:6}}>
+        </div>
+
+        {/* Select All / Deselect All */}
+        <div style={{padding:"6px 10px",borderBottom:"1px solid #1E293B"}}>
+          <button onClick={allSelected?handleDeselectAll:handleSelectAll} style={{width:"100%",padding:"5px 8px",borderRadius:4,border:"1px solid "+(hasFilter?"rgba(59,130,246,0.4)":"#1E293B"),background:hasFilter?"rgba(59,130,246,0.08)":"rgba(0,0,0,0.2)",color:hasFilter?"#60A5FA":"#64748B",fontSize:10,fontWeight:600,cursor:"pointer"}}>
+            {allSelected?"Deselect All":"Select All"}
+            {hasFilter&&!allSelected&&<span style={{marginLeft:6,fontSize:9,opacity:0.7}}>({activeChunkIds.size} selected)</span>}
+          </button>
+        </div>
+
+        {/* Chunk cards */}
+        <div style={{flex:1,overflowY:"auto",padding:"6px 8px"}}>
+          {filteredChunks.map(chunk=>{
+            const isActive=activeChunkIds.has(chunk.id);
+            const tierRange=chunk.tier_range||[1,1];
+            const tierCount=tierRange[1]-tierRange[0]+1;
+            return(<div key={chunk.id} onClick={()=>handleChunkToggle(chunk.id)} style={{padding:"10px 12px",marginBottom:4,borderRadius:8,cursor:"pointer",background:isActive?"rgba(59,130,246,0.1)":"rgba(0,0,0,0.2)",border:"1px solid "+(isActive?"#3B82F6":"#1E293B"),transition:"all 0.15s"}}>
+              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                {/* Checkbox */}
+                <div style={{width:10,height:10,borderRadius:2,flexShrink:0,border:"1.5px solid "+(isActive?"#3B82F6":"#475569"),background:isActive?"#3B82F6":"transparent",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  {isActive&&<span style={{color:"#fff",fontSize:7,fontWeight:900,lineHeight:1}}>{"\u2713"}</span>}
+                </div>
                 <div style={{width:8,height:8,borderRadius:"50%",background:chunk.color,flexShrink:0}}/>
-                <span style={{fontSize:9,fontWeight:700,color:"#E2E8F0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{chunk.label}</span>
-                <span style={{fontSize:8,fontFamily:"monospace",color:"#60A5FA"}}>{chunk.session_count}</span>
+                <span style={{fontSize:10,fontWeight:700,color:"#E2E8F0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{chunk.label}</span>
+                <span style={{fontSize:9,fontWeight:700,fontFamily:"monospace",padding:"1px 5px",borderRadius:4,background:"rgba(59,130,246,0.15)",color:"#60A5FA",flexShrink:0}}>{chunk.session_count}</span>
               </div>
+              {/* Tier distribution bar */}
+              {tierCount>0&&(
+                <div style={{display:"flex",height:4,borderRadius:2,overflow:"hidden",marginBottom:3,background:"rgba(255,255,255,0.03)"}}>
+                  {Array.from({length:tierCount},(_,i)=>(
+                    <div key={i} style={{width:(100/tierCount)+"%",height:"100%",background:tierColorConst(tierRange[0]+i),minWidth:2}}/>
+                  ))}
+                </div>
+              )}
+              <div style={{fontSize:9,color:"#64748B",marginBottom:3}}>Tier {tierRange[0]}\u2013{tierRange[1]}</div>
+              {(chunk.pivot_tables||[]).length>0&&(
+                <div style={{fontSize:8,color:"#475569",fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{chunk.pivot_tables.slice(0,2).join(", ")}</div>
+              )}
+              {((chunk.conflict_count||0)>0||(chunk.chain_count||0)>0)&&(
+                <div style={{display:"flex",gap:4,marginTop:4}}>
+                  {(chunk.conflict_count||0)>0&&<span style={{fontSize:8,padding:"1px 4px",borderRadius:3,background:"rgba(239,68,68,0.12)",color:"#FCA5A5"}}>{chunk.conflict_count} conflicts</span>}
+                  {(chunk.chain_count||0)>0&&<span style={{fontSize:8,padding:"1px 4px",borderRadius:3,background:"rgba(249,115,22,0.12)",color:"#FDBA74"}}>{chunk.chain_count} chains</span>}
+                </div>
+              )}
             </div>);
           })}
+          {filteredChunks.length===0&&<div style={{padding:20,textAlign:"center",color:"#475569",fontSize:11}}>No clusters match</div>}
+        </div>
+
+        {/* Footer */}
+        <div style={{padding:"6px 12px",borderTop:"1px solid #1E293B",fontSize:9,color:"#64748B",textAlign:"center"}}>
+          {hasFilter&&<span style={{color:"#60A5FA"}}>{activeChunkIds.size} selected \u00B7 </span>}
+          {filteredChunks.length}/{constellationChunks.length} clusters \u00B7 {filteredChunks.reduce((a,c)=>a+c.session_count,0)} sessions
         </div>
       </div>
-      {/* SVG canvas */}
+
+      {/* ── SVG canvas ── */}
       <div style={{flex:1,position:"relative",background:"#080C14"}}>
         <svg ref={svgRef} width="100%" height="100%" onWheel={handleWheel} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp} style={{cursor:dragRef.current?"grabbing":"grab"}}>
           <g transform={"translate("+transform.x+","+transform.y+") scale("+transform.k+")"}>
             {/* Hulls */}
-            {hulls.map(h=>{
-              const isSelected=!hasFilter||h.id===selectedClusterId;
-              return(<polygon key={h.id} points={h.hull.map(p=>sx(p.x)+","+sy(p.y)).join(" ")} fill={h.color} fillOpacity={isSelected?0.08:0.02} stroke={h.color} strokeOpacity={isSelected?0.3:0.05} strokeWidth={h.id===selectedClusterId?2:1} onClick={()=>onSelectCluster(h.id===selectedClusterId?null:h.id)} style={{cursor:"pointer"}}/>);
+            {showHulls&&hulls.map(h=>{
+              const isSelected=!hasFilter||activeChunkIds.has(h.id);
+              return(<polygon key={h.id} points={h.hull.map(p=>sx(p.x)+","+sy(p.y)).join(" ")} fill={h.color} fillOpacity={isSelected?0.08:0.02} stroke={h.color} strokeOpacity={isSelected?0.3:0.05} strokeWidth={activeChunkIds.has(h.id)?2:1} onClick={()=>handleChunkToggle(h.id)} style={{cursor:"pointer"}}/>);
             })}
             {/* Cross-chunk edges */}
-            {crossChunkEdges.map((e,i)=>{
-              if(hasFilter&&e.from_chunk!==selectedClusterId&&e.to_chunk!==selectedClusterId)return null;
+            {showEdges&&crossChunkEdges.map((e,i)=>{
+              if(hasFilter&&!activeChunkIds.has(e.from_chunk)&&!activeChunkIds.has(e.to_chunk))return null;
               const fc=constellationPoints.filter(p=>p.chunk_id===e.from_chunk);
               const tc=constellationPoints.filter(p=>p.chunk_id===e.to_chunk);
               if(!fc.length||!tc.length)return null;
               const fx=fc.reduce((a,p)=>a+p.x,0)/fc.length;
               const fy=fc.reduce((a,p)=>a+p.y,0)/fc.length;
-              const tx=tc.reduce((a,p)=>a+p.x,0)/tc.length;
+              const tx2=tc.reduce((a,p)=>a+p.x,0)/tc.length;
               const ty=tc.reduce((a,p)=>a+p.y,0)/tc.length;
-              return(<line key={i} x1={sx(fx)} y1={sy(fy)} x2={sx(tx)} y2={sy(ty)} stroke="rgba(148,163,184,0.15)" strokeWidth={Math.min(e.count*0.3,3)}/>);
+              const mx=(sx(fx)+sx(tx2))/2;const my=(sy(fy)+sy(ty))/2;
+              const dx=sx(tx2)-sx(fx);const dy=sy(ty)-sy(fy);
+              return(<path key={i} d={"M"+sx(fx)+","+sy(fy)+" Q"+(mx-dy*0.15)+","+(my+dx*0.15)+" "+sx(tx2)+","+sy(ty)} fill="none" stroke={"rgba(148,163,184,"+Math.min(0.4,e.count*0.05)+")"} strokeWidth={Math.min(Math.sqrt(e.count)*0.5,4)}/>);
             })}
             {/* Session dots */}
             {constellationPoints.map(p=>{
               const color=chunkColorMap.get(p.chunk_id)||"#3B82F6";
-              const isInCluster=!hasFilter||p.chunk_id===selectedClusterId;
+              const isInCluster=!hasFilter||activeChunkIds.has(p.chunk_id);
               const isHi=hasHighlight?highlighted.has(p.session_id):null;
               if(isHi===false)return(<circle key={p.session_id} cx={sx(p.x)} cy={sy(p.y)} r={1.5} fill="rgba(100,116,139,0.08)"/>);
               return(<g key={p.session_id}>
                 {isHi===true&&<circle cx={sx(p.x)} cy={sy(p.y)} r={6} fill="none" stroke="rgba(245,158,11,0.8)" strokeWidth={2}/>}
                 <circle cx={sx(p.x)} cy={sy(p.y)} r={2.5} fill={color} opacity={isInCluster?0.7:0.08}
-                  onMouseEnter={()=>setHov(p)} onMouseLeave={()=>setHov(null)} onClick={()=>onSelectCluster(p.chunk_id===selectedClusterId?null:p.chunk_id)} style={{cursor:"pointer"}}/>
+                  onMouseEnter={()=>setHov(p)} onMouseLeave={()=>setHov(null)} onClick={()=>handleChunkToggle(p.chunk_id)} style={{cursor:"pointer"}}/>
                 {p.critical&&isInCluster&&<circle cx={sx(p.x)} cy={sy(p.y)} r={6} fill="none" stroke="rgba(239,68,68,0.5)" strokeWidth={1}/>}
+              </g>);
+            })}
+            {/* Cluster labels at centroids */}
+            {Array.from(centroids.entries()).map(([id,c])=>{
+              const chunk=chunkMap.get(id);
+              if(!chunk)return null;
+              const isVisible=!hasFilter||activeChunkIds.has(id);
+              if(!isVisible)return null;
+              return(<g key={"lbl-"+id}>
+                <rect x={sx(c.x)-40} y={sy(c.y)-8} width={80} height={16} rx={4} fill="rgba(0,0,0,0.7)" stroke="rgba(255,255,255,0.1)" strokeWidth={0.5}/>
+                <text x={sx(c.x)} y={sy(c.y)+3} textAnchor="middle" fill="#E2E8F0" fontSize={8} fontFamily="'JetBrains Mono',monospace" fontWeight={600} style={{pointerEvents:"none"}}>{chunk.label.length>14?chunk.label.slice(0,14)+"\u2026":chunk.label}</text>
               </g>);
             })}
           </g>
         </svg>
+
+        {/* Zoom buttons */}
+        <div style={{position:"absolute",right:240,top:"50%",transform:"translateY(-50%)",display:"flex",flexDirection:"column",gap:4}}>
+          {[{label:"+",factor:1.5},{label:"-",factor:0.67}].map(b=>(
+            <button key={b.label} onClick={()=>{
+              const svg=svgRef.current;if(!svg)return;
+              const rect=svg.getBoundingClientRect();
+              const cx=rect.width/2;const cy=rect.height/2;
+              setTransform(prev=>{const nk=Math.max(0.3,Math.min(20,prev.k*b.factor));return{x:cx-(cx-prev.x)*nk/prev.k,y:cy-(cy-prev.y)*nk/prev.k,k:nk};});
+            }} style={{width:28,height:28,borderRadius:5,border:"1px solid rgba(255,255,255,0.1)",background:"rgba(15,23,42,0.85)",color:"#94A3B8",fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{b.label}</button>
+          ))}
+        </div>
+
         {/* Tooltip */}
         {hov&&(
           <div style={{position:"absolute",top:10,left:10,padding:"6px 12px",borderRadius:6,background:"rgba(15,23,42,0.92)",border:"1px solid rgba(148,163,184,0.3)",fontSize:10,color:"#E2E8F0",pointerEvents:"none",fontFamily:"'JetBrains Mono',monospace"}}>
             <div style={{fontWeight:700}}>{hov.name}</div>
-            <div style={{color:"#94A3B8"}}>Tier {hov.tier}{hov.critical?" (critical)":""} · {chunkMap.get(hov.chunk_id)?.label||""}</div>
+            <div style={{color:"#94A3B8"}}>Tier {hov.tier}{hov.critical?" (critical)":""} \u00B7 {chunkMap.get(hov.chunk_id)?.label||""}</div>
           </div>
         )}
-        {/* Stats */}
-        <div style={{position:"absolute",bottom:12,left:12,padding:"6px 14px",borderRadius:8,background:"rgba(15,23,42,0.85)",border:"1px solid rgba(30,41,59,0.6)",fontSize:10,color:"#64748B",display:"flex",gap:16}}>
-          <span><strong style={{color:"#E2E8F0"}}>{constellationPoints.length}</strong> Sessions</span>
+
+        {/* Minimap */}
+        <div style={{position:"absolute",bottom:40,left:10,width:160,height:120,background:"rgba(15,23,42,0.85)",border:"1px solid rgba(30,41,59,0.6)",borderRadius:6,overflow:"hidden"}}>
+          <svg width={160} height={120} style={{display:"block"}}>
+            {constellationPoints.map(p=>{
+              const color=chunkColorMap.get(p.chunk_id)||"#3B82F6";
+              return(<circle key={p.session_id} cx={10+p.x*140} cy={5+p.y*110} r={0.8} fill={color} opacity={0.6}/>);
+            })}
+          </svg>
+        </div>
+
+        {/* Stats bar */}
+        <div style={{position:"absolute",bottom:12,left:180,padding:"6px 14px",borderRadius:8,background:"rgba(15,23,42,0.85)",border:"1px solid rgba(30,41,59,0.6)",display:"flex",gap:16,fontSize:10,color:"#64748B"}}>
+          <span><strong style={{color:"#E2E8F0"}}>{constellationPoints.length.toLocaleString()}</strong> Sessions</span>
           <span><strong style={{color:"#3B82F6"}}>{constellationChunks.length}</strong> Clusters</span>
+          {criticalCount>0&&<span><strong style={{color:"#EF4444"}}>{criticalCount}</strong> Critical</span>}
+          <span style={{color:"#475569"}}>Scroll/drag \u00B7 Shift+click=path</span>
+        </div>
+      </div>
+
+      {/* ── Right sidebar: algorithm list + display controls ── */}
+      <div style={{width:220,flexShrink:0,borderLeft:"1px solid rgba(30,41,59,0.6)",background:"rgba(15,23,42,0.6)",overflowY:"auto",display:"flex",flexDirection:"column"}}>
+        <div style={{padding:"12px 14px",borderBottom:"1px solid rgba(30,41,59,0.6)"}}>
+          <div style={{fontSize:10,fontWeight:700,color:"#10B981",textTransform:"uppercase",letterSpacing:"0.1em"}}>Clustering Algorithm</div>
+        </div>
+        <div style={{padding:"8px 10px",flex:1}}>
+          {ALGO_KEYS_CONST.map(key=>{
+            const meta=ALGO_META_CONST[key];
+            const isActive=key===activeAlgo;
+            return(<div key={key} style={{padding:"10px 12px",marginBottom:6,borderRadius:8,background:isActive?"rgba(16,185,129,0.1)":"rgba(0,0,0,0.2)",border:"1px solid "+(isActive?"#10B981":"rgba(30,41,59,0.4)"),opacity:isActive?1:0.8}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+                <span style={{fontSize:14,lineHeight:1,color:isActive?"#34D399":"#64748B"}}>{meta.icon}</span>
+                <span style={{fontSize:11,fontWeight:700,color:isActive?"#34D399":"#CBD5E1"}}>{meta.name}</span>
+                {isActive&&<span style={{marginLeft:"auto",fontSize:8,fontWeight:700,padding:"1px 5px",borderRadius:3,background:"rgba(16,185,129,0.2)",color:"#34D399"}}>ACTIVE</span>}
+              </div>
+              <div style={{fontSize:9,color:isActive?"rgba(52,211,153,0.7)":"#475569",lineHeight:1.4}}>{meta.desc}</div>
+            </div>);
+          })}
+        </div>
+
+        {/* Display section */}
+        <div style={{padding:"12px 14px",borderTop:"1px solid rgba(30,41,59,0.6)"}}>
+          <div style={{fontSize:10,fontWeight:700,color:"#10B981",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:10}}>Display</div>
+          {[{label:"Connection Lines",value:showEdges,setter:setShowEdges},{label:"Cluster Shading",value:showHulls,setter:setShowHulls}].map(({label,value,setter})=>(
+            <div key={label} style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+              <span style={{fontSize:10,color:"#CBD5E1"}}>{label}</span>
+              <div onClick={()=>setter(v=>!v)} style={{width:28,height:16,borderRadius:8,cursor:"pointer",background:value?"#10B981":"#334155",position:"relative",transition:"background 0.15s"}}>
+                <div style={{width:12,height:12,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:value?14:2,transition:"left 0.15s"}}/>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
     </div>
