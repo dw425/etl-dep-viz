@@ -95,6 +95,7 @@ const HelpOverlay = lazy(() => import('../shared/HelpOverlay'));
 const AIChat = lazy(() => import('../chat/AIChat'));
 const AdminConsole = lazy(() => import('./AdminConsole'));
 const DecisionTreeView = lazy(() => import('./DecisionTreeView'));
+const AlgorithmLab = lazy(() => import('./AlgorithmLab'));
 const ExportHTMLModal = lazy(() => import('./ExportHTMLModal'));
 
 // ── View registry ─────────────────────────────────────────────────────────────
@@ -104,7 +105,7 @@ type ViewId = 'tier' | 'galaxy' | 'constellation' | 'explorer' | 'conflicts' | '
   | 'tables' | 'duplicates' | 'chunking'
   | 'complexity' | 'waves' | 'heatmap' | 'umap' | 'simulator' | 'concentration' | 'consensus'
   | 'layers' | 'infra' | 'profile' | 'flowwalker' | 'lineage' | 'impact' | 'chat' | 'admin'
-  | 'decisiontree';
+  | 'decisiontree' | 'algorithmlab';
 
 // Group determines tab section: core, harmonize, vector, nav
 const VIEWS: { id: ViewId; label: string; icon: string; group?: 'core' | 'vector' | 'nav' | 'harmonize' }[] = [
@@ -125,6 +126,7 @@ const VIEWS: { id: ViewId; label: string; icon: string; group?: 'core' | 'vector
   { id: 'simulator', label: 'Simulator', icon: '\u223F', group: 'vector' },
   { id: 'concentration', label: 'Gravity', icon: '\u2295', group: 'vector' },
   { id: 'consensus', label: 'Consensus', icon: '\u25C8', group: 'vector' },
+  { id: 'algorithmlab', label: 'Algorithm Lab', icon: '\u2697', group: 'vector' },
   { id: 'layers', label: 'Layers', icon: '\u25CF', group: 'nav' },
   { id: 'infra', label: 'Infra', icon: '\u229E', group: 'nav' },
   { id: 'flowwalker', label: 'Flow', icon: '\u21C4', group: 'nav' },
@@ -1308,7 +1310,7 @@ export function DependencyApp() {
                   wrapped in Suspense. Edge-to-edge views use padding=0. ── */}
         <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, color: '#64748b' }}>Loading view...</div>}>
-            <div style={{ flex: 1, overflow: 'hidden', padding: (['tier', 'matrix', 'galaxy', 'constellation', 'tables', 'duplicates', 'heatmap', 'umap', 'decisiontree', 'flowwalker'].includes(view)) ? 0 : 20 }}>
+            <div style={{ flex: 1, overflow: 'hidden', padding: (['tier', 'matrix', 'galaxy', 'constellation', 'tables', 'duplicates', 'heatmap', 'umap', 'decisiontree', 'flowwalker', 'algorithmlab'].includes(view)) ? 0 : 20 }}>
               {/* ── Core views ── */}
               {view === 'tier' && scopedTierData && (
                 <ErrorBoundary><TierDiagram data={scopedTierData} chunks={constellation?.chunks} /></ErrorBoundary>
@@ -1415,6 +1417,15 @@ export function DependencyApp() {
                 vectorResults?.v8_ensemble_consensus ? (
                   <ErrorBoundary><div style={{ overflow: 'auto', height: '100%' }}><ConsensusRadar ensemble={vectorResults.v8_ensemble_consensus} /></div></ErrorBoundary>
                 ) : <VectorFallback label="Consensus" phase={3} onRun={() => setRightPanel('vectors')} onRunDirect={tierData ? () => analyzeVectors(tierData, 3, uploadId ?? undefined).then(r => { setVectorResults(prev => ({ ...prev, ...r })); addToast(`Vector analysis complete: ${Object.keys(r).filter(k => k.startsWith('v')).length} vectors`, 'success'); }).catch(e => addToast(e.message)) : undefined} />
+              )}
+
+              {/* Algorithm Lab */}
+              {view === 'algorithmlab' && tierData && (
+                <ErrorBoundary>
+                  <div style={{ overflow: 'hidden', height: '100%' }}>
+                    <AlgorithmLab tierData={tierData} />
+                  </div>
+                </ErrorBoundary>
               )}
 
               {/* ── Layer / navigation views ── */}

@@ -802,6 +802,51 @@ async def list_algorithms():
     return {'algorithms': ALGORITHMS}
 
 
+# ── Algorithm Lab endpoints ──────────────────────────────────────────────────
+
+
+@router.get('/tier-map/lab/algorithms')
+async def list_lab_algorithms():
+    """Return available lab clustering algorithms with metadata, params schema, and speed ratings."""
+    from app.engines.algorithm_lab_engine import LAB_ALGORITHMS
+    return {'algorithms': LAB_ALGORITHMS}
+
+
+@router.post('/tier-map/lab/run')
+async def run_lab_algorithm_endpoint(
+    tier_data: dict = Body(...),
+    algorithm: str = Query('louvain', description='Lab clustering algorithm'),
+    params: str = Query('{}', description='JSON-encoded algorithm parameters'),
+    seed: int | None = Query(None, description='Random seed (null = random)'),
+):
+    """Run a lab clustering algorithm on tier_data and return constellation + quality metrics.
+
+    Args:
+        tier_data: Previously parsed tier data containing sessions, tables, connections.
+        algorithm: Algorithm key from LAB_ALGORITHMS registry.
+        params: JSON string of algorithm-specific parameters.
+        seed: Random seed for reproducibility. Null for non-deterministic runs.
+
+    Returns:
+        Dict with constellation result, quality_metrics, and run_meta.
+    """
+    import json as _json
+
+    if not tier_data.get('sessions'):
+        raise HTTPException(status_code=422, detail='tier_data must contain sessions.')
+
+    try:
+        parsed_params = _json.loads(params) if isinstance(params, str) else params
+    except (ValueError, TypeError):
+        parsed_params = {}
+
+    from app.engines.algorithm_lab_engine import run_lab_algorithm
+    result = await asyncio.to_thread(
+        run_lab_algorithm, tier_data, algorithm=algorithm, params=parsed_params, seed=seed
+    )
+    return result
+
+
 # ── Persistence endpoints ─────────────────────────────────────────────────
 
 

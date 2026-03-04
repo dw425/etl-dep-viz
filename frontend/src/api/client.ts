@@ -1469,3 +1469,57 @@ export async function deleteProject(projectId: number): Promise<void> {
   const res = await fetch(`${BASE}/projects/${projectId}`, { method: 'DELETE' });
   if (!res.ok) throw new Error(`deleteProject failed: ${res.status}`);
 }
+
+
+// ── Algorithm Lab ────────────────────────────────────────────────────────────
+
+export interface LabAlgorithmInfo {
+  name: string;
+  desc: string;
+  speed: 'fast' | 'medium' | 'slow';
+  deterministic: boolean;
+  category: string;
+  requires?: string;
+  params?: Record<string, { type: 'int' | 'float'; default: number; min: number; max: number }>;
+}
+
+export interface LabRunResult {
+  constellation: ConstellationResult;
+  quality_metrics: {
+    modularity: number;
+    silhouette: number;
+    n_clusters: number;
+    entropy: number;
+    duration_ms: number;
+  };
+  run_meta: {
+    algorithm: string;
+    params: Record<string, number>;
+    seed: number | null;
+    timestamp: string;
+  };
+}
+
+export async function getLabAlgorithms(): Promise<Record<string, LabAlgorithmInfo>> {
+  const res = await fetch(`${BASE}/tier-map/lab/algorithms`);
+  if (!res.ok) throw new Error(`getLabAlgorithms failed: ${res.status}`);
+  const data = await res.json();
+  return data.algorithms;
+}
+
+export async function runLabAlgorithm(
+  tierData: Record<string, unknown>,
+  algorithm: string,
+  params?: Record<string, number>,
+  seed?: number | null,
+): Promise<LabRunResult> {
+  const qs = new URLSearchParams({ algorithm, params: JSON.stringify(params || {}) });
+  if (seed != null) qs.set('seed', String(seed));
+  const res = await fetch(`${BASE}/tier-map/lab/run?${qs}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(tierData),
+  });
+  if (!res.ok) throw new Error((await res.json()).detail || `runLabAlgorithm failed: ${res.status}`);
+  return res.json();
+}
