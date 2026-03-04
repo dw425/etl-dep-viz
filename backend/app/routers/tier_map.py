@@ -907,9 +907,16 @@ def get_upload(upload_id: int, db: Session = Depends(get_db)):
     row = db.query(Upload).filter(Upload.id == upload_id).first()
     if not row:
         raise HTTPException(status_code=404, detail='Upload not found.')
+
+    # Try JSON blob first; fall back to reconstructing from view tables
+    tier_data = row.get_tier_data()
+    if not tier_data or not tier_data.get('sessions'):
+        from app.engines.data_populator import reconstruct_tier_data
+        tier_data = reconstruct_tier_data(db, upload_id) or tier_data
+
     result: dict = {
         'upload_id': row.id,
-        'tier_data': row.get_tier_data(),
+        'tier_data': tier_data,
         'filename': row.filename,
         'platform': row.platform,
         'session_count': row.session_count,
