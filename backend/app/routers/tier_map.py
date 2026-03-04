@@ -924,9 +924,16 @@ def get_upload(upload_id: int, db: Session = Depends(get_db)):
         'created_at': row.created_at.isoformat() if row.created_at else None,
     }
     constellation = row.get_constellation()
+    if not constellation or not constellation.get('points'):
+        from app.engines.data_populator import reconstruct_constellation
+        constellation = reconstruct_constellation(db, upload_id) or constellation
     if constellation:
         result['constellation'] = constellation
+
     vector_results = row.get_vector_results()
+    if not vector_results or len(vector_results) == 0:
+        from app.engines.data_populator import reconstruct_vector_results
+        vector_results = reconstruct_vector_results(db, upload_id) or vector_results
     if vector_results:
         result['vector_results'] = vector_results
     return result

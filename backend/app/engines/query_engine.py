@@ -407,6 +407,15 @@ Question: {question}""",
           - Anthropic: system prompt is a top-level parameter (not a message)
           - OpenAI: system prompt is prepended as a {"role": "system"} message
         """
+        if self.llm_provider == "databricks":
+            try:
+                from app.engines.databricks_llm import DatabricksLLM
+                client = DatabricksLLM(model=self.model)
+                return await client.generate(self.SYSTEM_PROMPT, messages)
+            except Exception as exc:
+                logger.error("Databricks LLM call failed: %s", exc)
+                return f"Databricks LLM call failed: {exc}. Check your serving endpoint configuration."
+
         if not self.api_key:
             # Degrade gracefully: the frontend still shows raw search hits in the sidebar
             return (

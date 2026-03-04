@@ -18,8 +18,11 @@ Table Groups (26 total):
   Vector (8): ComplexityScores, WaveAssignments, UmapCoords, Communities,
               WaveFunction, ConcentrationGroups, ConcentrationMembers, Ensemble
 
-Also provides reconstruct_tier_data() to rebuild the in-memory tier_data dict
-from normalized DB tables (used when loading an existing upload without re-parsing).
+Also provides reconstruction functions to rebuild in-memory dicts from
+normalized DB tables (used when loading an existing upload without re-parsing):
+  - reconstruct_tier_data()        — sessions, tables, connections
+  - reconstruct_constellation()    — chunks, points, edges
+  - reconstruct_vector_results()   — all vector engine outputs
 """
 
 import hashlib
@@ -978,3 +981,247 @@ def reconstruct_tier_data(db: Session, upload_id: int) -> dict | None:
             'max_tier': max((s.get('tier', 0) for s in session_list), default=0),
         },
     }
+
+
+# ── 6. Reconstruct constellation from materialized tables ─────────────────
+
+def reconstruct_constellation(db: Session, upload_id: int) -> dict | None:
+    """Rebuild constellation dict from vw_constellation_* tables.
+
+    Returns the same shape as the /api/views/constellation endpoint:
+    {chunks: [...], points: [...], edges: [...]}.
+    Returns None if no points exist for the upload_id.
+    """
+    points = db.query(VwConstellationPoints).filter(
+        VwConstellationPoints.upload_id == upload_id
+    ).all()
+    if not points:
+        return None
+
+    chunks = db.query(VwConstellationChunks).filter(
+        VwConstellationChunks.upload_id == upload_id
+    ).all()
+    edges = db.query(VwConstellationEdges).filter(
+        VwConstellationEdges.upload_id == upload_id
+    ).all()
+
+    def _jl(val):
+        if not val:
+            return []
+        try:
+            return json.loads(val) if isinstance(val, str) else val
+        except (json.JSONDecodeError, TypeError):
+            return []
+
+    return {
+        'chunks': [
+            {
+                'chunk_id': c.chunk_id,
+                'label': c.label,
+                'algorithm': c.algorithm,
+                'session_count': c.session_count,
+                'table_count': c.table_count,
+                'tier_min': c.tier_min,
+                'tier_max': c.tier_max,
+                'pivot_tables': _jl(c.pivot_tables_json),
+                'session_ids': _jl(c.session_ids_json),
+                'table_names': _jl(c.table_names_json),
+                'conflict_count': c.conflict_count,
+                'chain_count': c.chain_count,
+                'critical_count': c.critical_count,
+                'color': c.color,
+            }
+            for c in chunks
+        ],
+        'points': [
+            {
+                'session_id': p.session_id,
+                'chunk_id': p.chunk_id,
+                'x': p.x,
+                'y': p.y,
+                'tier': p.tier,
+                'is_critical': bool(p.is_critical),
+                'name': p.name,
+            }
+            for p in points
+        ],
+        'cross_chunk_edges': [
+            {'from_chunk': e.from_chunk, 'to_chunk': e.to_chunk, 'count': e.count}
+            for e in edges
+        ],
+    }
+
+
+# ── 7. Reconstruct vector_results from materialized tables ────────────────
+
+def reconstruct_vector_results(db: Session, upload_id: int) -> dict | None:
+    """Rebuild vector_results dict from vw_* vector tables.
+
+    Returns a dict keyed by vector engine name (v11_complexity, v4_wave_plan,
+    v1_communities, v3_dimensionality_reduction, v9_wave_function,
+    v10_concentration, v8_ensemble_consensus).
+    Returns None if no vector data exists for the upload_id.
+    """
+    results = {}
+
+    def _jl(val):
+        if not val:
+            return []
+        try:
+            return json.loads(val) if isinstance(val, str) else val
+        except (json.JSONDecodeError, TypeError):
+            return []
+
+    # V11 — Complexity
+    complexity_rows = db.query(VwComplexityScores).filter(
+        VwComplexityScores.upload_id == upload_id
+    ).all()
+    if complexity_rows:
+        results['v11_complexity'] = {
+            'scores': [
+                {
+                    'session_id': r.session_id,
+                    'name': r.name,
+                    'tier': r.tier,
+                    'overall_score': r.overall_score,
+                    'bucket': r.bucket,
+                    'dimensions_raw': {f'd{i}': getattr(r, f'd{i}_raw', 0) for i in range(1, 9)},
+                    'dimensions_normalized': {f'd{i}': getattr(r, f'd{i}_norm', 0) for i in range(1, 9)},
+                    'hours_low': r.hours_low,
+                    'hours_high': r.hours_high,
+                    'top_drivers': _jl(r.top_drivers_json),
+                }
+                for r in complexity_rows
+            ],
+        }
+
+    # V4 — Waves
+    wave_rows = db.query(VwWaveAssignments).filter(
+        VwWaveAssignments.upload_id == upload_id
+    ).all()
+    if wave_rows:
+        waves = {}
+        for r in wave_rows:
+            w = r.wave_number
+            if w not in waves:
+                waves[w] = {'wave': w, 'sessions': []}
+            waves[w]['sessions'].append({
+                'session_id': r.session_id,
+                'name': r.name,
+                'scc_group_id': r.scc_group_id,
+                'is_cycle': bool(r.is_cycle),
+            })
+        results['v4_wave_plan'] = {
+            'waves': sorted(waves.values(), key=lambda w: w['wave']),
+        }
+
+    # V3 — UMAP / Dimensionality Reduction
+    umap_rows = db.query(VwUmapCoords).filter(
+        VwUmapCoords.upload_id == upload_id
+    ).all()
+    if umap_rows:
+        projections = {}
+        for r in umap_rows:
+            scale = r.scale or 'balanced'
+            if scale not in projections:
+                projections[scale] = {'coords': []}
+            projections[scale]['coords'].append({
+                'session_id': r.session_id,
+                'x': r.x,
+                'y': r.y,
+                'cluster_id': r.cluster_id,
+            })
+        results['v3_dimensionality_reduction'] = {'projections': projections}
+
+    # V1 — Communities
+    comm_rows = db.query(VwCommunities).filter(
+        VwCommunities.upload_id == upload_id
+    ).all()
+    if comm_rows:
+        results['v1_communities'] = {
+            'assignments': [
+                {
+                    'session_id': r.session_id,
+                    'macro_id': r.macro_id,
+                    'meso_id': r.meso_id,
+                    'micro_id': r.micro_id,
+                }
+                for r in comm_rows
+            ],
+        }
+
+    # V9 — Wave Function (failure propagation)
+    wf_rows = db.query(VwWaveFunction).filter(
+        VwWaveFunction.upload_id == upload_id
+    ).all()
+    if wf_rows:
+        results['v9_wave_function'] = {
+            'sessions': [
+                {
+                    'session_id': r.session_id,
+                    'name': r.name,
+                    'blast_radius': r.blast_radius,
+                    'chain_depth': r.chain_depth,
+                    'criticality_score': r.criticality_score,
+                    'amplification_factor': r.amplification_factor,
+                    'criticality_tier': r.criticality_tier,
+                }
+                for r in wf_rows
+            ],
+        }
+
+    # V10 — Concentration
+    conc_groups = db.query(VwConcentrationGroups).filter(
+        VwConcentrationGroups.upload_id == upload_id
+    ).all()
+    conc_members = db.query(VwConcentrationMembers).filter(
+        VwConcentrationMembers.upload_id == upload_id
+    ).all()
+    if conc_groups:
+        members_by_group = {}
+        indep_sessions = []
+        for m in conc_members:
+            if m.group_id == 'independent':
+                indep_sessions.append({
+                    'session_id': m.session_id,
+                    'independence_type': m.independence_type,
+                    'confidence': m.confidence,
+                })
+            else:
+                members_by_group.setdefault(m.group_id, []).append(m.session_id)
+
+        results['v10_concentration'] = {
+            'gravity_groups': [
+                {
+                    'group_id': g.group_id,
+                    'medoid_session_id': g.medoid_session_id,
+                    'core_tables': _jl(g.core_tables_json),
+                    'cohesion': g.cohesion,
+                    'coupling': g.coupling,
+                    'session_count': g.session_count,
+                    'session_ids': members_by_group.get(g.group_id, []),
+                }
+                for g in conc_groups
+            ],
+            'independent_sessions': indep_sessions,
+        }
+
+    # V8 — Ensemble Consensus
+    ens_rows = db.query(VwEnsemble).filter(
+        VwEnsemble.upload_id == upload_id
+    ).all()
+    if ens_rows:
+        results['v8_ensemble_consensus'] = {
+            'assignments': [
+                {
+                    'session_id': r.session_id,
+                    'consensus_cluster': r.consensus_cluster,
+                    'consensus_score': r.consensus_score,
+                    'per_vector': _jl(r.per_vector_json),
+                    'is_contested': bool(r.is_contested),
+                }
+                for r in ens_rows
+            ],
+        }
+
+    return results if results else None

@@ -139,12 +139,14 @@ export default function HeatMapView({ complexity, tierData, vectorResults, onSes
     if (scores.length === 0) return [];
 
     // Build lookup maps
-    const sessionMap = new Map(tierData.sessions.map(s => [s.name, s]));
-    const sessionById = new Map(tierData.sessions.map(s => [s.id, s]));
+    const sessions = tierData?.sessions || [];
+    const connections = tierData?.connections || [];
+    const sessionMap = new Map(sessions.map(s => [s.name, s]));
+    const sessionById = new Map(sessions.map(s => [s.id, s]));
 
     // Connection density per session
     const connCounts = new Map<string, number>();
-    for (const conn of tierData.connections) {
+    for (const conn of connections) {
       const fromSess = sessionById.get(conn.from);
       const toSess = sessionById.get(conn.to);
       if (fromSess) connCounts.set(fromSess.name, (connCounts.get(fromSess.name) || 0) + 1);
@@ -153,7 +155,7 @@ export default function HeatMapView({ complexity, tierData, vectorResults, onSes
     const maxConn = Math.max(1, ...Array.from(connCounts.values()));
 
     // Transform count normalization
-    const maxTransforms = Math.max(1, ...tierData.sessions.map(s => s.transforms));
+    const maxTransforms = Math.max(1, ...sessions.map(s => s.transforms));
 
     // V10 gravity group lookup
     const gravityMap = new Map<string, { groupId: number; cohesion: number; coupling: number }>();

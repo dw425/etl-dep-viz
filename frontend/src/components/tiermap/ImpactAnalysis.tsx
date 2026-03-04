@@ -114,7 +114,7 @@ export default function ImpactAnalysis({ tierData, selectedSession, onSessionSel
           }}
         >
           <option value="">Select source session...</option>
-          {tierData.sessions.map(s => (
+          {tierData.sessions?.map(s => (
             <option key={s.id} value={s.id}>{s.name} ({s.id})</option>
           ))}
         </select>

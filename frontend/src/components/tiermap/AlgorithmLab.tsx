@@ -122,9 +122,10 @@ export default function AlgorithmLab({ tierData }: Props) {
   const { points, chunks, chunkColorMap } = useMemo(() => {
     if (!displayResult) {
       // Raw grid layout
-      const n = tierData.sessions.length;
+      const sessions = tierData.sessions || [];
+      const n = sessions.length;
       const cols = Math.max(Math.ceil(Math.sqrt(n)), 1);
-      const pts: ConstellationPoint[] = tierData.sessions.map((s, i) => ({
+      const pts: ConstellationPoint[] = sessions.map((s, i) => ({
         session_id: s.id,
         x: (i % cols) / Math.max(cols - 1, 1),
         y: Math.floor(i / cols) / Math.max(Math.ceil(n / cols) - 1, 1),

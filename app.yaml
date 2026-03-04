@@ -10,4 +10,4 @@ env:
   - name: EDV_CORS_ORIGINS
     value: '["*"]'
   - name: EDV_PARSE_WORKERS
-    value: "1"
+    value: "2"

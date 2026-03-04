@@ -199,9 +199,10 @@ export default function L1A_InfrastructureTopology({ tierData, vectorResults, on
 
     // ── Fallback: infer systems from table names ─────────────────────────────
     if (systemMap.size === 0) {
-      const tableIdSet = new Set(tierData.tables.map(t => t.id));
+      const tables = tierData?.tables || [];
+      const tableIdSet = new Set(tables.map(t => t.id));
 
-      for (const table of tierData.tables) {
+      for (const table of tables) {
         const sys = inferSystem(table.name);
         ensureSystem(sys.system_id, sys.system_type, sys.environment);
         systemMap.get(sys.system_id)!.table_count++;

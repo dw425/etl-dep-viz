@@ -61,6 +61,12 @@ class EmbeddingEngine:
             self._model_name = model or "text-embedding-3-small"
             self.dimension = 1536  # fixed output size for text-embedding-3-small
 
+        # ── Databricks mode ──────────────────────────────────────────────────
+        elif mode == "databricks":
+            from app.engines.databricks_embeddings import DatabricksEmbeddingEngine
+            self._databricks_engine = DatabricksEmbeddingEngine(model=model or "databricks-bge-large-en")
+            self.dimension = self._databricks_engine.dimension
+
     def embed_batch(self, texts: list[str], batch_size: int = 64) -> list[list[float]]:
         """Embed a batch of text documents into L2-normalised float vectors.
 
@@ -98,6 +104,11 @@ class EmbeddingEngine:
                 # response.data is ordered to match input batch order
                 all_embeddings.extend([d.embedding for d in response.data])
             return all_embeddings
+
+        elif self.mode == "databricks":
+            result = self._databricks_engine.embed_batch(texts, batch_size=batch_size)
+            self.using_zero_vectors = self._databricks_engine.using_zero_vectors
+            return result
 
         # Safety fallback for unknown mode values
         return [[0.0] * self.dimension for _ in texts]

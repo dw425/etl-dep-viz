@@ -59,18 +59,32 @@ def _get_engines() -> dict:
     from app.engines.vector_store import VectorStore
     from app.engines.query_engine import HybridSearchEngine, RAGChatEngine
 
+    # Auto-detect Databricks mode: override embedding and LLM providers
+    embed_mode = settings.embedding_mode
+    embed_model = settings.embedding_model
+    llm_provider = settings.llm_provider
+    llm_model = settings.llm_model
+    llm_key = settings.llm_api_key
+
+    if settings.databricks_app:
+        embed_mode = "databricks"
+        embed_model = settings.databricks_embedding_model
+        llm_provider = "databricks"
+        llm_model = settings.databricks_llm_model
+        llm_key = ""  # Databricks uses OAuth, not API keys
+
     embedding = EmbeddingEngine(
-        mode=settings.embedding_mode,
-        model=settings.embedding_model,
+        mode=embed_mode,
+        model=embed_model,
+        api_key=llm_key,
     )
     store = VectorStore(persist_dir=settings.chroma_persist_dir)
-    # HybridSearchEngine combines dense (embedding) and sparse (BM25-style) retrieval
     search = HybridSearchEngine(store, embedding)
     chat = RAGChatEngine(
         search,
-        llm_provider=settings.llm_provider,
-        api_key=settings.llm_api_key,
-        model=settings.llm_model,
+        llm_provider=llm_provider,
+        api_key=llm_key,
+        model=llm_model,
     )
 
     _engines = {
@@ -126,9 +140,11 @@ async def index_upload(upload_id: int, db: Session = Depends(get_db)):
     vector_results = upload.get_vector_results()  # None if vector analysis hasn't run
 
     from app.engines.indexing_pipeline import IndexingPipeline
+    embed_mode = "databricks" if settings.databricks_app else settings.embedding_mode
+    embed_model = settings.databricks_embedding_model if settings.databricks_app else settings.embedding_model
     pipeline = IndexingPipeline(
-        embedding_mode=settings.embedding_mode,
-        embedding_model=settings.embedding_model,
+        embedding_mode=embed_mode,
+        embedding_model=embed_model,
         chroma_persist_dir=settings.chroma_persist_dir,
     )
     stats = pipeline.index_upload(upload_id, tier_data, vector_results)
@@ -136,9 +152,8 @@ async def index_upload(upload_id: int, db: Session = Depends(get_db)):
     response = {"status": "indexed", **stats}
     if pipeline.embedding_engine and pipeline.embedding_engine.using_zero_vectors:
         response["warning"] = (
-            "Indexed with zero-vectors (sentence-transformers not installed). "
-            "Search will rely on keyword matching only. Install with: "
-            "pip install sentence-transformers"
+            "Indexed with zero-vectors (embedding model not available). "
+            "Search will rely on keyword matching only."
         )
     return response
 
@@ -175,9 +190,11 @@ async def reindex_upload(upload_id: int, db: Session = Depends(get_db)):
         raise HTTPException(400, "No vector results available. Run vector analysis first.")
 
     from app.engines.indexing_pipeline import IndexingPipeline
+    embed_mode = "databricks" if settings.databricks_app else settings.embedding_mode
+    embed_model = settings.databricks_embedding_model if settings.databricks_app else settings.embedding_model
     pipeline = IndexingPipeline(
-        embedding_mode=settings.embedding_mode,
-        embedding_model=settings.embedding_model,
+        embedding_mode=embed_mode,
+        embedding_model=embed_model,
         chroma_persist_dir=settings.chroma_persist_dir,
     )
     stats = pipeline.reindex_with_vectors(upload_id, tier_data, vector_results)

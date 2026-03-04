@@ -152,7 +152,10 @@ def _create_engine():
     if url.startswith("sqlite"):
         return create_engine(url, connect_args={"check_same_thread": False})
     else:
-        eng = create_engine(url, pool_size=5, max_overflow=10, pool_pre_ping=True)
+        eng = create_engine(
+            url, pool_size=10, max_overflow=20, pool_pre_ping=True,
+            connect_args={"options": "-c statement_timeout=30000"},
+        )
         if settings.databricks_app:
             _attach_token_refresh(eng)
         return eng

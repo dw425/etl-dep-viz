@@ -33,13 +33,15 @@ class Settings(BaseSettings):
     databricks_app: bool = False                  # True when running as a Databricks App
 
     # ── AI Chat / Vector DB ───────────────────────────────────────────────
-    embedding_mode: str = "local"               # "local" (sentence-transformers) or "openai"
+    embedding_mode: str = "local"               # "local", "openai", or "databricks"
     embedding_model: str = "all-MiniLM-L6-v2"   # sentence-transformers model name
     chroma_persist_dir: str = "./chroma_data"    # ChromaDB persistence directory
-    llm_provider: str = "anthropic"             # LLM backend: "anthropic" or "openai"
+    llm_provider: str = "anthropic"             # LLM backend: "anthropic", "openai", or "databricks"
     llm_api_key: str = ""                       # User-provided API key (keep empty for local-only)
     llm_model: str = "claude-sonnet-4-20250514"  # Model identifier for chat completions
     auto_index_on_parse: bool = True            # Automatically index parsed data into ChromaDB
+    databricks_llm_model: str = "databricks-meta-llama-3-1-70b-instruct"
+    databricks_embedding_model: str = "databricks-bge-large-en"
 
     class Config:
         env_prefix = "EDV_"

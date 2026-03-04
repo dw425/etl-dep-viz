@@ -66,7 +66,6 @@ import MatrixView from './MatrixView';
 import ConstellationCanvas from './ConstellationCanvas';
 import ChunkSelector from './ChunkSelector';
 import ChunkSummary from './ChunkSummary';
-import GalaxyMapCanvas from './GalaxyMapCanvas';
 import { buildTierMapHTML } from './exportTierMapHTML';
 import VectorControlPanel from './VectorControlPanel';
 import DrillThroughPanel from './DrillThroughPanel';
@@ -101,7 +100,7 @@ const ExportHTMLModal = lazy(() => import('./ExportHTMLModal'));
 // ── View registry ─────────────────────────────────────────────────────────────
 // ViewId is the union of all valid tab identifiers. Adding a new tab requires:
 //   1. Adding its id to ViewId  2. Adding it to VIEWS  3. Rendering it below.
-type ViewId = 'tier' | 'galaxy' | 'constellation' | 'explorer' | 'conflicts' | 'order' | 'matrix'
+type ViewId = 'tier' | 'constellation' | 'explorer' | 'conflicts' | 'order' | 'matrix'
   | 'tables' | 'duplicates' | 'chunking'
   | 'complexity' | 'waves' | 'heatmap' | 'umap' | 'simulator' | 'concentration' | 'consensus'
   | 'layers' | 'infra' | 'profile' | 'flowwalker' | 'lineage' | 'impact' | 'chat' | 'admin'
@@ -110,7 +109,6 @@ type ViewId = 'tier' | 'galaxy' | 'constellation' | 'explorer' | 'conflicts' | '
 // Group determines tab section: core, harmonize, vector, nav
 const VIEWS: { id: ViewId; label: string; icon: string; group?: 'core' | 'vector' | 'nav' | 'harmonize' }[] = [
   { id: 'tier', label: 'Tier Diagram', icon: '\u25A4', group: 'core' },
-  { id: 'galaxy', label: 'Galaxy Map', icon: '\u25C9', group: 'core' },
   { id: 'constellation', label: 'Constellation', icon: '\u2726', group: 'core' },
   { id: 'explorer', label: 'Explorer', icon: '\u25CE', group: 'core' },
   { id: 'conflicts', label: 'Conflicts', icon: '\u26A0', group: 'core' },
@@ -337,7 +335,7 @@ export function DependencyApp() {
 
       // Number keys 1-6 jump directly to core views
       if (e.key >= '1' && e.key <= '6' && !e.ctrlKey && !e.metaKey && !e.altKey) {
-        const layerViews: ViewId[] = ['tier', 'galaxy', 'constellation', 'explorer', 'conflicts', 'order'];
+        const layerViews: ViewId[] = ['tier', 'constellation', 'explorer', 'conflicts', 'order', 'matrix'];
         const idx = parseInt(e.key) - 1;
         if (idx < layerViews.length) navigateView(layerViews[idx]);
         return;
@@ -369,7 +367,7 @@ export function DependencyApp() {
   }, []);
   const handleSelectAll = useCallback(() => {
     if (!constellation) return;
-    setSelectedChunkIds(new Set(constellation.chunks.map(c => c.id)));
+    setSelectedChunkIds(new Set(constellation.chunks?.map(c => c.id) || []));
   }, [constellation]);
   const handleDeselectAll = useCallback(() => {
     setSelectedChunkIds(new Set());
@@ -379,8 +377,8 @@ export function DependencyApp() {
   const sessionTableMap = useMemo(() => {
     if (!tierData) return new Map<string, Set<string>>();
     const map = new Map<string, Set<string>>();
-    const tableIdToName = new Map(tierData.tables.map((t: any) => [t.id, t.name]));
-    for (const conn of tierData.connections) {
+    const tableIdToName = new Map((tierData.tables || []).map((t: any) => [t.id, t.name]));
+    for (const conn of (tierData.connections || [])) {
       const fromIsSession = conn.from.startsWith('S');
       const toIsSession = conn.to.startsWith('S');
       if (fromIsSession) {
@@ -727,11 +725,11 @@ export function DependencyApp() {
 
   // ── Theme token map — all JSX uses T.* so switching themes is a one-liner ──
   const T = isDark ? {
-    bg: '#080C14', bgCard: '#111827', bgBar: 'rgba(15,23,42,0.9)', bgPanel: 'rgba(15,23,42,0.95)',
-    border: '#1e293b', borderActive: '#3b82f6',
-    text: '#e2e8f0', textMuted: '#64748b', textDim: '#334155',
-    accent: '#3b82f6', accentBg: 'rgba(59,130,246,0.2)', accentText: '#60a5fa',
-    dropBg: 'rgba(17,24,39,0.6)', dropBgActive: 'rgba(59,130,246,0.08)',
+    bg: '#1a2332', bgCard: '#243044', bgBar: 'rgba(21,29,43,0.95)', bgPanel: 'rgba(21,29,43,0.97)',
+    border: '#3a4a5e', borderActive: '#3b82f6',
+    text: '#e2e8f0', textMuted: '#8899aa', textDim: '#5a6a7a',
+    accent: '#3b82f6', accentBg: 'rgba(59,130,246,0.15)', accentText: '#60a5fa',
+    dropBg: 'rgba(26,35,50,0.6)', dropBgActive: 'rgba(59,130,246,0.08)',
   } : {
     bg: '#F8FAFC', bgCard: '#FFFFFF', bgBar: 'rgba(248,250,252,0.95)', bgPanel: 'rgba(255,255,255,0.97)',
     border: '#E2E8F0', borderActive: '#2563EB',
@@ -773,9 +771,10 @@ export function DependencyApp() {
               maxWidth: 480, background: T.bgCard, borderRadius: 16, border: `1px solid ${T.border}`,
               padding: 32, textAlign: 'center',
             }}>
-              <div style={{ fontSize: 24, fontWeight: 800, color: T.text, marginBottom: 16 }}>
-                Welcome to ETL Dep Viz
+              <div style={{ fontSize: 24, fontWeight: 800, color: T.text, marginBottom: 4 }}>
+                Welcome to Pipeline Analyzer
               </div>
+              <div style={{ fontSize: 11, color: T.textMuted, marginBottom: 16 }}>Powered by Blueprint</div>
               <div style={{ fontSize: 13, color: T.textMuted, lineHeight: 2, marginBottom: 24, textAlign: 'left' }}>
                 <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', marginBottom: 12 }}>
                   <span style={{ fontSize: 18, color: T.accent }}>1.</span>
@@ -1084,12 +1083,13 @@ export function DependencyApp() {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           {/* Logo — clicking resets to dashboard (tierData = null) */}
-          <span
-            style={{ fontSize: 14, fontWeight: 800, color: T.text, cursor: 'pointer', letterSpacing: '-0.02em' }}
+          <div
+            style={{ cursor: 'pointer', lineHeight: 1.2 }}
             onClick={() => { setTierData(null); setConstellation(null); setUploadId(null); setSelectedChunkIds(new Set()); }}
           >
-            ETL Dep Viz
-          </span>
+            <div style={{ fontSize: 14, fontWeight: 700, color: T.text, letterSpacing: '-0.02em' }}>Pipeline Analyzer</div>
+            <div style={{ fontSize: 10, color: T.textMuted, fontWeight: 400 }}>Powered by Blueprint</div>
+          </div>
           {/* ── Tab bar — vector tabs disabled until vector analysis has run ── */}
           <div style={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
             {VIEWS.map(v => {
@@ -1115,107 +1115,59 @@ export function DependencyApp() {
             })}
           </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <button
             onClick={() => setRightPanel(rightPanel === 'vectors' ? null : 'vectors')}
+            title="Vector Analysis"
             style={{
-              padding: '4px 10px', borderRadius: 5,
-              border: `1px solid ${rightPanel === 'vectors' ? T.accent : T.border}`,
+              padding: '5px 8px', borderRadius: 5, border: 'none',
               background: rightPanel === 'vectors' ? T.accentBg : 'transparent',
-              color: rightPanel === 'vectors' ? T.accentText : T.textMuted, fontSize: 10, cursor: 'pointer',
+              color: rightPanel === 'vectors' ? T.accentText : T.textMuted, fontSize: 13, cursor: 'pointer',
             }}
           >
-            {vectorResults ? '✓ Vectors' : 'Vectors'}
-          </button>
-          <button
-            onClick={() => setRightPanel(rightPanel === 'drill' ? null : 'drill')}
-            disabled={!vectorResults}
-            style={{
-              padding: '4px 10px', borderRadius: 5,
-              border: `1px solid ${rightPanel === 'drill' ? T.accent : T.border}`,
-              background: rightPanel === 'drill' ? T.accentBg : 'transparent',
-              color: rightPanel === 'drill' ? T.accentText : T.textMuted, fontSize: 10, cursor: 'pointer',
-              opacity: vectorResults ? 1 : 0.4,
-            }}
-          >
-            Drill
-          </button>
-          <button
-            onClick={() => setRightPanel(rightPanel === 'export' ? null : 'export')}
-            style={{
-              padding: '4px 10px', borderRadius: 5,
-              border: `1px solid ${rightPanel === 'export' ? T.accent : T.border}`,
-              background: rightPanel === 'export' ? T.accentBg : 'transparent',
-              color: rightPanel === 'export' ? T.accentText : T.textMuted, fontSize: 10, cursor: 'pointer',
-            }}
-          >
-            Export
-          </button>
-          <div style={{ width: 1, height: 16, background: T.border }} />
-          <button
-            onClick={() => setShowExportModal(true)}
-            style={{
-              padding: '4px 10px', borderRadius: 5, border: `1px solid ${T.border}`,
-              background: 'transparent', color: T.textMuted, fontSize: 10, cursor: 'pointer',
-            }}
-          >
-            HTML
-          </button>
-          <button
-            onClick={async () => { setLogLoading(true); setShowLogPanel(true); try { setLogEntries(await getHealthLogs(100)); } catch { /* no-op */ } finally { setLogLoading(false); } }}
-            style={{
-              padding: '4px 10px', borderRadius: 5, border: `1px solid ${T.border}`,
-              background: 'transparent', color: '#F59E0B', fontSize: 10, cursor: 'pointer',
-            }}
-          >
-            Logs
+            {vectorResults ? '\u2713' : '\u25A3'}
           </button>
           <button
             onClick={() => setShowHelp(true)}
+            title="Help"
             style={{
-              padding: '4px 10px', borderRadius: 5, border: `1px solid ${T.border}`,
-              background: 'transparent', color: T.textMuted, fontSize: 10, cursor: 'pointer',
+              padding: '5px 8px', borderRadius: 5, border: 'none',
+              background: 'transparent', color: T.textMuted, fontSize: 13, cursor: 'pointer',
             }}
           >
-            ? Help
+            ?
           </button>
           <button
             onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
+            title={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
             style={{
-              padding: '4px 10px', borderRadius: 5, border: `1px solid ${T.border}`,
-              background: 'transparent', color: T.textMuted, fontSize: 10, cursor: 'pointer',
+              padding: '5px 8px', borderRadius: 5, border: 'none',
+              background: 'transparent', color: T.textMuted, fontSize: 13, cursor: 'pointer',
             }}
           >
-            {isDark ? 'Light' : 'Dark'}
+            {isDark ? '\u2600' : '\u263E'}
           </button>
           <button
             onClick={() => setView('profile' as ViewId)}
+            title="Profile"
             style={{
-              padding: '4px 10px', borderRadius: 5, border: `1px solid ${T.border}`,
+              padding: '5px 8px', borderRadius: 5, border: 'none',
               background: view === 'profile' ? T.accentBg : 'transparent',
-              color: view === 'profile' ? T.accentText : T.textMuted, fontSize: 10, cursor: 'pointer',
+              color: view === 'profile' ? T.accentText : T.textMuted, fontSize: 13, cursor: 'pointer',
             }}
           >
-            Profile
+            &#x1F464;
           </button>
           <button
             onClick={() => setView('admin' as ViewId)}
+            title="Admin"
             style={{
-              padding: '4px 10px', borderRadius: 5, border: `1px solid ${T.border}`,
+              padding: '5px 8px', borderRadius: 5, border: 'none',
               background: view === 'admin' ? T.accentBg : 'transparent',
-              color: view === 'admin' ? T.accentText : T.textMuted, fontSize: 10, cursor: 'pointer',
+              color: view === 'admin' ? T.accentText : T.textMuted, fontSize: 13, cursor: 'pointer',
             }}
           >
-            Admin
-          </button>
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            style={{
-              padding: '4px 10px', borderRadius: 5, border: `1px solid ${T.accent}`,
-              background: T.accentBg, color: T.accentText, fontSize: 10, cursor: 'pointer',
-            }}
-          >
-            New Upload
+            &#x2699;
           </button>
           <input
             ref={fileInputRef}
@@ -1310,15 +1262,10 @@ export function DependencyApp() {
                   wrapped in Suspense. Edge-to-edge views use padding=0. ── */}
         <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, color: '#64748b' }}>Loading view...</div>}>
-            <div style={{ flex: 1, overflow: 'hidden', padding: (['tier', 'matrix', 'galaxy', 'constellation', 'tables', 'duplicates', 'heatmap', 'umap', 'decisiontree', 'flowwalker', 'algorithmlab'].includes(view)) ? 0 : 20 }}>
+            <div style={{ flex: 1, overflow: 'hidden', padding: (['tier', 'matrix', 'constellation', 'tables', 'duplicates', 'heatmap', 'umap', 'decisiontree', 'flowwalker', 'algorithmlab'].includes(view)) ? 0 : 20 }}>
               {/* ── Core views ── */}
               {view === 'tier' && scopedTierData && (
                 <ErrorBoundary><TierDiagram data={scopedTierData} chunks={constellation?.chunks} /></ErrorBoundary>
-              )}
-              {view === 'galaxy' && scopedTierData && (
-                <ErrorBoundary>
-                  <GalaxyMapCanvas data={scopedTierData} onClose={() => setView('tier')} />
-                </ErrorBoundary>
               )}
               {view === 'constellation' && tierData && constellation && (
                 <ErrorBoundary>
