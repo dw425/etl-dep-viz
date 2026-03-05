@@ -11,3 +11,7 @@ env:
     value: '["*"]'
   - name: DATABRICKS_HOST
     value: "https://adb-1866518241053589.9.azuredatabricks.net"
+  - name: EDV_DATABRICKS_LLM_MODEL
+    value: "databricks-meta-llama-3-3-70b-instruct"
+  - name: EDV_DATABRICKS_EMBEDDING_MODEL
+    value: "databricks-bge-large-en"

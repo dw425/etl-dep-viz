@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     llm_api_key: str = ""                       # User-provided API key (keep empty for local-only)
     llm_model: str = "claude-sonnet-4-20250514"  # Model identifier for chat completions
     auto_index_on_parse: bool = True            # Automatically index parsed data into ChromaDB
-    databricks_llm_model: str = "databricks-meta-llama-3-1-70b-instruct"
+    databricks_llm_model: str = "databricks-meta-llama-3-3-70b-instruct"
     databricks_embedding_model: str = "databricks-bge-large-en"
 
     class Config:

@@ -4,7 +4,7 @@ Calls Databricks serving endpoints for LLM inference using the workspace's
 OAuth token (service principal). No external API keys required.
 
 Usage:
-    client = DatabricksLLM(model="databricks-meta-llama-3-1-70b-instruct")
+    client = DatabricksLLM(model="databricks-meta-llama-3-3-70b-instruct")
     response = await client.generate(system_prompt, messages)
 """
 
@@ -24,7 +24,7 @@ logger = logging.getLogger("edv.databricks_llm")
 class DatabricksLLM:
     """Databricks Foundation Model serving endpoint client."""
 
-    def __init__(self, model: str = "databricks-meta-llama-3-1-70b-instruct"):
+    def __init__(self, model: str = "databricks-meta-llama-3-3-70b-instruct"):
         self.model = model
 
     def _call_endpoint(self, system_prompt: str, messages: list[dict], max_tokens: int) -> str:
