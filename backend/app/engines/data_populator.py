@@ -946,6 +946,7 @@ def reconstruct_tier_data(db: Session, upload_id: int) -> dict | None:
             'sources': json.loads(s.sources_json) if s.sources_json else [],
             'targets': json.loads(s.targets_json) if s.targets_json else [],
             'lookups': json.loads(s.lookups_json) if s.lookups_json else [],
+            'mapping_detail': json.loads(s.mapping_detail_json) if s.mapping_detail_json else None,
         })
 
     table_list = []

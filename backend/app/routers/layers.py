@@ -43,6 +43,9 @@ def _load_from_upload(upload_id: int, db: DBSession) -> tuple[dict, dict]:
     query param. When upload_id is provided, this helper loads both datasets
     from the persisted upload row.
 
+    Falls back to reconstruct_tier_data() when tier_data_json is empty
+    (e.g. after SQLite→PostgreSQL migration).
+
     Args:
         upload_id: DB primary key of the upload.
         db: SQLAlchemy session.
@@ -58,6 +61,12 @@ def _load_from_upload(upload_id: int, db: DBSession) -> tuple[dict, dict]:
         raise HTTPException(404, f"Upload {upload_id} not found")
     tier_data = upload.get_tier_data() or {}
     vector_results = upload.get_vector_results() or {}
+
+    # Fallback: reconstruct from normalized DB tables if tier_data_json was empty
+    if not tier_data or not tier_data.get("sessions"):
+        from app.engines.data_populator import reconstruct_tier_data
+        tier_data = reconstruct_tier_data(db, upload_id) or tier_data
+
     return tier_data, vector_results
 
 
