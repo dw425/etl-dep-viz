@@ -12,17 +12,21 @@ This module wires together the entire backend:
   - Static-file serving for the Vite-built frontend in production
 """
 
+import asyncio
+import bisect
 import contextvars
 import logging
+import math
 import os
 import time
 import uuid
-from collections import deque
+from collections import deque, defaultdict
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -133,6 +137,9 @@ app = FastAPI(
     ],
 )
 
+# GZip compression for JSON responses > 1KB (70-85% compression typical)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
 # CORS
 app.add_middleware(
     CORSMiddleware,
@@ -143,7 +150,79 @@ app.add_middleware(
 )
 
 
+# ── Request Metrics Collector ──────────────────────────────────────────────
+
+
+class RequestMetrics:
+    """Collects per-endpoint request latency and status code metrics.
+
+    Maintains a sorted list of latency samples per endpoint path prefix.
+    Computes percentiles (p50, p95, p99) on demand.  Samples are capped
+    at *max_samples* per route to bound memory usage.
+    """
+
+    def __init__(self, max_samples: int = 5000):
+        self._latencies: dict[str, list[float]] = defaultdict(list)
+        self._counts: dict[str, int] = defaultdict(int)
+        self._errors: dict[str, int] = defaultdict(int)
+        self._max = max_samples
+        self._start_time = time.time()
+
+    def _route_key(self, path: str) -> str:
+        """Collapse a request path into a route key."""
+        parts = path.rstrip("/").split("/")
+        # /api/views/explorer -> /api/views/explorer
+        # /api/layers/L1 -> /api/layers/L1
+        # static files -> /static
+        if not path.startswith("/api"):
+            return "/static"
+        return "/".join(parts[:4]) if len(parts) >= 4 else path
+
+    def record(self, path: str, elapsed_ms: float, status_code: int) -> None:
+        key = self._route_key(path)
+        self._counts[key] += 1
+        if status_code >= 400:
+            self._errors[key] += 1
+        samples = self._latencies[key]
+        bisect.insort(samples, elapsed_ms)
+        if len(samples) > self._max:
+            samples.pop(0)
+
+    def _percentile(self, samples: list[float], pct: float) -> float:
+        if not samples:
+            return 0.0
+        idx = int(math.ceil(pct / 100.0 * len(samples))) - 1
+        return samples[max(0, idx)]
+
+    def snapshot(self) -> dict:
+        """Return current metrics for all tracked routes."""
+        uptime = time.time() - self._start_time
+        total_requests = sum(self._counts.values())
+        total_errors = sum(self._errors.values())
+        routes = {}
+        for key in sorted(self._counts.keys()):
+            samples = self._latencies.get(key, [])
+            routes[key] = {
+                "requests": self._counts[key],
+                "errors": self._errors[key],
+                "p50_ms": round(self._percentile(samples, 50), 1),
+                "p95_ms": round(self._percentile(samples, 95), 1),
+                "p99_ms": round(self._percentile(samples, 99), 1),
+                "avg_ms": round(sum(samples) / len(samples), 1) if samples else 0,
+            }
+        return {
+            "uptime_seconds": round(uptime, 0),
+            "total_requests": total_requests,
+            "total_errors": total_errors,
+            "rps": round(total_requests / max(uptime, 1), 2),
+            "routes": routes,
+        }
+
+
+_metrics = RequestMetrics()
+
 # ── Middleware ─────────────────────────────────────────────────────────────
+
 
 @app.middleware("http")
 async def request_timing(request: Request, call_next):
@@ -159,6 +238,7 @@ async def request_timing(request: Request, call_next):
     try:
         response = await call_next(request)
         elapsed_ms = (time.perf_counter() - start) * 1000
+        _metrics.record(request.url.path, elapsed_ms, response.status_code)
         logger.info(
             "cid=%s %s %s -> %d (%.0fms)",
             cid,
@@ -186,6 +266,50 @@ async def limit_body_size(request: Request, call_next):
     if cl and int(cl) > max_bytes:
         return Response(status_code=413, content="Request body too large")
     return await call_next(request)
+
+
+# ── Per-Route Timeout Middleware ──────────────────────────────────────────
+# Timeout categories: health (5s), views/layers/exports (30s),
+# vectors/analysis (120s), parse/chat (300s).
+
+_ROUTE_TIMEOUTS: list[tuple[str, int]] = [
+    ("/api/health", 5),
+    ("/api/views/", 30),
+    ("/api/layers/", 30),
+    ("/api/exports/", 30),
+    ("/api/lineage/", 30),
+    ("/api/vectors/", 120),
+    ("/api/chat/", 300),
+    ("/api/tier-map/upload", 300),
+]
+_DEFAULT_TIMEOUT = 60
+
+
+def _get_timeout(path: str) -> int:
+    for prefix, timeout in _ROUTE_TIMEOUTS:
+        if path.startswith(prefix):
+            return timeout
+    return _DEFAULT_TIMEOUT
+
+
+@app.middleware("http")
+async def request_timeout(request: Request, call_next):
+    """Apply per-route timeouts. Returns 504 if the deadline is exceeded."""
+    timeout = _get_timeout(request.url.path)
+    try:
+        return await asyncio.wait_for(call_next(request), timeout=timeout)
+    except asyncio.TimeoutError:
+        cid = correlation_id.get('-')
+        logger.warning("cid=%s Request timeout (%ds) on %s %s", cid, timeout, request.method, request.url.path)
+        record_error(error_type="RequestTimeout", message=f"{request.method} {request.url.path} exceeded {timeout}s", severity="warning")
+        return JSONResponse(
+            status_code=504,
+            content={
+                "detail": f"Request timed out after {timeout}s",
+                "type": "GatewayTimeout",
+                "correlation_id": cid,
+            },
+        )
 
 
 # ── Exception Handlers ─────────────────────────────────────────────────────
@@ -298,17 +422,76 @@ async def health():
 
     checks: dict = {"status": "ok"}
 
-    # DB check -- run a trivial query to verify SQLite is accessible
+    # DB check with latency measurement
     try:
         from sqlalchemy import text as sa_text
-        from app.models.database import SessionLocal
+        from app.models.database import SessionLocal, engine
+        db_start = time.perf_counter()
         db = SessionLocal()
         db.execute(sa_text("SELECT 1"))
         db.close()
+        db_ms = (time.perf_counter() - db_start) * 1000
         checks["db"] = "ok"
+        checks["db_latency_ms"] = round(db_ms, 1)
     except Exception as e:
         checks["db"] = f"error: {e}"
         checks["status"] = "degraded"
+
+    # Connection pool stats (PostgreSQL only)
+    try:
+        from app.models.database import engine
+        pool = engine.pool
+        if hasattr(pool, "size"):
+            checks["pool"] = {
+                "size": pool.size(),
+                "checked_in": pool.checkedin(),
+                "checked_out": pool.checkedout(),
+                "overflow": pool.overflow(),
+            }
+    except Exception:
+        pass
+
+    # Document embedding count (PG vector store)
+    try:
+        from app.models.database import SessionLocal, DocumentEmbedding
+        db = SessionLocal()
+        doc_count = db.query(DocumentEmbedding).count()
+        db.close()
+        checks["vector_doc_count"] = doc_count
+    except Exception:
+        checks["vector_doc_count"] = 0
+
+    # Embedding endpoint test (Databricks only)
+    if settings.databricks_app:
+        try:
+            import httpx
+            host = os.environ.get("DATABRICKS_HOST", "")
+            if host:
+                resp = httpx.post(
+                    f"{host}/serving-endpoints/{settings.databricks_embedding_model}/invocations",
+                    json={"input": ["health check"]},
+                    timeout=5,
+                    headers={"Authorization": f"Bearer {os.environ.get('DATABRICKS_TOKEN', '')}"},
+                )
+                checks["embedding_endpoint"] = "ok" if resp.status_code == 200 else f"error: {resp.status_code}"
+        except Exception as e:
+            checks["embedding_endpoint"] = f"error: {e}"
+
+    # LLM endpoint test (Databricks only)
+    if settings.databricks_app:
+        try:
+            import httpx
+            host = os.environ.get("DATABRICKS_HOST", "")
+            if host:
+                resp = httpx.post(
+                    f"{host}/serving-endpoints/{settings.databricks_llm_model}/invocations",
+                    json={"messages": [{"role": "user", "content": "ping"}], "max_tokens": 1},
+                    timeout=5,
+                    headers={"Authorization": f"Bearer {os.environ.get('DATABRICKS_TOKEN', '')}"},
+                )
+                checks["llm_endpoint"] = "ok" if resp.status_code == 200 else f"error: {resp.status_code}"
+        except Exception as e:
+            checks["llm_endpoint"] = f"error: {e}"
 
     # Disk space -- degrade if <100 MB free (may block uploads/exports)
     try:
@@ -352,6 +535,32 @@ async def health():
     checks["error_count"] = len(_error_buffer)
 
     return checks
+
+
+@app.get("/api/health/metrics")
+async def health_metrics():
+    """Return per-route request latency percentiles (p50/p95/p99), throughput, and error rates."""
+    snapshot = _metrics.snapshot()
+    # Add LLM token usage if available
+    try:
+        from app.engines.databricks_llm import DatabricksLLM
+        snapshot["llm_usage"] = DatabricksLLM.get_usage_stats()
+    except Exception:
+        pass
+    try:
+        from app.engines.databricks_embeddings import DatabricksEmbeddingEngine
+        snapshot["embedding_tokens_in"] = DatabricksEmbeddingEngine._total_tokens_in
+    except Exception:
+        pass
+    return snapshot
+
+
+@app.get("/api/health/slow-queries")
+async def health_slow_queries(limit: int = Query(20, ge=1, le=100)):
+    """Return recent slow queries (>1s) from the database query monitor."""
+    from app.models.database import _slow_query_log
+    entries = list(_slow_query_log)
+    return {"slow_queries": entries[-limit:], "total": len(entries)}
 
 
 @app.get("/api/health/logs")
@@ -465,6 +674,12 @@ MIGRATE_TABLES = [
     "vw_complexity_scores", "vw_wave_assignments", "vw_umap_coords",
     "vw_communities", "vw_wave_function",
     "vw_concentration_groups", "vw_concentration_members", "vw_ensemble",
+    "vw_hierarchical_lineage", "vw_affinity_propagation",
+    "vw_spectral_clustering", "vw_hdbscan_density",
+    "vw_expression_complexity", "vw_data_flow", "vw_schema_drift",
+    "vw_transform_centrality", "vw_table_gravity",
+    "transform_records", "field_mapping_records", "expression_records",
+    "workflow_records", "lookup_config_records", "parameter_records", "sql_override_records",
 ]
 
 

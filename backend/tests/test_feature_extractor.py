@@ -20,7 +20,7 @@ class TestFeatureExtraction:
         features = extract_session_features(sample_tier_data)
         builder = FeatureMatrixBuilder(features)
         dense = builder.build_dense_matrix()
-        assert dense.shape == (len(features), 16)
+        assert dense.shape == (len(features), 32)
 
     def test_adjacency_matrix(self, sample_tier_data):
         from app.engines.vectors.feature_extractor import (

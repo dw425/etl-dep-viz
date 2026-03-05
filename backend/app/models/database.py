@@ -24,7 +24,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Index, Integer, String, Text, create_engine, inspect
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Index, Integer, LargeBinary, String, Text, create_engine, inspect
 from sqlalchemy.orm import DeclarativeBase, Session, relationship, sessionmaker
 
 from app.config import settings
@@ -112,32 +112,60 @@ class Upload(Base):
 
 
 def _attach_token_refresh(eng):
-    """Refresh Databricks OAuth token on each new PostgreSQL connection.
+    """Refresh Databricks OAuth token on pool checkout with expiry caching.
 
-    When running as a Databricks App, the password field of the connection
-    is replaced with a fresh OAuth access token fetched from the workspace's
-    OIDC endpoint.  This ensures long-running apps never hit token expiry.
+    Caches the token and only refreshes when it expires (< 5 min remaining).
+    Uses exponential backoff on transient failures to avoid thundering herd.
     """
     from sqlalchemy import event
-    import os, json, urllib.request
+    import os, json, urllib.request, time, logging, threading
 
-    @event.listens_for(eng, "do_connect")
-    def on_connect(dialect, conn_rec, cargs, cparams):
+    _log = logging.getLogger(__name__)
+    _token_lock = threading.Lock()
+    _token_cache: dict = {"token": None, "expires_at": 0.0}
+    _MAX_RETRIES = 3
+
+    def _fetch_token() -> str | None:
         host = os.environ.get("DATABRICKS_HOST", "")
         client_id = os.environ.get("DATABRICKS_CLIENT_ID", "")
         client_secret = os.environ.get("DATABRICKS_CLIENT_SECRET", "")
-        if host and client_id and client_secret:
-            if not host.startswith("https://"):
-                host = f"https://{host}"
-            token_url = f"{host}/oidc/v1/token"
-            data = f"grant_type=client_credentials&client_id={client_id}&client_secret={client_secret}&scope=all-apis"
-            req = urllib.request.Request(
-                token_url, data=data.encode(), method="POST",
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-            )
-            resp = urllib.request.urlopen(req)
-            token = json.loads(resp.read())["access_token"]
-            cparams["password"] = token
+        if not (host and client_id and client_secret):
+            return None
+        if not host.startswith("https://"):
+            host = f"https://{host}"
+        token_url = f"{host}/oidc/v1/token"
+        data = f"grant_type=client_credentials&client_id={client_id}&client_secret={client_secret}&scope=all-apis"
+        for attempt in range(_MAX_RETRIES):
+            try:
+                req = urllib.request.Request(
+                    token_url, data=data.encode(), method="POST",
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                )
+                resp = urllib.request.urlopen(req, timeout=10)
+                body = json.loads(resp.read())
+                token = body["access_token"]
+                # Default 1hr expiry; refresh 5 min early
+                expires_in = body.get("expires_in", 3600)
+                _token_cache["token"] = token
+                _token_cache["expires_at"] = time.time() + expires_in - 300
+                _log.debug("OAuth token refreshed, expires_in=%ds", expires_in)
+                return token
+            except Exception as exc:
+                wait = 2 ** attempt
+                _log.warning("OAuth token fetch attempt %d failed: %s — retrying in %ds", attempt + 1, exc, wait)
+                time.sleep(wait)
+        _log.error("OAuth token fetch failed after %d attempts", _MAX_RETRIES)
+        return _token_cache.get("token")  # return stale token as last resort
+
+    @event.listens_for(eng, "do_connect")
+    def on_connect(dialect, conn_rec, cargs, cparams):
+        with _token_lock:
+            if _token_cache["token"] and time.time() < _token_cache["expires_at"]:
+                cparams["password"] = _token_cache["token"]
+                return
+            token = _fetch_token()
+            if token:
+                cparams["password"] = token
 
 
 def _create_engine():
@@ -153,8 +181,12 @@ def _create_engine():
         return create_engine(url, connect_args={"check_same_thread": False})
     else:
         eng = create_engine(
-            url, pool_size=5, max_overflow=10, pool_pre_ping=True,
-            pool_recycle=1800,
+            url,
+            pool_size=settings.pool_size,
+            max_overflow=settings.pool_max_overflow,
+            pool_timeout=settings.pool_timeout,
+            pool_pre_ping=True,
+            pool_recycle=settings.pool_recycle,
             connect_args={"options": "-c statement_timeout=120000"},
         )
         if settings.databricks_app:
@@ -164,6 +196,39 @@ def _create_engine():
 
 engine = _create_engine()
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+
+
+# ── Slow Query Monitoring ───────────────────────────────────────────────
+# Logs SQL statements that take longer than _SLOW_QUERY_MS.
+
+import time as _time
+from collections import deque as _deque
+from sqlalchemy import event as _sa_event
+
+_SLOW_QUERY_MS = 1000  # threshold in milliseconds
+_slow_query_log: _deque[dict] = _deque(maxlen=100)
+
+
+@_sa_event.listens_for(engine, "before_cursor_execute")
+def _before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+    conn.info["query_start"] = _time.perf_counter()
+
+
+@_sa_event.listens_for(engine, "after_cursor_execute")
+def _after_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+    start = conn.info.pop("query_start", None)
+    if start is None:
+        return
+    elapsed_ms = (_time.perf_counter() - start) * 1000
+    if elapsed_ms >= _SLOW_QUERY_MS:
+        from datetime import datetime, timezone
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "elapsed_ms": round(elapsed_ms, 1),
+            "statement": statement[:500],
+        }
+        _slow_query_log.append(entry)
+        logger.warning("Slow query (%.0fms): %s", elapsed_ms, statement[:200])
 
 
 # ── User & Activity Tracking ───────────────────────────────────────────────
@@ -233,6 +298,14 @@ class SessionRecord(Base):
     lookups_json = Column(Text, nullable=True)   # JSON array of lookup table names
     mapping_detail_json = Column(Text, nullable=True)  # deep mapping detail JSON
     connections_used_json = Column(Text, nullable=True)  # connection metadata JSON
+    # Phase 5 expansion
+    folder_path = Column(String(512), nullable=True)
+    mapping_name = Column(String(512), nullable=True)
+    config_reference = Column(String(256), nullable=True)
+    scheduler_name = Column(String(256), nullable=True)
+    expression_count = Column(Integer, default=0)
+    field_mapping_count = Column(Integer, default=0)
+    parse_completeness_pct = Column(Float, nullable=True)
 
     __table_args__ = (
         Index("ix_session_upload", "upload_id"),
@@ -575,11 +648,13 @@ class VwConstellationEdges(Base):
 class VwComplexityScores(Base):
     """Materialized view: V11 complexity scores per session.
 
-    Each session is scored across 8 complexity dimensions (d1-d8):
-      d1=transforms, d2=sources, d3=targets, d4=lookups,
-      d5=tier_depth, d6=connections, d7=ext_reads, d8=workflow_size.
-    Both raw and min-max-normalized values are stored.  The ``bucket``
-    column classifies sessions as low/medium/high/critical.
+    Each session is scored across 16 complexity dimensions (d1-d16):
+      d1=transform_volume, d2=diversity, d3=risk, d4=io_volume,
+      d5=lookup_intensity, d6=coupling, d7=structural_depth, d8=external_reads,
+      d9=expression_complexity, d10=parameter_dependency, d11=sql_override,
+      d12=join_complexity, d13=field_mapping_density, d14=lookup_cache,
+      d15=error_handling, d16=schedule_dependency.
+    Both raw and percentile-normalized values are stored.
     """
 
     __tablename__ = "vw_complexity_scores"
@@ -589,9 +664,9 @@ class VwComplexityScores(Base):
     session_id = Column(String(64), nullable=False)
     name = Column(String(512), nullable=False)
     tier = Column(Float, nullable=True)
-    overall_score = Column(Float, default=0.0)         # Weighted composite 0.0-1.0
-    bucket = Column(String(16), nullable=True)         # 'low', 'medium', 'high', 'critical'
-    # Raw dimension values (pre-normalization)
+    overall_score = Column(Float, default=0.0)         # Weighted composite 0-100
+    bucket = Column(String(16), nullable=True)         # Simple/Medium/Complex/Very Complex
+    # Raw dimension values (pre-normalization) — D1-D8 original, D9-D16 Phase 7
     d1_raw = Column(Float, default=0.0)
     d2_raw = Column(Float, default=0.0)
     d3_raw = Column(Float, default=0.0)
@@ -600,7 +675,15 @@ class VwComplexityScores(Base):
     d6_raw = Column(Float, default=0.0)
     d7_raw = Column(Float, default=0.0)
     d8_raw = Column(Float, default=0.0)
-    # Normalized dimension values (0.0-1.0)
+    d9_raw = Column(Float, default=0.0)
+    d10_raw = Column(Float, default=0.0)
+    d11_raw = Column(Float, default=0.0)
+    d12_raw = Column(Float, default=0.0)
+    d13_raw = Column(Float, default=0.0)
+    d14_raw = Column(Float, default=0.0)
+    d15_raw = Column(Float, default=0.0)
+    d16_raw = Column(Float, default=0.0)
+    # Normalized dimension values (0-100 percentile)
     d1_norm = Column(Float, default=0.0)
     d2_norm = Column(Float, default=0.0)
     d3_norm = Column(Float, default=0.0)
@@ -609,6 +692,14 @@ class VwComplexityScores(Base):
     d6_norm = Column(Float, default=0.0)
     d7_norm = Column(Float, default=0.0)
     d8_norm = Column(Float, default=0.0)
+    d9_norm = Column(Float, default=0.0)
+    d10_norm = Column(Float, default=0.0)
+    d11_norm = Column(Float, default=0.0)
+    d12_norm = Column(Float, default=0.0)
+    d13_norm = Column(Float, default=0.0)
+    d14_norm = Column(Float, default=0.0)
+    d15_norm = Column(Float, default=0.0)
+    d16_norm = Column(Float, default=0.0)
     hours_low = Column(Float, default=0.0)       # Effort estimate lower bound (hours)
     hours_high = Column(Float, default=0.0)      # Effort estimate upper bound (hours)
     top_drivers_json = Column(Text, nullable=True)  # JSON list of top complexity drivers
@@ -770,6 +861,361 @@ class VwEnsemble(Base):
     __table_args__ = (Index("ix_vwensemble_upload", "upload_id"),)
 
 
+class VwHierarchicalLineage(Base):
+    """Materialized view: V2 hierarchical clustering (dendrogram) results.
+
+    Stores hierarchical clustering assignments with merge distances and
+    parent cluster relationships for dendrogram visualization.
+    """
+
+    __tablename__ = "vw_hierarchical_lineage"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    upload_id = Column(Integer, ForeignKey("uploads.id", ondelete="CASCADE"), nullable=False)
+    session_id = Column(String(64), nullable=False)
+    cluster_id = Column(Integer, nullable=True)
+    level = Column(Integer, default=0)
+    parent_cluster = Column(Integer, nullable=True)
+    merge_distance = Column(Float, default=0.0)
+    session_count = Column(Integer, default=1)
+
+    __table_args__ = (Index("ix_vwhier_upload", "upload_id"),)
+
+
+class VwAffinityPropagation(Base):
+    """Materialized view: V5 affinity propagation cluster assignments.
+
+    Each session is assigned to a cluster with an exemplar (representative)
+    session.  Responsibility and availability scores capture the AP message
+    passing dynamics.
+    """
+
+    __tablename__ = "vw_affinity_propagation"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    upload_id = Column(Integer, ForeignKey("uploads.id", ondelete="CASCADE"), nullable=False)
+    session_id = Column(String(64), nullable=False)
+    exemplar_id = Column(String(64), nullable=True)
+    cluster_id = Column(Integer, nullable=True)
+    responsibility = Column(Float, default=0.0)
+    availability = Column(Float, default=0.0)
+    preference = Column(Float, default=0.0)
+
+    __table_args__ = (Index("ix_vwaffinity_upload", "upload_id"),)
+
+
+class VwSpectralClustering(Base):
+    """Materialized view: V6 spectral clustering results.
+
+    Stores cluster assignments derived from the eigenvectors of the
+    graph Laplacian.  Eigenvalue and eigen_gap help determine optimal k.
+    """
+
+    __tablename__ = "vw_spectral_clustering"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    upload_id = Column(Integer, ForeignKey("uploads.id", ondelete="CASCADE"), nullable=False)
+    session_id = Column(String(64), nullable=False)
+    cluster_id = Column(Integer, nullable=True)
+    eigenvalue = Column(Float, default=0.0)
+    eigen_gap = Column(Float, default=0.0)
+
+    __table_args__ = (Index("ix_vwspectral_upload", "upload_id"),)
+
+
+class VwHdbscanDensity(Base):
+    """Materialized view: V7 HDBSCAN density-based clustering results.
+
+    Stores cluster assignments with probability scores and outlier
+    identification.  Noise points have ``cluster_id = -1``.
+    """
+
+    __tablename__ = "vw_hdbscan_density"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    upload_id = Column(Integer, ForeignKey("uploads.id", ondelete="CASCADE"), nullable=False)
+    session_id = Column(String(64), nullable=False)
+    cluster_id = Column(Integer, nullable=True)
+    probability = Column(Float, default=0.0)
+    outlier_score = Column(Float, default=0.0)
+    persistence = Column(Float, default=0.0)
+
+    __table_args__ = (Index("ix_vwhdbscan_upload", "upload_id"),)
+
+
+class VwExpressionComplexity(Base):
+    """Materialized view: V12 expression complexity scores per session."""
+
+    __tablename__ = "vw_expression_complexity"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    upload_id = Column(Integer, ForeignKey("uploads.id", ondelete="CASCADE"), nullable=False)
+    session_id = Column(String(64), nullable=False)
+    cluster_id = Column(Integer, default=0)
+    expression_count = Column(Integer, default=0)
+    avg_depth = Column(Float, default=0.0)
+    total_functions = Column(Integer, default=0)
+    expression_density = Column(Float, default=0.0)
+    score = Column(Integer, default=0)
+    bucket = Column(String(16), nullable=True)
+
+    __table_args__ = (Index("ix_vwexprcomp_upload", "upload_id"),)
+
+
+class VwDataFlow(Base):
+    """Materialized view: V13 data flow volume estimates per session."""
+
+    __tablename__ = "vw_data_flow"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    upload_id = Column(Integer, ForeignKey("uploads.id", ondelete="CASCADE"), nullable=False)
+    session_id = Column(String(64), nullable=False)
+    cluster_id = Column(Integer, default=0)
+    source_volume = Column(Float, default=0.0)
+    output_volume = Column(Float, default=0.0)
+    funnel_ratio = Column(Float, default=0.0)
+    bottleneck_transform = Column(String(256), nullable=True)
+
+    __table_args__ = (Index("ix_vwdataflow_upload", "upload_id"),)
+
+
+class VwSchemaDrift(Base):
+    """Materialized view: V14 schema drift baseline per session."""
+
+    __tablename__ = "vw_schema_drift"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    upload_id = Column(Integer, ForeignKey("uploads.id", ondelete="CASCADE"), nullable=False)
+    session_id = Column(String(64), nullable=False)
+    cluster_id = Column(Integer, default=0)
+    field_count = Column(Integer, default=0)
+    drift_score = Column(Integer, default=0)
+    added_fields = Column(Integer, default=0)
+    removed_fields = Column(Integer, default=0)
+    type_changes = Column(Integer, default=0)
+
+    __table_args__ = (Index("ix_vwschemadrift_upload", "upload_id"),)
+
+
+class VwTransformCentrality(Base):
+    """Materialized view: V15 transform graph centrality per session."""
+
+    __tablename__ = "vw_transform_centrality"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    upload_id = Column(Integer, ForeignKey("uploads.id", ondelete="CASCADE"), nullable=False)
+    session_id = Column(String(64), nullable=False)
+    cluster_id = Column(Integer, default=0)
+    transform_count = Column(Integer, default=0)
+    max_centrality = Column(Float, default=0.0)
+    chokepoint_transform = Column(String(256), nullable=True)
+    avg_degree = Column(Float, default=0.0)
+
+    __table_args__ = (Index("ix_vwtranscentr_upload", "upload_id"),)
+
+
+class VwTableGravity(Base):
+    """Materialized view: V16 table gravity scores."""
+
+    __tablename__ = "vw_table_gravity"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    upload_id = Column(Integer, ForeignKey("uploads.id", ondelete="CASCADE"), nullable=False)
+    session_id = Column(String(64), nullable=False)  # table name used as ID
+    cluster_id = Column(Integer, default=0)
+    table_name = Column(String(512), nullable=False)
+    reader_count = Column(Integer, default=0)
+    writer_count = Column(Integer, default=0)
+    lookup_count = Column(Integer, default=0)
+    gravity_score = Column(Float, default=0.0)
+    is_hub = Column(Integer, default=0)
+
+    __table_args__ = (Index("ix_vwtablegrav_upload", "upload_id"),)
+
+
+class DocumentEmbedding(Base):
+    """PG-backed vector store: persists document embeddings for RAG chat.
+
+    Replaces ChromaDB's ephemeral file-based store with a durable PostgreSQL
+    table that survives Databricks App restarts.  Embeddings are stored as
+    binary blobs (numpy float32 arrays) and loaded into an LRU cache for
+    fast cosine similarity search.
+    """
+
+    __tablename__ = "document_embeddings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    upload_id = Column(Integer, ForeignKey("uploads.id", ondelete="CASCADE"), nullable=False)
+    doc_id = Column(String(256), nullable=False)       # e.g. "session:S001", "table:CUSTOMER"
+    doc_type = Column(String(32), nullable=False)       # session, table, chain, group, environment
+    content = Column(Text, nullable=False)              # document text
+    embedding_blob = Column(LargeBinary, nullable=True) # numpy float32 bytes
+    metadata_json = Column(Text, nullable=True)         # JSON metadata dict
+    chunk_index = Column(Integer, default=0)            # chunk position for chunked docs
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_docembed_upload", "upload_id"),
+        Index("ix_docembed_upload_docid", "upload_id", "doc_id"),
+    )
+
+
+# ── Phase 5: Normalized Storage Tables ────────────────────────────────────
+
+
+class TransformRecord(Base):
+    """Normalized transform instances from mapping_detail."""
+
+    __tablename__ = "transform_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    upload_id = Column(Integer, ForeignKey("uploads.id", ondelete="CASCADE"), nullable=False)
+    session_name = Column(String(512), nullable=False)
+    mapping_name = Column(String(512), nullable=True)
+    transform_name = Column(String(512), nullable=False)
+    transform_type = Column(String(64), nullable=True)
+    instance_name = Column(String(512), nullable=True)
+    port_count = Column(Integer, default=0)
+    properties_json = Column(Text, nullable=True)
+    sql_override = Column(Text, nullable=True)
+    lookup_table = Column(String(512), nullable=True)
+    lookup_condition = Column(Text, nullable=True)
+    filter_condition = Column(Text, nullable=True)
+    expression_count = Column(Integer, default=0)
+
+    __table_args__ = (
+        Index("ix_transform_upload_session", "upload_id", "session_name"),
+        Index("ix_transform_upload_type", "upload_id", "transform_type"),
+    )
+
+
+class FieldMappingRecord(Base):
+    """Normalized field-to-field mappings from connectors."""
+
+    __tablename__ = "field_mapping_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    upload_id = Column(Integer, ForeignKey("uploads.id", ondelete="CASCADE"), nullable=False)
+    session_name = Column(String(512), nullable=False)
+    from_instance = Column(String(512), nullable=False)
+    from_field = Column(String(256), nullable=False)
+    from_instance_type = Column(String(64), nullable=True)
+    to_instance = Column(String(512), nullable=False)
+    to_field = Column(String(256), nullable=False)
+    to_instance_type = Column(String(64), nullable=True)
+    from_datatype = Column(String(64), nullable=True)
+    to_datatype = Column(String(64), nullable=True)
+
+    __table_args__ = (
+        Index("ix_fieldmap_upload_session", "upload_id", "session_name"),
+        Index("ix_fieldmap_from", "upload_id", "from_instance", "from_field"),
+        Index("ix_fieldmap_to", "upload_id", "to_instance", "to_field"),
+    )
+
+
+class ExpressionRecord(Base):
+    """Normalized expression records from TRANSFORMFIELD elements."""
+
+    __tablename__ = "expression_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    upload_id = Column(Integer, ForeignKey("uploads.id", ondelete="CASCADE"), nullable=False)
+    session_name = Column(String(512), nullable=False)
+    transform_name = Column(String(512), nullable=False)
+    field_name = Column(String(256), nullable=False)
+    datatype = Column(String(64), nullable=True)
+    port_type = Column(String(32), nullable=True)
+    expression_text = Column(Text, nullable=True)
+    expression_type = Column(String(32), nullable=True)     # passthrough, derived, aggregated, etc.
+    expression_complexity = Column(Integer, default=0)
+    nesting_depth = Column(Integer, default=0)
+
+    __table_args__ = (
+        Index("ix_expr_upload_session", "upload_id", "session_name"),
+        Index("ix_expr_upload_transform", "upload_id", "transform_name"),
+    )
+
+
+class WorkflowRecord(Base):
+    """Normalized workflow execution DAGs."""
+
+    __tablename__ = "workflow_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    upload_id = Column(Integer, ForeignKey("uploads.id", ondelete="CASCADE"), nullable=False)
+    workflow_name = Column(String(512), nullable=False)
+    folder_name = Column(String(512), nullable=True)
+    session_count = Column(Integer, default=0)
+    task_count = Column(Integer, default=0)
+    worklet_count = Column(Integer, default=0)
+    has_scheduler = Column(Integer, default=0)
+    critical_path_length = Column(Integer, default=0)
+    parallelism_degree = Column(Integer, default=0)
+
+    __table_args__ = (
+        Index("ix_workflow_upload", "upload_id"),
+    )
+
+
+class LookupConfigRecord(Base):
+    """Normalized lookup configuration from transforms."""
+
+    __tablename__ = "lookup_config_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    upload_id = Column(Integer, ForeignKey("uploads.id", ondelete="CASCADE"), nullable=False)
+    session_name = Column(String(512), nullable=False)
+    lookup_name = Column(String(512), nullable=False)
+    lookup_table = Column(String(512), nullable=True)
+    lookup_condition = Column(Text, nullable=True)
+    sql_override = Column(Text, nullable=True)
+    cache_enabled = Column(Integer, default=1)
+    lookup_policy = Column(String(64), nullable=True)
+
+    __table_args__ = (
+        Index("ix_lookup_upload_session", "upload_id", "session_name"),
+    )
+
+
+class ParameterRecord(Base):
+    """Normalized parameter records ($$user_params, $PM_system_params)."""
+
+    __tablename__ = "parameter_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    upload_id = Column(Integer, ForeignKey("uploads.id", ondelete="CASCADE"), nullable=False)
+    parameter_name = Column(String(256), nullable=False)
+    parameter_type = Column(String(32), nullable=True)    # user, system, mapping_variable
+    default_value = Column(Text, nullable=True)
+    datatype = Column(String(64), nullable=True)
+    aggregate_type = Column(String(32), nullable=True)
+    used_by_sessions_json = Column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_param_upload", "upload_id"),
+        Index("ix_param_upload_name", "upload_id", "parameter_name"),
+    )
+
+
+class SQLOverrideRecord(Base):
+    """Normalized SQL override text with referenced tables."""
+
+    __tablename__ = "sql_override_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    upload_id = Column(Integer, ForeignKey("uploads.id", ondelete="CASCADE"), nullable=False)
+    session_name = Column(String(512), nullable=False)
+    transform_name = Column(String(512), nullable=False)
+    override_type = Column(String(32), nullable=True)    # source, lookup, target, pre_sql, post_sql
+    sql_text = Column(Text, nullable=False)
+    referenced_tables_json = Column(Text, nullable=True)
+    sql_complexity = Column(Integer, default=0)
+
+    __table_args__ = (
+        Index("ix_sqloverride_upload_session", "upload_id", "session_name"),
+    )
+
+
 # ── Schema Migrations ─────────────────────────────────────────────────────
 
 def _migrate_db() -> None:
@@ -801,6 +1247,17 @@ def _migrate_db() -> None:
             conn.execute(sa_text("ALTER TABLE uploads ADD COLUMN project_id INTEGER REFERENCES projects(id)"))
             logger.info("Migrated: added project_id column to uploads")
 
+    # Migrate vw_complexity_scores for D9-D16 columns (Phase 7 expansion)
+    if "vw_complexity_scores" in insp.get_table_names():
+        cs_cols = {col["name"] for col in insp.get_columns("vw_complexity_scores")}
+        with engine.begin() as conn:
+            for i in range(9, 17):
+                for suffix in ("raw", "norm"):
+                    col_name = f"d{i}_{suffix}"
+                    if col_name not in cs_cols:
+                        conn.execute(sa_text(f"ALTER TABLE vw_complexity_scores ADD COLUMN {col_name} FLOAT DEFAULT 0.0"))
+                        logger.info("Migrated: added %s to vw_complexity_scores", col_name)
+
     # Migrate session_records for V3 columns (ext_reads, lookup_count, etc.)
     if "session_records" in insp.get_table_names():
         sr_cols = {col["name"] for col in insp.get_columns("session_records")}
@@ -810,6 +1267,13 @@ def _migrate_db() -> None:
                 ("lookup_count", "INTEGER DEFAULT 0"),
                 ("mapping_detail_json", "TEXT"),
                 ("connections_used_json", "TEXT"),
+                ("folder_path", "VARCHAR(512)"),
+                ("mapping_name", "VARCHAR(512)"),
+                ("config_reference", "VARCHAR(256)"),
+                ("scheduler_name", "VARCHAR(256)"),
+                ("expression_count", "INTEGER DEFAULT 0"),
+                ("field_mapping_count", "INTEGER DEFAULT 0"),
+                ("parse_completeness_pct", "FLOAT"),
             ]:
                 if col_name not in sr_cols:
                     conn.execute(sa_text(f"ALTER TABLE session_records ADD COLUMN {col_name} {col_type}"))

@@ -15,5 +15,14 @@ export default defineConfig({
   build: {
     outDir: '../backend/static',
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Split vendor libraries into separate chunks for better caching
+          react: ['react', 'react-dom'],
+          d3: ['d3'],
+        },
+      },
+    },
   },
 });

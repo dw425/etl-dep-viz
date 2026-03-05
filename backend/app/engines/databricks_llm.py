@@ -22,10 +22,27 @@ logger = logging.getLogger("edv.databricks_llm")
 
 
 class DatabricksLLM:
-    """Databricks Foundation Model serving endpoint client."""
+    """Databricks Foundation Model serving endpoint client.
+
+    Tracks token usage (input/output) for cost monitoring.
+    """
+
+    # Class-level token usage counters (persists across instances within process)
+    _total_tokens_in: int = 0
+    _total_tokens_out: int = 0
+    _total_calls: int = 0
 
     def __init__(self, model: str = "databricks-meta-llama-3-3-70b-instruct"):
         self.model = model
+
+    @classmethod
+    def get_usage_stats(cls) -> dict:
+        """Return cumulative token usage stats."""
+        return {
+            "total_tokens_in": cls._total_tokens_in,
+            "total_tokens_out": cls._total_tokens_out,
+            "total_calls": cls._total_calls,
+        }
 
     def _call_endpoint(self, system_prompt: str, messages: list[dict], max_tokens: int) -> str:
         """Synchronous call to the Databricks Foundation Model endpoint."""
@@ -49,6 +66,11 @@ class DatabricksLLM:
         try:
             resp = urllib.request.urlopen(req, timeout=30)
             result = json.loads(resp.read())
+            # Track token usage
+            usage = result.get("usage", {})
+            DatabricksLLM._total_tokens_in += usage.get("prompt_tokens", 0)
+            DatabricksLLM._total_tokens_out += usage.get("completion_tokens", 0)
+            DatabricksLLM._total_calls += 1
             return result["choices"][0]["message"]["content"]
         except urllib.error.HTTPError as exc:
             logger.error("Databricks LLM call failed: %s (url=%s, model=%s)", exc, url, self.model)

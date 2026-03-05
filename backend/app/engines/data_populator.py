@@ -28,6 +28,9 @@ normalized DB tables (used when loading an existing upload without re-parsing):
 import hashlib
 import json
 import logging
+import re
+import threading
+import time
 from collections import defaultdict
 
 from sqlalchemy.orm import Session
@@ -35,8 +38,21 @@ from sqlalchemy.orm import Session
 from app.models.database import (
     ConnectionProfileRecord,
     ConnectionRecord,
+    ExpressionRecord,
+    FieldMappingRecord,
+    LookupConfigRecord,
+    ParameterRecord,
+    SQLOverrideRecord,
     SessionRecord,
     TableRecord,
+    TransformRecord,
+    WorkflowRecord,
+    VwAffinityPropagation,
+    VwDataFlow,
+    VwExpressionComplexity,
+    VwSchemaDrift,
+    VwTableGravity,
+    VwTransformCentrality,
     VwComplexityScores,
     VwCommunities,
     VwConcentrationGroups,
@@ -50,8 +66,11 @@ from app.models.database import (
     VwExecOrder,
     VwExplorerDetail,
     VwGalaxyNodes,
+    VwHdbscanDensity,
+    VwHierarchicalLineage,
     VwMatrixCells,
     VwReadChains,
+    VwSpectralClustering,
     VwTableProfiles,
     VwTierLayout,
     VwUmapCoords,
@@ -105,6 +124,7 @@ def populate_core_tables(
     # Insert sessions
     session_records = []
     for s in tier_data.get('sessions', []):
+        md = s.get('mapping_detail') or {}
         session_records.append(SessionRecord(
             upload_id=upload_id,
             session_id=s.get('id', ''),
@@ -122,6 +142,12 @@ def populate_core_tables(
             lookups_json=_json_dumps(s.get('lookups')),
             mapping_detail_json=_json_dumps(s.get('mapping_detail')),
             connections_used_json=_json_dumps(s.get('connections_used')),
+            folder_path=s.get('folder', ''),
+            mapping_name=s.get('mapping', md.get('mapping_name', '')),
+            config_reference=s.get('config_reference', ''),
+            scheduler_name=(s.get('scheduler') or {}).get('name', ''),
+            expression_count=len(md.get('expressions', [])),
+            field_mapping_count=len(md.get('connectors', [])),
         ))
     _bulk_save(db, session_records)
 
@@ -168,6 +194,207 @@ def populate_core_tables(
     db.flush()
     logger.info("populate_core_tables: done — %d sessions, %d tables, %d connections, %d profiles",
                 len(session_records), len(table_records), len(conn_records), len(profiles))
+
+
+# ── 1b. Normalized Storage Population (Phase 5) ──────────────────────────────
+
+_PARAM_RE = re.compile(r'(\$\$\w+|\$PM\w+)')
+_TABLE_RE = re.compile(r'\bFROM\s+([\w\$#\.@]+)', re.I)
+
+
+def _classify_expression(expr: str) -> tuple[str, int, int]:
+    """Classify expression and compute complexity + nesting depth."""
+    if not expr or expr.strip() == '':
+        return 'passthrough', 0, 0
+    e = expr.strip()
+    depth = e.count('(')
+    funcs = len(re.findall(r'\w+\(', e))
+    if e.startswith(':LKP.') or ':LKP.' in e:
+        return 'lookup', funcs + 1, depth
+    if 'IIF(' in e.upper() or 'DECODE(' in e.upper():
+        return 'conditional', funcs + depth, depth
+    if any(f in e.upper() for f in ('SUM(', 'AVG(', 'COUNT(', 'MAX(', 'MIN(')):
+        return 'aggregated', funcs + depth, depth
+    if funcs > 0:
+        return 'derived', funcs + depth, depth
+    return 'passthrough', 0, 0
+
+
+def populate_normalized_tables(
+    db: Session,
+    upload_id: int,
+    tier_data: dict,
+) -> None:
+    """Populate normalized transform/field/expression/workflow/lookup/param/sql tables.
+
+    Extracts data from mapping_detail JSON within each session.
+    """
+    logger.info("populate_normalized_tables: upload_id=%d", upload_id)
+
+    # Delete existing rows
+    for model in [SQLOverrideRecord, ParameterRecord, LookupConfigRecord,
+                  WorkflowRecord, ExpressionRecord, FieldMappingRecord, TransformRecord]:
+        _delete_for_upload(db, model, upload_id)
+
+    transform_rows = []
+    field_rows = []
+    expr_rows = []
+    lookup_rows = []
+    param_map: dict[str, set] = {}  # param_name → set of session_names
+    sql_rows = []
+
+    for s in tier_data.get('sessions', []):
+        sname = s.get('full', s.get('name', ''))
+        md = s.get('mapping_detail')
+        if not md or not isinstance(md, dict):
+            continue
+
+        mapping_name = md.get('mapping_name', s.get('mapping', ''))
+
+        # Transforms (instances)
+        for inst in md.get('instances', []):
+            iname = inst.get('name', '')
+            itype = inst.get('type', '')
+            sql_ov = inst.get('sql_override', '')
+
+            transform_rows.append(TransformRecord(
+                upload_id=upload_id,
+                session_name=sname,
+                mapping_name=mapping_name,
+                transform_name=iname,
+                transform_type=itype,
+                instance_name=inst.get('instance_name', iname),
+                port_count=inst.get('port_count', 0),
+                properties_json=_json_dumps(inst.get('properties')),
+                sql_override=sql_ov if sql_ov else None,
+                lookup_table=inst.get('lookup_table', ''),
+                lookup_condition=inst.get('lookup_condition', ''),
+                filter_condition=inst.get('filter_condition', ''),
+                expression_count=len(inst.get('fields', [])),
+            ))
+
+            # SQL Overrides
+            if sql_ov:
+                refs = _TABLE_RE.findall(sql_ov)
+                sql_rows.append(SQLOverrideRecord(
+                    upload_id=upload_id,
+                    session_name=sname,
+                    transform_name=iname,
+                    override_type='source' if 'source' in itype.lower() else 'lookup' if 'lookup' in itype.lower() else 'other',
+                    sql_text=sql_ov,
+                    referenced_tables_json=_json_dumps(refs) if refs else None,
+                    sql_complexity=sql_ov.count('(') + sql_ov.upper().count('JOIN'),
+                ))
+
+            # Lookup configs
+            lkp_table = inst.get('lookup_table', '')
+            if lkp_table and 'lookup' in itype.lower():
+                lookup_rows.append(LookupConfigRecord(
+                    upload_id=upload_id,
+                    session_name=sname,
+                    lookup_name=iname,
+                    lookup_table=lkp_table,
+                    lookup_condition=inst.get('lookup_condition', ''),
+                    sql_override=sql_ov if sql_ov else None,
+                    cache_enabled=1,
+                    lookup_policy=inst.get('lookup_policy', ''),
+                ))
+
+            # Parameters from SQL overrides and expressions
+            params_found = _PARAM_RE.findall(sql_ov) if sql_ov else []
+
+        # Connectors → field mappings
+        for conn in md.get('connectors', []):
+            from_inst = conn.get('from_instance', '')
+            to_inst = conn.get('to_instance', '')
+            from_type = conn.get('from_instance_type', '')
+            to_type = conn.get('to_instance_type', '')
+            for fm in conn.get('fields', []):
+                field_rows.append(FieldMappingRecord(
+                    upload_id=upload_id,
+                    session_name=sname,
+                    from_instance=from_inst,
+                    from_field=fm.get('from_field', ''),
+                    from_instance_type=from_type,
+                    to_instance=to_inst,
+                    to_field=fm.get('to_field', fm.get('from_field', '')),
+                    to_instance_type=to_type,
+                    from_datatype=fm.get('from_datatype', ''),
+                    to_datatype=fm.get('to_datatype', ''),
+                ))
+
+        # Expressions
+        for exp in md.get('expressions', []):
+            expr_text = exp.get('expression', '')
+            etype, complexity, depth = _classify_expression(expr_text)
+            expr_rows.append(ExpressionRecord(
+                upload_id=upload_id,
+                session_name=sname,
+                transform_name=exp.get('transform', ''),
+                field_name=exp.get('field', ''),
+                datatype=exp.get('datatype', ''),
+                port_type=exp.get('port_type', ''),
+                expression_text=expr_text,
+                expression_type=etype,
+                expression_complexity=complexity,
+                nesting_depth=depth,
+            ))
+            # Collect params from expressions
+            if expr_text:
+                for p in _PARAM_RE.findall(expr_text):
+                    param_map.setdefault(p, set()).add(sname)
+
+        # Collect params from mapping_variables
+        for mv in s.get('mapping_variables', []):
+            pname = mv.get('name', '')
+            if pname:
+                param_map.setdefault(pname, set()).add(sname)
+
+    # Bulk save in batches
+    _bulk_save(db, transform_rows)
+    _bulk_save(db, field_rows)
+    _bulk_save(db, expr_rows)
+    _bulk_save(db, lookup_rows)
+    _bulk_save(db, sql_rows)
+
+    # Parameters
+    param_rows = []
+    for pname, session_set in param_map.items():
+        ptype = 'system' if pname.startswith('$PM') else 'user'
+        param_rows.append(ParameterRecord(
+            upload_id=upload_id,
+            parameter_name=pname,
+            parameter_type=ptype,
+            used_by_sessions_json=_json_dumps(sorted(session_set)),
+        ))
+    _bulk_save(db, param_rows)
+
+    # Workflows — from tier_data sessions grouped by workflow name
+    wf_map: dict[str, dict] = {}
+    for s in tier_data.get('sessions', []):
+        wf = s.get('workflow', '')
+        if wf:
+            if wf not in wf_map:
+                wf_map[wf] = {'sessions': 0, 'tasks': 0, 'folder': s.get('folder', '')}
+            wf_map[wf]['sessions'] += 1
+            wf_map[wf]['tasks'] += 1
+
+    wf_rows = []
+    for wf_name, info in wf_map.items():
+        wf_rows.append(WorkflowRecord(
+            upload_id=upload_id,
+            workflow_name=wf_name,
+            folder_name=info.get('folder', ''),
+            session_count=info['sessions'],
+            task_count=info['tasks'],
+        ))
+    _bulk_save(db, wf_rows)
+
+    db.flush()
+    logger.info("populate_normalized_tables: done — %d transforms, %d fields, %d expressions, "
+                "%d lookups, %d params, %d sql_overrides, %d workflows",
+                len(transform_rows), len(field_rows), len(expr_rows),
+                len(lookup_rows), len(param_rows), len(sql_rows), len(wf_rows))
 
 
 # ── 2. Per-View Table Population ─────────────────────────────────────────────
@@ -681,45 +908,83 @@ def populate_vector_tables(
     if 'v8_ensemble_consensus' in vector_results:
         _populate_ensemble(db, upload_id, vector_results['v8_ensemble_consensus'])
 
+    # V2 — Hierarchical lineage
+    if 'v2_hierarchical_lineage' in vector_results:
+        _populate_hierarchical(db, upload_id, vector_results['v2_hierarchical_lineage'])
+
+    # V5 — Affinity propagation
+    if 'v5_affinity_propagation' in vector_results:
+        _populate_affinity(db, upload_id, vector_results['v5_affinity_propagation'])
+
+    # V6 — Spectral clustering
+    if 'v6_spectral_clustering' in vector_results:
+        _populate_spectral(db, upload_id, vector_results['v6_spectral_clustering'])
+
+    # V7 — HDBSCAN density
+    if 'v7_hdbscan_density' in vector_results:
+        _populate_hdbscan(db, upload_id, vector_results['v7_hdbscan_density'])
+
+    # V12 — Expression complexity
+    if 'v12_expression_complexity' in vector_results:
+        _populate_expression_complexity(db, upload_id, vector_results['v12_expression_complexity'])
+
+    # V13 — Data flow volume
+    if 'v13_data_flow' in vector_results:
+        _populate_data_flow(db, upload_id, vector_results['v13_data_flow'])
+
+    # V14 — Schema drift
+    if 'v14_schema_drift' in vector_results:
+        _populate_schema_drift(db, upload_id, vector_results['v14_schema_drift'])
+
+    # V15 — Transform centrality
+    if 'v15_transform_centrality' in vector_results:
+        _populate_transform_centrality(db, upload_id, vector_results['v15_transform_centrality'])
+
+    # V16 — Table gravity
+    if 'v16_table_gravity' in vector_results:
+        _populate_table_gravity(db, upload_id, vector_results['v16_table_gravity'])
+
     db.flush()
     logger.info("populate_vector_tables: done")
 
 
 def _populate_complexity(db: Session, upload_id: int, data: dict) -> None:
-    """Populate vw_complexity_scores from V11 output."""
+    """Populate vw_complexity_scores from V11 output (16 dimensions)."""
     _delete_for_upload(db, VwComplexityScores, upload_id)
     rows = []
     for item in data.get('scores', data.get('sessions', [])):
         dims_raw = item.get('dimensions_raw', item.get('raw', {}))
         dims_norm = item.get('dimensions_normalized', item.get('normalized', {}))
         est = item.get('effort_estimate', item.get('estimate', {}))
-        rows.append(VwComplexityScores(
-            upload_id=upload_id,
-            session_id=str(item.get('session_id', item.get('id', ''))),
-            name=item.get('name', ''),
-            tier=item.get('tier'),
-            overall_score=item.get('overall_score', item.get('score', 0)),
-            bucket=item.get('bucket', item.get('complexity_bucket', '')),
-            d1_raw=dims_raw.get('d1', dims_raw.get('transforms', 0)),
-            d2_raw=dims_raw.get('d2', dims_raw.get('sources', 0)),
-            d3_raw=dims_raw.get('d3', dims_raw.get('targets', 0)),
-            d4_raw=dims_raw.get('d4', dims_raw.get('lookups', 0)),
-            d5_raw=dims_raw.get('d5', dims_raw.get('tier_depth', 0)),
-            d6_raw=dims_raw.get('d6', dims_raw.get('connections', 0)),
-            d7_raw=dims_raw.get('d7', dims_raw.get('ext_reads', 0)),
-            d8_raw=dims_raw.get('d8', dims_raw.get('criticality', 0)),
-            d1_norm=dims_norm.get('d1', dims_norm.get('transforms', 0)),
-            d2_norm=dims_norm.get('d2', dims_norm.get('sources', 0)),
-            d3_norm=dims_norm.get('d3', dims_norm.get('targets', 0)),
-            d4_norm=dims_norm.get('d4', dims_norm.get('lookups', 0)),
-            d5_norm=dims_norm.get('d5', dims_norm.get('tier_depth', 0)),
-            d6_norm=dims_norm.get('d6', dims_norm.get('connections', 0)),
-            d7_norm=dims_norm.get('d7', dims_norm.get('ext_reads', 0)),
-            d8_norm=dims_norm.get('d8', dims_norm.get('criticality', 0)),
-            hours_low=est.get('hours_low', est.get('low', 0)),
-            hours_high=est.get('hours_high', est.get('high', 0)),
-            top_drivers_json=_json_dumps(item.get('top_drivers')),
-        ))
+        # Build dimension values — support both new (dimensions list) and legacy (dict) formats
+        dim_raw_vals = {}
+        dim_norm_vals = {}
+        dimensions_list = item.get('dimensions', [])
+        if dimensions_list:
+            # New format: list of {name, raw_value, normalized, ...}
+            for idx, dim in enumerate(dimensions_list, 1):
+                dim_raw_vals[f'd{idx}'] = dim.get('raw_value', 0)
+                dim_norm_vals[f'd{idx}'] = dim.get('normalized', 0)
+        else:
+            # Legacy dict format
+            for i in range(1, 17):
+                dim_raw_vals[f'd{i}'] = dims_raw.get(f'd{i}', 0)
+                dim_norm_vals[f'd{i}'] = dims_norm.get(f'd{i}', 0)
+        kwargs = {
+            'upload_id': upload_id,
+            'session_id': str(item.get('session_id', item.get('id', ''))),
+            'name': item.get('name', ''),
+            'tier': item.get('tier'),
+            'overall_score': item.get('overall_score', item.get('score', 0)),
+            'bucket': item.get('bucket', item.get('complexity_bucket', '')),
+            'hours_low': item.get('hours_estimate_low', est.get('hours_low', est.get('low', 0))),
+            'hours_high': item.get('hours_estimate_high', est.get('hours_high', est.get('high', 0))),
+            'top_drivers_json': _json_dumps(item.get('top_drivers')),
+        }
+        for i in range(1, 17):
+            kwargs[f'd{i}_raw'] = dim_raw_vals.get(f'd{i}', 0)
+            kwargs[f'd{i}_norm'] = dim_norm_vals.get(f'd{i}', 0)
+        rows.append(VwComplexityScores(**kwargs))
     _bulk_save(db, rows)
 
 
@@ -912,17 +1177,187 @@ def _populate_ensemble(db: Session, upload_id: int, data: dict) -> None:
     _bulk_save(db, rows)
 
 
+def _populate_hierarchical(db: Session, upload_id: int, data: dict) -> None:
+    """Populate vw_hierarchical_lineage from V2 output."""
+    _delete_for_upload(db, VwHierarchicalLineage, upload_id)
+    rows = []
+    for item in data.get('assignments', data.get('clusters', data.get('sessions', []))):
+        rows.append(VwHierarchicalLineage(
+            upload_id=upload_id,
+            session_id=str(item.get('session_id', item.get('id', ''))),
+            cluster_id=item.get('cluster_id', item.get('cluster')),
+            level=item.get('level', 0),
+            parent_cluster=item.get('parent_cluster'),
+            merge_distance=item.get('merge_distance', 0),
+            session_count=item.get('session_count', 1),
+        ))
+    _bulk_save(db, rows)
+
+
+def _populate_affinity(db: Session, upload_id: int, data: dict) -> None:
+    """Populate vw_affinity_propagation from V5 output."""
+    _delete_for_upload(db, VwAffinityPropagation, upload_id)
+    rows = []
+    for item in data.get('assignments', data.get('clusters', data.get('sessions', []))):
+        rows.append(VwAffinityPropagation(
+            upload_id=upload_id,
+            session_id=str(item.get('session_id', item.get('id', ''))),
+            exemplar_id=str(item.get('exemplar_id', item.get('exemplar', ''))),
+            cluster_id=item.get('cluster_id', item.get('cluster')),
+            responsibility=item.get('responsibility', 0),
+            availability=item.get('availability', 0),
+            preference=item.get('preference', 0),
+        ))
+    _bulk_save(db, rows)
+
+
+def _populate_spectral(db: Session, upload_id: int, data: dict) -> None:
+    """Populate vw_spectral_clustering from V6 output."""
+    _delete_for_upload(db, VwSpectralClustering, upload_id)
+    rows = []
+    for item in data.get('assignments', data.get('clusters', data.get('sessions', []))):
+        rows.append(VwSpectralClustering(
+            upload_id=upload_id,
+            session_id=str(item.get('session_id', item.get('id', ''))),
+            cluster_id=item.get('cluster_id', item.get('cluster')),
+            eigenvalue=item.get('eigenvalue', 0),
+            eigen_gap=item.get('eigen_gap', 0),
+        ))
+    _bulk_save(db, rows)
+
+
+def _populate_hdbscan(db: Session, upload_id: int, data: dict) -> None:
+    """Populate vw_hdbscan_density from V7 output."""
+    _delete_for_upload(db, VwHdbscanDensity, upload_id)
+    rows = []
+    for item in data.get('assignments', data.get('clusters', data.get('sessions', []))):
+        rows.append(VwHdbscanDensity(
+            upload_id=upload_id,
+            session_id=str(item.get('session_id', item.get('id', ''))),
+            cluster_id=item.get('cluster_id', item.get('cluster')),
+            probability=item.get('probability', 0),
+            outlier_score=item.get('outlier_score', 0),
+            persistence=item.get('persistence', 0),
+        ))
+    _bulk_save(db, rows)
+
+
+def _populate_expression_complexity(db: Session, upload_id: int, data: dict) -> None:
+    """Populate vw_expression_complexity from V12 output."""
+    _delete_for_upload(db, VwExpressionComplexity, upload_id)
+    rows = []
+    for item in data.get('assignments', data.get('sessions', [])):
+        rows.append(VwExpressionComplexity(
+            upload_id=upload_id,
+            session_id=str(item.get('session_id', '')),
+            cluster_id=item.get('cluster_id', 0),
+            expression_count=item.get('expression_count', 0),
+            avg_depth=item.get('avg_depth', 0),
+            total_functions=item.get('total_functions', 0),
+            expression_density=item.get('expression_density', 0),
+            score=item.get('score', 0),
+            bucket=item.get('bucket', ''),
+        ))
+    _bulk_save(db, rows)
+
+
+def _populate_data_flow(db: Session, upload_id: int, data: dict) -> None:
+    """Populate vw_data_flow from V13 output."""
+    _delete_for_upload(db, VwDataFlow, upload_id)
+    rows = []
+    for item in data.get('assignments', data.get('sessions', [])):
+        rows.append(VwDataFlow(
+            upload_id=upload_id,
+            session_id=str(item.get('session_id', '')),
+            cluster_id=item.get('cluster_id', 0),
+            source_volume=item.get('source_volume', 0),
+            output_volume=item.get('output_volume', 0),
+            funnel_ratio=item.get('funnel_ratio', 0),
+            bottleneck_transform=item.get('bottleneck_transform', ''),
+        ))
+    _bulk_save(db, rows)
+
+
+def _populate_schema_drift(db: Session, upload_id: int, data: dict) -> None:
+    """Populate vw_schema_drift from V14 output."""
+    _delete_for_upload(db, VwSchemaDrift, upload_id)
+    rows = []
+    for item in data.get('assignments', data.get('sessions', [])):
+        rows.append(VwSchemaDrift(
+            upload_id=upload_id,
+            session_id=str(item.get('session_id', '')),
+            cluster_id=item.get('cluster_id', 0),
+            field_count=item.get('field_count', 0),
+            drift_score=item.get('drift_score', 0),
+            added_fields=item.get('added_fields', 0),
+            removed_fields=item.get('removed_fields', 0),
+            type_changes=item.get('type_changes', 0),
+        ))
+    _bulk_save(db, rows)
+
+
+def _populate_transform_centrality(db: Session, upload_id: int, data: dict) -> None:
+    """Populate vw_transform_centrality from V15 output."""
+    _delete_for_upload(db, VwTransformCentrality, upload_id)
+    rows = []
+    for item in data.get('assignments', data.get('sessions', [])):
+        rows.append(VwTransformCentrality(
+            upload_id=upload_id,
+            session_id=str(item.get('session_id', '')),
+            cluster_id=item.get('cluster_id', 0),
+            transform_count=item.get('transform_count', 0),
+            max_centrality=item.get('max_centrality', 0),
+            chokepoint_transform=item.get('chokepoint_transform', ''),
+            avg_degree=item.get('avg_degree', 0),
+        ))
+    _bulk_save(db, rows)
+
+
+def _populate_table_gravity(db: Session, upload_id: int, data: dict) -> None:
+    """Populate vw_table_gravity from V16 output."""
+    _delete_for_upload(db, VwTableGravity, upload_id)
+    rows = []
+    for item in data.get('assignments', data.get('tables', [])):
+        rows.append(VwTableGravity(
+            upload_id=upload_id,
+            session_id=str(item.get('session_id', item.get('table_name', ''))),
+            cluster_id=item.get('cluster_id', 0),
+            table_name=item.get('table_name', ''),
+            reader_count=item.get('reader_count', 0),
+            writer_count=item.get('writer_count', 0),
+            lookup_count=item.get('lookup_count', 0),
+            gravity_score=item.get('gravity_score', 0),
+            is_hub=1 if item.get('is_hub') else 0,
+        ))
+    _bulk_save(db, rows)
+
+
 # ── 5. Reconstruct tier_data from normalized tables ──────────────────────────
+
+# TTL cache for reconstruct_tier_data: {upload_id: (data, expire_time)}
+_tier_cache: dict[int, tuple[dict, float]] = {}
+_tier_cache_lock = threading.Lock()
+_TIER_CACHE_TTL = 600  # 10 minutes
+
+
+def invalidate_tier_cache(upload_id: int) -> None:
+    """Invalidate cached tier_data for an upload (call after re-parse or delete)."""
+    with _tier_cache_lock:
+        _tier_cache.pop(upload_id, None)
+
 
 def reconstruct_tier_data(db: Session, upload_id: int) -> dict | None:
     """Reconstruct full tier_data dict from normalized DB tables.
 
-    Used when loading an existing upload from the database without re-parsing
-    the original XML files. Rebuilds the same dict shape that infa_engine.analyze()
-    or nifi_tier_engine.analyze() would produce.
-
-    Returns None if no sessions exist for the upload_id.
+    Results are cached for 10 minutes per upload_id. Call invalidate_tier_cache()
+    after re-parse or delete. Returns None if no sessions exist.
     """
+    # Check TTL cache first
+    with _tier_cache_lock:
+        cached = _tier_cache.get(upload_id)
+        if cached and cached[1] > time.monotonic():
+            return cached[0]
+
     sessions = db.query(SessionRecord).filter(SessionRecord.upload_id == upload_id).all()
     if not sessions:
         return None
@@ -969,7 +1404,7 @@ def reconstruct_tier_data(db: Session, upload_id: int) -> dict | None:
             'type': c.conn_type,
         })
 
-    return {
+    result = {
         'sessions': session_list,
         'tables': table_list,
         'connections': conn_list,
@@ -982,6 +1417,12 @@ def reconstruct_tier_data(db: Session, upload_id: int) -> dict | None:
             'max_tier': max((s.get('tier', 0) for s in session_list), default=0),
         },
     }
+
+    # Store in TTL cache
+    with _tier_cache_lock:
+        _tier_cache[upload_id] = (result, time.monotonic() + _TIER_CACHE_TTL)
+
+    return result
 
 
 # ── 6. Reconstruct constellation from materialized tables ─────────────────
@@ -1090,7 +1531,7 @@ def reconstruct_vector_results(db: Session, upload_id: int) -> dict | None:
         except (json.JSONDecodeError, TypeError):
             return []
 
-    # V11 — Complexity
+    # V11 — Complexity (16 dimensions)
     complexity_rows = db.query(VwComplexityScores).filter(
         VwComplexityScores.upload_id == upload_id
     ).all()
@@ -1103,8 +1544,8 @@ def reconstruct_vector_results(db: Session, upload_id: int) -> dict | None:
                     'tier': r.tier,
                     'overall_score': r.overall_score,
                     'bucket': r.bucket,
-                    'dimensions_raw': {f'd{i}': getattr(r, f'd{i}_raw', 0) for i in range(1, 9)},
-                    'dimensions_normalized': {f'd{i}': getattr(r, f'd{i}_norm', 0) for i in range(1, 9)},
+                    'dimensions_raw': {f'd{i}': getattr(r, f'd{i}_raw', 0) or 0 for i in range(1, 17)},
+                    'dimensions_normalized': {f'd{i}': getattr(r, f'd{i}_norm', 0) or 0 for i in range(1, 17)},
                     'hours_low': r.hours_low,
                     'hours_high': r.hours_high,
                     'top_drivers': _jl(r.top_drivers_json),
@@ -1248,6 +1689,180 @@ def reconstruct_vector_results(db: Session, upload_id: int) -> dict | None:
                 }
                 for r in ens_rows
             ],
+        }
+
+    # V2 — Hierarchical Lineage
+    hier_rows = db.query(VwHierarchicalLineage).filter(
+        VwHierarchicalLineage.upload_id == upload_id
+    ).all()
+    if hier_rows:
+        results['v2_hierarchical_lineage'] = {
+            'assignments': [
+                {
+                    'session_id': r.session_id,
+                    'cluster_id': r.cluster_id,
+                    'level': r.level,
+                    'parent_cluster': r.parent_cluster,
+                    'merge_distance': r.merge_distance,
+                    'session_count': r.session_count,
+                }
+                for r in hier_rows
+            ],
+        }
+
+    # V5 — Affinity Propagation
+    ap_rows = db.query(VwAffinityPropagation).filter(
+        VwAffinityPropagation.upload_id == upload_id
+    ).all()
+    if ap_rows:
+        results['v5_affinity_propagation'] = {
+            'assignments': [
+                {
+                    'session_id': r.session_id,
+                    'exemplar_id': r.exemplar_id,
+                    'cluster_id': r.cluster_id,
+                    'responsibility': r.responsibility,
+                    'availability': r.availability,
+                    'preference': r.preference,
+                }
+                for r in ap_rows
+            ],
+        }
+
+    # V6 — Spectral Clustering
+    spec_rows = db.query(VwSpectralClustering).filter(
+        VwSpectralClustering.upload_id == upload_id
+    ).all()
+    if spec_rows:
+        results['v6_spectral_clustering'] = {
+            'assignments': [
+                {
+                    'session_id': r.session_id,
+                    'cluster_id': r.cluster_id,
+                    'eigenvalue': r.eigenvalue,
+                    'eigen_gap': r.eigen_gap,
+                }
+                for r in spec_rows
+            ],
+        }
+
+    # V7 — HDBSCAN Density
+    hdb_rows = db.query(VwHdbscanDensity).filter(
+        VwHdbscanDensity.upload_id == upload_id
+    ).all()
+    if hdb_rows:
+        results['v7_hdbscan_density'] = {
+            'assignments': [
+                {
+                    'session_id': r.session_id,
+                    'cluster_id': r.cluster_id,
+                    'probability': r.probability,
+                    'outlier_score': r.outlier_score,
+                    'persistence': r.persistence,
+                }
+                for r in hdb_rows
+            ],
+        }
+
+    # V12 — Expression Complexity
+    ec_rows = db.query(VwExpressionComplexity).filter(
+        VwExpressionComplexity.upload_id == upload_id
+    ).all()
+    if ec_rows:
+        results['v12_expression_complexity'] = {
+            'assignments': [
+                {
+                    'session_id': r.session_id,
+                    'cluster_id': r.cluster_id,
+                    'expression_count': r.expression_count,
+                    'avg_depth': r.avg_depth,
+                    'total_functions': r.total_functions,
+                    'expression_density': r.expression_density,
+                    'score': r.score,
+                    'bucket': r.bucket,
+                }
+                for r in ec_rows
+            ],
+        }
+
+    # V13 — Data Flow
+    df_rows = db.query(VwDataFlow).filter(
+        VwDataFlow.upload_id == upload_id
+    ).all()
+    if df_rows:
+        results['v13_data_flow'] = {
+            'assignments': [
+                {
+                    'session_id': r.session_id,
+                    'cluster_id': r.cluster_id,
+                    'source_volume': r.source_volume,
+                    'output_volume': r.output_volume,
+                    'funnel_ratio': r.funnel_ratio,
+                    'bottleneck_transform': r.bottleneck_transform,
+                }
+                for r in df_rows
+            ],
+        }
+
+    # V14 — Schema Drift
+    sd_rows = db.query(VwSchemaDrift).filter(
+        VwSchemaDrift.upload_id == upload_id
+    ).all()
+    if sd_rows:
+        results['v14_schema_drift'] = {
+            'assignments': [
+                {
+                    'session_id': r.session_id,
+                    'cluster_id': r.cluster_id,
+                    'field_count': r.field_count,
+                    'drift_score': r.drift_score,
+                    'added_fields': r.added_fields,
+                    'removed_fields': r.removed_fields,
+                    'type_changes': r.type_changes,
+                }
+                for r in sd_rows
+            ],
+        }
+
+    # V15 — Transform Centrality
+    tc_rows = db.query(VwTransformCentrality).filter(
+        VwTransformCentrality.upload_id == upload_id
+    ).all()
+    if tc_rows:
+        results['v15_transform_centrality'] = {
+            'assignments': [
+                {
+                    'session_id': r.session_id,
+                    'cluster_id': r.cluster_id,
+                    'transform_count': r.transform_count,
+                    'max_centrality': r.max_centrality,
+                    'chokepoint_transform': r.chokepoint_transform,
+                    'avg_degree': r.avg_degree,
+                }
+                for r in tc_rows
+            ],
+        }
+
+    # V16 — Table Gravity
+    tg_rows = db.query(VwTableGravity).filter(
+        VwTableGravity.upload_id == upload_id
+    ).all()
+    if tg_rows:
+        results['v16_table_gravity'] = {
+            'assignments': [
+                {
+                    'session_id': r.session_id,
+                    'cluster_id': r.cluster_id,
+                    'table_name': r.table_name,
+                    'reader_count': r.reader_count,
+                    'writer_count': r.writer_count,
+                    'lookup_count': r.lookup_count,
+                    'gravity_score': r.gravity_score,
+                    'is_hub': bool(r.is_hub),
+                }
+                for r in tg_rows
+            ],
+            'hub_tables': [r.table_name for r in tg_rows if r.is_hub],
         }
 
     if results:

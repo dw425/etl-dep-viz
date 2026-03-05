@@ -49,6 +49,11 @@ _VECTOR_DEPS: dict[str, set[str]] = {
     'v6_spectral': set(),
     'v7_hdbscan': {'v3_umap'},
     'v8_ensemble': {'v1_community', 'v5_affinity', 'v6_spectral', 'v7_hdbscan'},
+    'v12_expression_complexity': set(),
+    'v13_data_flow': set(),
+    'v14_schema_drift': set(),
+    'v15_transform_centrality': set(),
+    'v16_table_gravity': set(),
 }
 
 # Map vector key -> result key in output dict
@@ -64,6 +69,11 @@ _VECTOR_RESULT_KEYS: dict[str, str] = {
     'v6_spectral': 'v6_spectral_clustering',
     'v7_hdbscan': 'v7_hdbscan_density',
     'v8_ensemble': 'v8_ensemble_consensus',
+    'v12_expression_complexity': 'v12_expression_complexity',
+    'v13_data_flow': 'v13_data_flow',
+    'v14_schema_drift': 'v14_schema_drift',
+    'v15_transform_centrality': 'v15_transform_centrality',
+    'v16_table_gravity': 'v16_table_gravity',
 }
 
 
@@ -238,6 +248,66 @@ class VectorOrchestrator:
         except ImportError:
             logger.warning("V10 not available — skipping")
 
+        # V12: Expression Complexity
+        try:
+            from .v12_expression_complexity import ExpressionComplexityVector
+            t0 = time.monotonic()
+            v12 = ExpressionComplexityVector()
+            v12_result = v12.run(features, tier_data)
+            self._timings["v12_expression_complexity"] = time.monotonic() - t0
+            results["v12_expression_complexity"] = v12_result.to_dict()
+            logger.info("V12 Expression Complexity: %.2fs", self._timings["v12_expression_complexity"])
+        except ImportError:
+            logger.warning("V12 not available — skipping")
+
+        # V13: Data Flow Volume
+        try:
+            from .v13_data_flow import DataFlowVector
+            t0 = time.monotonic()
+            v13 = DataFlowVector()
+            v13_result = v13.run(features, tier_data)
+            self._timings["v13_data_flow"] = time.monotonic() - t0
+            results["v13_data_flow"] = v13_result.to_dict()
+            logger.info("V13 Data Flow: %.2fs", self._timings["v13_data_flow"])
+        except ImportError:
+            logger.warning("V13 not available — skipping")
+
+        # V14: Schema Drift
+        try:
+            from .v14_schema_drift import SchemaDriftVector
+            t0 = time.monotonic()
+            v14 = SchemaDriftVector()
+            v14_result = v14.run(features, tier_data)
+            self._timings["v14_schema_drift"] = time.monotonic() - t0
+            results["v14_schema_drift"] = v14_result.to_dict()
+            logger.info("V14 Schema Drift: %.2fs", self._timings["v14_schema_drift"])
+        except ImportError:
+            logger.warning("V14 not available — skipping")
+
+        # V15: Transform Centrality
+        try:
+            from .v15_transform_centrality import TransformCentralityVector
+            t0 = time.monotonic()
+            v15 = TransformCentralityVector()
+            v15_result = v15.run(features, tier_data)
+            self._timings["v15_transform_centrality"] = time.monotonic() - t0
+            results["v15_transform_centrality"] = v15_result.to_dict()
+            logger.info("V15 Transform Centrality: %.2fs", self._timings["v15_transform_centrality"])
+        except ImportError:
+            logger.warning("V15 not available — skipping")
+
+        # V16: Table Gravity
+        try:
+            from .v16_table_gravity import TableGravityVector
+            t0 = time.monotonic()
+            v16 = TableGravityVector()
+            v16_result = v16.run(features, tier_data)
+            self._timings["v16_table_gravity"] = time.monotonic() - t0
+            results["v16_table_gravity"] = v16_result.to_dict()
+            logger.info("V16 Table Gravity: %.2fs", self._timings["v16_table_gravity"])
+        except ImportError:
+            logger.warning("V16 not available — skipping")
+
         results["timings"] = {k: round(v, 3) for k, v in self._timings.items()}
         return results
 
@@ -352,6 +422,8 @@ class VectorOrchestrator:
         phase_order = {
             'v1_community': 1, 'v4_wave_plan': 1, 'v11_complexity': 1,
             'v2_hierarchical': 2, 'v3_umap': 2, 'v9_wave_function': 2, 'v10_concentration': 2,
+            'v12_expression_complexity': 2, 'v13_data_flow': 2, 'v14_schema_drift': 2,
+            'v15_transform_centrality': 2, 'v16_table_gravity': 2,
             'v5_affinity': 3, 'v6_spectral': 3, 'v7_hdbscan': 3, 'v8_ensemble': 3,
         }
         ordered = sorted(to_run, key=lambda v: phase_order.get(v, 99))
@@ -483,6 +555,36 @@ class VectorOrchestrator:
             v8 = EnsembleConsensusVector()
             r = v8.run(results, builder.session_ids)
             results["v8_ensemble_consensus"] = r.to_dict()
+
+        elif vec_key == 'v12_expression_complexity':
+            from .v12_expression_complexity import ExpressionComplexityVector
+            v12 = ExpressionComplexityVector()
+            r = v12.run(features, tier_data)
+            results["v12_expression_complexity"] = r.to_dict()
+
+        elif vec_key == 'v13_data_flow':
+            from .v13_data_flow import DataFlowVector
+            v13 = DataFlowVector()
+            r = v13.run(features, tier_data)
+            results["v13_data_flow"] = r.to_dict()
+
+        elif vec_key == 'v14_schema_drift':
+            from .v14_schema_drift import SchemaDriftVector
+            v14 = SchemaDriftVector()
+            r = v14.run(features, tier_data)
+            results["v14_schema_drift"] = r.to_dict()
+
+        elif vec_key == 'v15_transform_centrality':
+            from .v15_transform_centrality import TransformCentralityVector
+            v15 = TransformCentralityVector()
+            r = v15.run(features, tier_data)
+            results["v15_transform_centrality"] = r.to_dict()
+
+        elif vec_key == 'v16_table_gravity':
+            from .v16_table_gravity import TableGravityVector
+            v16 = TableGravityVector()
+            r = v16.run(features, tier_data)
+            results["v16_table_gravity"] = r.to_dict()
 
     # ── Parameter sensitivity sweep (Item 32) ────────────────────────────
 

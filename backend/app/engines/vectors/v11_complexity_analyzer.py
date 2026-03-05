@@ -1,22 +1,30 @@
-"""V11 Complexity Analyzer — 8-dimension weighted complexity scoring.
+"""V11 Complexity Analyzer — 16-dimension weighted complexity scoring.
 
-Scores each session across 8 dimensions using percentile-based normalization
+Scores each session across 16 dimensions using percentile-based normalization
 and assigns complexity buckets (Simple/Medium/Complex/Very Complex) with
 hours estimates.
 
 Dimension Definitions:
-  D1: Transform Volume  — number of transform operations
-  D2: Table Diversity    — count of unique tables touched (source ∪ target ∪ lookup)
-  D3: Risk               — write conflicts + staleness risks
-  D4: IO Volume          — total table references (sources + targets + lookups, non-unique)
-  D5: Lookup Intensity   — number of lookup operations
-  D6: Coupling           — how many other sessions share tables with this session
-  D7: Structural Depth   — tier (position in dependency chain)
-  D8: External Reads     — external read operations
+  D1:  Transform Volume      — number of transform operations
+  D2:  Table Diversity       — count of unique tables touched (source ∪ target ∪ lookup)
+  D3:  Risk                  — write conflicts + staleness risks
+  D4:  IO Volume             — total table references (sources + targets + lookups, non-unique)
+  D5:  Lookup Intensity      — number of lookup operations
+  D6:  Coupling              — how many other sessions share tables with this session
+  D7:  Structural Depth      — tier (position in dependency chain)
+  D8:  External Reads        — external read operations
+  D9:  Expression Complexity — average nesting depth of expressions
+  D10: Parameter Dependency  — number of parameters/variables used
+  D11: SQL Override Complexity — number of SQL overrides (custom SQL transforms)
+  D12: Join Complexity       — number of joiner transforms
+  D13: Field Mapping Density — field count relative to transform count
+  D14: Lookup Cache Potential — number of lookup transforms (cacheable work)
+  D15: Error Handling        — filter + router transforms (branching/error handling)
+  D16: Schedule Dependency   — schedule frequency code (higher = more frequent)
 
 Normalization: Percentile-based (outlier-resistant). For dimensions where 0
-means "no complexity" (D1, D3, D4, D5, D6, D8), zero values map to 0 and
-non-zero values are percentile-ranked within the non-zero subset.
+means "no complexity" (D1, D3, D4, D5, D6, D8, D9-D16), zero values map to 0
+and non-zero values are percentile-ranked within the non-zero subset.
 """
 
 from __future__ import annotations
@@ -35,14 +43,22 @@ class ComplexityConfig:
 
     # Dimension weights (must sum to 1.0)
     weights: dict[str, float] = field(default_factory=lambda: {
-        "D1_transform_volume": 0.15,
-        "D2_diversity": 0.10,
-        "D3_risk": 0.20,
-        "D4_io_volume": 0.10,
-        "D5_lookup_intensity": 0.10,
-        "D6_coupling": 0.15,
-        "D7_structural_depth": 0.10,
-        "D8_external_reads": 0.10,
+        "D1_transform_volume": 0.10,
+        "D2_diversity": 0.07,
+        "D3_risk": 0.12,
+        "D4_io_volume": 0.07,
+        "D5_lookup_intensity": 0.07,
+        "D6_coupling": 0.10,
+        "D7_structural_depth": 0.07,
+        "D8_external_reads": 0.05,
+        "D9_expression_complexity": 0.08,
+        "D10_parameter_dependency": 0.04,
+        "D11_sql_override_complexity": 0.05,
+        "D12_join_complexity": 0.05,
+        "D13_field_mapping_density": 0.04,
+        "D14_lookup_cache_potential": 0.03,
+        "D15_error_handling": 0.03,
+        "D16_schedule_dependency": 0.03,
     })
 
     # Bucket boundaries (0-100 scale)
@@ -68,6 +84,10 @@ class ComplexityConfig:
     zero_floor_dims: set[str] = field(default_factory=lambda: {
         "D1_transform_volume", "D3_risk", "D4_io_volume",
         "D5_lookup_intensity", "D6_coupling", "D8_external_reads",
+        "D9_expression_complexity", "D10_parameter_dependency",
+        "D11_sql_override_complexity", "D12_join_complexity",
+        "D13_field_mapping_density", "D14_lookup_cache_potential",
+        "D15_error_handling", "D16_schedule_dependency",
     })
 
 
@@ -132,10 +152,10 @@ class ComplexityAnalysisResult:
 
 
 class ComplexityAnalyzer:
-    """V11: 8-dimension complexity analysis for ETL sessions.
+    """V11: 16-dimension complexity analysis for ETL sessions.
 
     Pipeline:
-      1. Extract raw dimension values (D1-D8) for each session from SessionFeatures.
+      1. Extract raw dimension values (D1-D16) for each session from SessionFeatures.
       2. Percentile-normalize each dimension across the population (outlier-resistant).
       3. Compute weighted composite score (0-100) using configurable dimension weights.
       4. Assign bucket (Simple/Medium/Complex/Very Complex) and hours estimate.
@@ -244,6 +264,7 @@ class ComplexityAnalyzer:
 
     def _raw_values(self, feat: SessionFeatures, coupling: dict[str, int]) -> dict[str, float]:
         """Compute raw dimension values for a single session."""
+        field_density = feat.field_count / max(feat.transform_count, 1)
         return {
             "D1_transform_volume": feat.transform_count,
             "D2_diversity": len(
@@ -257,6 +278,14 @@ class ComplexityAnalyzer:
             "D6_coupling": coupling.get(feat.session_id, 0),
             "D7_structural_depth": feat.dependency_depth,
             "D8_external_reads": feat.ext_reads,
+            "D9_expression_complexity": feat.expression_complexity_score,
+            "D10_parameter_dependency": feat.parameter_count,
+            "D11_sql_override_complexity": feat.sql_override_count,
+            "D12_join_complexity": feat.join_count,
+            "D13_field_mapping_density": field_density,
+            "D14_lookup_cache_potential": feat.lookup_cache_potential,
+            "D15_error_handling": feat.filter_count + feat.router_group_count,
+            "D16_schedule_dependency": feat.schedule_frequency_code,
         }
 
     # ------------------------------------------------------------------

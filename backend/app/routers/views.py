@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.models.database import (
     Upload,
+    VwAffinityPropagation,
     VwComplexityScores,
     VwCommunities,
     VwConcentrationGroups,
@@ -20,20 +21,31 @@ from app.models.database import (
     VwConstellationChunks,
     VwConstellationEdges,
     VwConstellationPoints,
+    VwDataFlow,
     VwDuplicateGroups,
     VwDuplicateMembers,
     VwEnsemble,
     VwExecOrder,
     VwExplorerDetail,
+    VwExpressionComplexity,
     VwGalaxyNodes,
+    VwHdbscanDensity,
+    VwHierarchicalLineage,
     VwMatrixCells,
     VwReadChains,
+    VwSchemaDrift,
+    VwSpectralClustering,
+    VwTableGravity,
     VwTableProfiles,
     VwTierLayout,
+    VwTransformCentrality,
     VwUmapCoords,
     VwWaveAssignments,
     VwWaveFunction,
     VwWriteConflicts,
+    ExpressionRecord,
+    SQLOverrideRecord,
+    ParameterRecord,
     get_db,
 )
 
@@ -55,6 +67,14 @@ def _check_upload(db: Session, upload_id: int) -> Upload:
     return row
 
 
+def _paginate(query, page: int, page_size: int) -> tuple:
+    """Apply pagination to a SQLAlchemy query. Returns (items, total, pages)."""
+    total = query.count()
+    pages = (total + page_size - 1) // page_size
+    items = query.offset((page - 1) * page_size).limit(page_size).all()
+    return items, total, pages
+
+
 def _json_load(val: str | None):
     """Safe JSON load — returns empty list for None/empty/null columns.
 
@@ -72,14 +92,15 @@ def _json_load(val: str | None):
 
 # ── Explorer ──────────────────────────────────────────────────────────────
 
-@router.get("/explorer")
+@router.get("/explorer", summary="Paginated session explorer",
+             description="Returns sessions with aggregated metrics. Supports tier filter, text search, and dynamic sort.")
 def get_explorer(
-    upload_id: int = Query(...),
-    offset: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=500),
-    tier: float | None = Query(None),
-    search: str | None = Query(None),
-    sort: str = Query("tier"),
+    upload_id: int = Query(..., description="Upload primary key"),
+    offset: int = Query(0, ge=0, description="Pagination offset"),
+    limit: int = Query(100, ge=1, le=500, description="Page size"),
+    tier: float | None = Query(None, description="Filter by tier number"),
+    search: str | None = Query(None, description="Substring match on session name"),
+    sort: str = Query("tier", description="Sort column (tier, full_name, transforms, etc.)"),
     db: Session = Depends(get_db),
 ):
     """Explorer detail view — paginated session list with aggregated metrics.
@@ -142,9 +163,9 @@ def get_explorer(
 
 # ── Conflicts ─────────────────────────────────────────────────────────────
 
-@router.get("/conflicts")
+@router.get("/conflicts", summary="Write conflicts and read chains")
 def get_conflicts(
-    upload_id: int = Query(...),
+    upload_id: int = Query(..., description="Upload primary key"),
     db: Session = Depends(get_db),
 ):
     """Write conflicts and read-after-write chains.
@@ -188,11 +209,11 @@ def get_conflicts(
 
 # ── Exec Order ────────────────────────────────────────────────────────────
 
-@router.get("/exec-order")
+@router.get("/exec-order", summary="Topological execution order")
 def get_exec_order(
-    upload_id: int = Query(...),
-    offset: int = Query(0, ge=0),
-    limit: int = Query(200, ge=1, le=1000),
+    upload_id: int = Query(..., description="Upload primary key"),
+    offset: int = Query(0, ge=0, description="Pagination offset"),
+    limit: int = Query(200, ge=1, le=1000, description="Page size"),
     db: Session = Depends(get_db),
 ):
     """Execution order — sessions sorted by topological position, with conflict/chain badges.
@@ -234,11 +255,11 @@ def get_exec_order(
 
 # ── Matrix ────────────────────────────────────────────────────────────────
 
-@router.get("/matrix")
+@router.get("/matrix", summary="Session-table connection matrix")
 def get_matrix(
-    upload_id: int = Query(...),
-    page: int = Query(0, ge=0),
-    page_size: int = Query(50, ge=1, le=200),
+    upload_id: int = Query(..., description="Upload primary key"),
+    page: int = Query(0, ge=0, description="Zero-indexed page number"),
+    page_size: int = Query(50, ge=1, le=200, description="Sessions per page"),
     db: Session = Depends(get_db),
 ):
     """Sparse session-table matrix with page-based pagination.
@@ -279,11 +300,11 @@ def get_matrix(
 
 # ── Tables ────────────────────────────────────────────────────────────────
 
-@router.get("/tables")
+@router.get("/tables", summary="Table profiles with reference counts")
 def get_tables(
-    upload_id: int = Query(...),
-    sort: str = Query("total_refs"),
-    limit: int = Query(100, ge=1, le=1000),
+    upload_id: int = Query(..., description="Upload primary key"),
+    sort: str = Query("total_refs", description="Sort column"),
+    limit: int = Query(100, ge=1, le=1000, description="Max rows"),
     db: Session = Depends(get_db),
 ):
     """Table profiles sorted by reference count (most-referenced tables first).
@@ -332,9 +353,9 @@ def get_tables(
 
 # ── Duplicates ────────────────────────────────────────────────────────────
 
-@router.get("/duplicates")
+@router.get("/duplicates", summary="Duplicate/similar session groups")
 def get_duplicates(
-    upload_id: int = Query(...),
+    upload_id: int = Query(..., description="Upload primary key"),
     db: Session = Depends(get_db),
 ):
     """Duplicate/similar session groups (sorted by member count, largest first).
@@ -387,9 +408,9 @@ def get_duplicates(
 
 # ── Constellation ─────────────────────────────────────────────────────────
 
-@router.get("/constellation")
+@router.get("/constellation", summary="Constellation clusters, points, and edges")
 def get_constellation(
-    upload_id: int = Query(...),
+    upload_id: int = Query(..., description="Upload primary key"),
     db: Session = Depends(get_db),
 ):
     """Constellation chunks, points, and cross-chunk edges.
@@ -452,9 +473,9 @@ def get_constellation(
 
 # ── Complexity (V11) ─────────────────────────────────────────────────────
 
-@router.get("/complexity")
+@router.get("/complexity", summary="V11 complexity scores (16 dimensions)")
 def get_complexity(
-    upload_id: int = Query(...),
+    upload_id: int = Query(..., description="Upload primary key"),
     db: Session = Depends(get_db),
 ):
     """Complexity scores from V11 vector engine.
@@ -497,9 +518,9 @@ def get_complexity(
 
 # ── Waves (V4) ───────────────────────────────────────────────────────────
 
-@router.get("/waves")
+@router.get("/waves", summary="V4 migration wave assignments")
 def get_waves(
-    upload_id: int = Query(...),
+    upload_id: int = Query(..., description="Upload primary key"),
     db: Session = Depends(get_db),
 ):
     """Wave plan assignments from V4 topological sort.
@@ -535,10 +556,10 @@ def get_waves(
 
 # ── UMAP (V3) ────────────────────────────────────────────────────────────
 
-@router.get("/umap")
+@router.get("/umap", summary="V3 UMAP 2D projection coordinates")
 def get_umap(
-    upload_id: int = Query(...),
-    scale: str = Query("balanced"),
+    upload_id: int = Query(..., description="Upload primary key"),
+    scale: str = Query("balanced", description="Scale preset: balanced, spread, or tight"),
     db: Session = Depends(get_db),
 ):
     """UMAP 2D coordinates from V3 centrality/projection vector.
@@ -576,9 +597,9 @@ def get_umap(
 
 # ── Simulator (V9) ───────────────────────────────────────────────────────
 
-@router.get("/simulator")
+@router.get("/simulator", summary="V9 wave function simulation")
 def get_simulator(
-    upload_id: int = Query(...),
+    upload_id: int = Query(..., description="Upload primary key"),
     db: Session = Depends(get_db),
 ):
     """Wave function simulation scores from V9.
@@ -614,9 +635,9 @@ def get_simulator(
 
 # ── Concentration (V10) ──────────────────────────────────────────────────
 
-@router.get("/concentration")
+@router.get("/concentration", summary="V10 table-gravity concentration groups")
 def get_concentration(
-    upload_id: int = Query(...),
+    upload_id: int = Query(..., description="Upload primary key"),
     db: Session = Depends(get_db),
 ):
     """Concentration analysis groups from V10.
@@ -677,9 +698,9 @@ def get_concentration(
 
 # ── Consensus (V8) ───────────────────────────────────────────────────────
 
-@router.get("/consensus")
+@router.get("/consensus", summary="V8 ensemble consensus clustering")
 def get_consensus(
-    upload_id: int = Query(...),
+    upload_id: int = Query(..., description="Upload primary key"),
     db: Session = Depends(get_db),
 ):
     """Ensemble consensus from V8.
@@ -710,3 +731,402 @@ def get_consensus(
             for r in rows
         ],
     }
+
+
+# ── V2 Hierarchical Lineage ─────────────────────────────────────────────
+
+
+@router.get("/hierarchical", summary="V2 hierarchical clustering dendrogram")
+def get_hierarchical(
+    upload_id: int = Query(..., description="Upload primary key"),
+    db: Session = Depends(get_db),
+):
+    """Hierarchical clustering assignments from V2.
+
+    Returns dendrogram-style cluster hierarchy with merge distances
+    and parent-child relationships between clusters.
+    """
+    _check_upload(db, upload_id)
+    rows = db.query(VwHierarchicalLineage).filter(VwHierarchicalLineage.upload_id == upload_id).all()
+
+    return {
+        "assignments": [
+            {
+                "session_id": r.session_id,
+                "cluster_id": r.cluster_id,
+                "level": r.level,
+                "parent_cluster": r.parent_cluster,
+                "merge_distance": r.merge_distance,
+                "session_count": r.session_count,
+            }
+            for r in rows
+        ],
+    }
+
+
+# ── V5 Affinity Propagation ─────────────────────────────────────────────
+
+
+@router.get("/affinity", summary="V5 affinity propagation clusters")
+def get_affinity(
+    upload_id: int = Query(..., description="Upload primary key"),
+    db: Session = Depends(get_db),
+):
+    """Affinity propagation cluster assignments from V5.
+
+    Each session is assigned to a cluster with an exemplar (representative)
+    session. Returns responsibility/availability AP message scores.
+    """
+    _check_upload(db, upload_id)
+    rows = db.query(VwAffinityPropagation).filter(VwAffinityPropagation.upload_id == upload_id).all()
+
+    return {
+        "assignments": [
+            {
+                "session_id": r.session_id,
+                "exemplar_id": r.exemplar_id,
+                "cluster_id": r.cluster_id,
+                "responsibility": r.responsibility,
+                "availability": r.availability,
+                "preference": r.preference,
+            }
+            for r in rows
+        ],
+    }
+
+
+# ── V6 Spectral Clustering ──────────────────────────────────────────────
+
+
+@router.get("/spectral", summary="V6 spectral clustering assignments")
+def get_spectral(
+    upload_id: int = Query(..., description="Upload primary key"),
+    db: Session = Depends(get_db),
+):
+    """Spectral clustering assignments from V6.
+
+    Clusters derived from the graph Laplacian eigenvectors.
+    Eigenvalue and eigen_gap help determine optimal cluster count.
+    """
+    _check_upload(db, upload_id)
+    rows = db.query(VwSpectralClustering).filter(VwSpectralClustering.upload_id == upload_id).all()
+
+    return {
+        "assignments": [
+            {
+                "session_id": r.session_id,
+                "cluster_id": r.cluster_id,
+                "eigenvalue": r.eigenvalue,
+                "eigen_gap": r.eigen_gap,
+            }
+            for r in rows
+        ],
+    }
+
+
+# ── V7 HDBSCAN Density ──────────────────────────────────────────────────
+
+
+@router.get("/hdbscan", summary="V7 HDBSCAN density clustering")
+def get_hdbscan(
+    upload_id: int = Query(..., description="Upload primary key"),
+    db: Session = Depends(get_db),
+):
+    """HDBSCAN density-based clustering from V7.
+
+    Returns cluster assignments with probability scores and outlier
+    identification. Noise points have cluster_id = -1.
+    """
+    _check_upload(db, upload_id)
+    rows = db.query(VwHdbscanDensity).filter(VwHdbscanDensity.upload_id == upload_id).all()
+
+    return {
+        "assignments": [
+            {
+                "session_id": r.session_id,
+                "cluster_id": r.cluster_id,
+                "probability": r.probability,
+                "outlier_score": r.outlier_score,
+                "persistence": r.persistence,
+            }
+            for r in rows
+        ],
+    }
+
+
+# ── V12-V16 View Endpoints ────────────────────────────────────────────────
+
+
+@router.get("/expression_complexity", summary="V12 expression complexity analysis")
+def get_expression_complexity(
+    upload_id: int = Query(..., description="Upload primary key"),
+    db: Session = Depends(get_db),
+):
+    """V12 expression complexity scores per session."""
+    _check_upload(db, upload_id)
+    rows = db.query(VwExpressionComplexity).filter(VwExpressionComplexity.upload_id == upload_id).all()
+    return {
+        "assignments": [
+            {
+                "session_id": r.session_id,
+                "cluster_id": r.cluster_id,
+                "expression_count": r.expression_count,
+                "avg_depth": r.avg_depth,
+                "total_functions": r.total_functions,
+                "expression_density": r.expression_density,
+                "score": r.score,
+                "bucket": r.bucket,
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get("/data_flow", summary="V13 data flow volume estimates")
+def get_data_flow(
+    upload_id: int = Query(..., description="Upload primary key"),
+    db: Session = Depends(get_db),
+):
+    """V13 data flow volume estimates per session."""
+    _check_upload(db, upload_id)
+    rows = db.query(VwDataFlow).filter(VwDataFlow.upload_id == upload_id).all()
+    return {
+        "assignments": [
+            {
+                "session_id": r.session_id,
+                "cluster_id": r.cluster_id,
+                "source_volume": r.source_volume,
+                "output_volume": r.output_volume,
+                "funnel_ratio": r.funnel_ratio,
+                "bottleneck_transform": r.bottleneck_transform,
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get("/schema_drift", summary="V14 schema drift baseline")
+def get_schema_drift(
+    upload_id: int = Query(..., description="Upload primary key"),
+    db: Session = Depends(get_db),
+):
+    """V14 schema drift baseline per session."""
+    _check_upload(db, upload_id)
+    rows = db.query(VwSchemaDrift).filter(VwSchemaDrift.upload_id == upload_id).all()
+    return {
+        "assignments": [
+            {
+                "session_id": r.session_id,
+                "cluster_id": r.cluster_id,
+                "field_count": r.field_count,
+                "drift_score": r.drift_score,
+                "added_fields": r.added_fields,
+                "removed_fields": r.removed_fields,
+                "type_changes": r.type_changes,
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get("/transform_centrality", summary="V15 transform graph centrality")
+def get_transform_centrality(
+    upload_id: int = Query(..., description="Upload primary key"),
+    db: Session = Depends(get_db),
+):
+    """V15 transform graph centrality per session."""
+    _check_upload(db, upload_id)
+    rows = db.query(VwTransformCentrality).filter(VwTransformCentrality.upload_id == upload_id).all()
+    return {
+        "assignments": [
+            {
+                "session_id": r.session_id,
+                "cluster_id": r.cluster_id,
+                "transform_count": r.transform_count,
+                "max_centrality": r.max_centrality,
+                "chokepoint_transform": r.chokepoint_transform,
+                "avg_degree": r.avg_degree,
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get("/table_gravity", summary="V16 table gravity and hub detection")
+def get_table_gravity(
+    upload_id: int = Query(..., description="Upload primary key"),
+    db: Session = Depends(get_db),
+):
+    """V16 table gravity scores — hub table identification."""
+    _check_upload(db, upload_id)
+    rows = db.query(VwTableGravity).filter(VwTableGravity.upload_id == upload_id).all()
+    return {
+        "assignments": [
+            {
+                "session_id": r.session_id,
+                "cluster_id": r.cluster_id,
+                "table_name": r.table_name,
+                "reader_count": r.reader_count,
+                "writer_count": r.writer_count,
+                "lookup_count": r.lookup_count,
+                "gravity_score": r.gravity_score,
+                "is_hub": bool(r.is_hub),
+            }
+            for r in rows
+        ],
+        "hub_tables": [r.table_name for r in rows if r.is_hub],
+    }
+
+
+# ── Code Search ──────────────────────────────────────────────────────────
+
+
+@router.get("/search/code", summary="Full-text code search across expressions")
+def search_code(
+    q: str = Query(..., min_length=2, description="Search query string"),
+    upload_id: int = Query(..., description="Upload primary key"),
+    limit: int = Query(50, ge=1, le=200, description="Max results"),
+    db: Session = Depends(get_db),
+):
+    """Search across expressions, SQL overrides, and parameters.
+
+    Returns matching expressions with session/transform context.
+    Uses SQL LIKE for broad compatibility (SQLite + PostgreSQL).
+    """
+    _check_upload(db, upload_id)
+    pattern = f"%{q}%"
+    results = []
+
+    # Search expressions
+    expr_rows = db.query(ExpressionRecord).filter(
+        ExpressionRecord.upload_id == upload_id,
+        ExpressionRecord.expression_text.ilike(pattern),
+    ).limit(limit).all()
+    for r in expr_rows:
+        results.append({
+            "type": "expression",
+            "session_name": r.session_name,
+            "transform_name": r.transform_name,
+            "field_name": r.field_name,
+            "text": r.expression_text,
+            "expression_type": r.expression_type,
+            "complexity": r.expression_complexity,
+        })
+
+    # Search SQL overrides
+    remaining = limit - len(results)
+    if remaining > 0:
+        sql_rows = db.query(SQLOverrideRecord).filter(
+            SQLOverrideRecord.upload_id == upload_id,
+            SQLOverrideRecord.sql_text.ilike(pattern),
+        ).limit(remaining).all()
+        for r in sql_rows:
+            results.append({
+                "type": "sql_override",
+                "session_name": r.session_name,
+                "transform_name": r.transform_name,
+                "text": r.sql_text,
+                "override_type": r.override_type,
+                "complexity": r.sql_complexity,
+            })
+
+    # Search parameters
+    remaining = limit - len(results)
+    if remaining > 0:
+        param_rows = db.query(ParameterRecord).filter(
+            ParameterRecord.upload_id == upload_id,
+            ParameterRecord.parameter_name.ilike(pattern),
+        ).limit(remaining).all()
+        for r in param_rows:
+            results.append({
+                "type": "parameter",
+                "parameter_name": r.parameter_name,
+                "parameter_type": r.parameter_type,
+                "default_value": r.default_value,
+                "text": r.parameter_name,
+            })
+
+    return {"results": results, "total": len(results), "query": q}
+
+
+# ── Phase 9: ML/AI Endpoints ────────────────────────────────────────────
+
+
+@router.get("/anomalies", summary="Anomaly detection on ETL sessions")
+def get_anomalies(
+    upload_id: int = Query(..., description="Upload primary key"),
+    threshold: float = Query(0.5, ge=0.0, le=1.0, description="Minimum anomaly score to flag"),
+    db: Session = Depends(get_db),
+):
+    """Detect anomalous sessions using statistical + heuristic analysis."""
+    _check_upload(db, upload_id)
+    from app.engines.data_populator import reconstruct_tier_data
+    tier_data = reconstruct_tier_data(db, upload_id)
+    if not tier_data:
+        return {"anomalies": [], "total_sessions": 0, "anomaly_count": 0}
+
+    from app.engines.vectors.feature_extractor import extract_session_features
+    features = extract_session_features(tier_data)
+
+    from app.engines.anomaly_detector import AnomalyDetector
+    detector = AnomalyDetector(score_threshold=threshold)
+    return detector.detect(features).to_dict()
+
+
+@router.get("/effort_estimate", summary="Migration effort estimation (P10/P50/P90)")
+def get_effort_estimate(
+    upload_id: int = Query(..., description="Upload primary key"),
+    team_size: int = Query(5, ge=1, le=100, description="Number of engineers"),
+    hours_per_week: float = Query(40.0, ge=1.0, le=80.0, description="Working hours per engineer per week"),
+    automation_discount: float = Query(0.0, ge=0.0, le=0.9, description="Fraction of effort saved by automation"),
+    db: Session = Depends(get_db),
+):
+    """Estimate migration effort based on V11 complexity scores."""
+    _check_upload(db, upload_id)
+    from app.engines.data_populator import reconstruct_vector_results
+    vr = reconstruct_vector_results(db, upload_id)
+    if not vr or "v11_complexity" not in vr:
+        return {"error": "No complexity scores available. Run vector analysis first."}
+
+    scores = vr["v11_complexity"].get("scores", [])
+    wave_plan = vr.get("v4_wave_plan")
+
+    from app.engines.effort_estimator import MigrationEffortEstimator
+    estimator = MigrationEffortEstimator()
+    return estimator.estimate(
+        scores, team_size=team_size, hours_per_week=hours_per_week,
+        automation_discount=automation_discount, wave_plan=wave_plan,
+    ).to_dict()
+
+
+@router.post("/transpile", summary="Transpile Informatica expressions to SQL")
+def transpile_expressions(
+    upload_id: int = Query(..., description="Upload primary key"),
+    session_name: str = Query(None, description="Filter to a specific session"),
+    limit: int = Query(50, ge=1, le=500, description="Max expressions to transpile"),
+    db: Session = Depends(get_db),
+):
+    """Transpile Informatica expressions to SQL for a session or upload."""
+    _check_upload(db, upload_id)
+    from app.models.database import ExpressionRecord as ER
+    query = db.query(ER).filter(ER.upload_id == upload_id)
+    if session_name:
+        query = query.filter(ER.session_name == session_name)
+    rows = query.filter(ER.expression_text.isnot(None)).limit(limit).all()
+
+    from app.engines.transpiler import ExpressionTranspiler
+    transpiler = ExpressionTranspiler()
+    results = []
+    for r in rows:
+        t = transpiler.transpile(r.expression_text or "")
+        results.append({
+            "session_name": r.session_name,
+            "transform_name": r.transform_name,
+            "field_name": r.field_name,
+            "original": t["original"],
+            "sql": t["sql"],
+            "confidence": t["confidence"],
+            "rules_applied": t["rules_applied"],
+        })
+
+    return {"results": results, "total": len(results)}

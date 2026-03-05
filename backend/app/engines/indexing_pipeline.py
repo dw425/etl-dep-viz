@@ -42,11 +42,16 @@ class IndexingPipeline:
         embedding_mode: str = "local",
         embedding_model: str | None = None,
         chroma_persist_dir: str = "./chroma_data",
+        use_pg_store: bool = False,
     ):
         # EmbeddingEngine wraps sentence-transformers or OpenAI depending on mode
         self.embedding_engine = EmbeddingEngine(mode=embedding_mode, model=embedding_model)
-        # VectorStore manages one ChromaDB collection per upload_id
-        self.vector_store = VectorStore(persist_dir=chroma_persist_dir)
+        # Use PgVectorStore on Databricks (persistent), ChromaDB locally
+        if use_pg_store:
+            from .pg_vector_store import PgVectorStore
+            self.vector_store = PgVectorStore()
+        else:
+            self.vector_store = VectorStore(persist_dir=chroma_persist_dir)
 
     def index_upload(
         self,

@@ -676,10 +676,12 @@ export default function ConstellationCanvas({
           }
         }
 
-        // Draw dots
+        // Draw dots — viewport culling: skip points outside visible bounds + 10% margin
+        const margin = Math.max(w, h) * 0.1;
         for (const p of points) {
           const px = sx(p.x);
           const py = sy(p.y);
+          if (px < -margin || px > w + margin || py < -margin || py > h + margin) continue;
           const color = chunkColorMap.get(p.chunk_id) || '#3B82F6';
           const isHover = hover && hover.session_id === p.session_id;
           const isInSelected = !hasFilter || selectedChunkIds.has(p.chunk_id);

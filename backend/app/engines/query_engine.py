@@ -21,8 +21,10 @@ Entities are extracted as uppercase identifiers (4+ chars) from the raw question
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -46,16 +48,22 @@ class QueryIntent(Enum):
     The intent determines which ChromaDB document types are searched and which
     structured augmentations are fetched (upstream/downstream sessions, lineage, etc.).
     """
-    SESSION_LOOKUP = "session_lookup"   # Ask about a specific session
-    TABLE_LOOKUP = "table_lookup"       # Ask about a specific table's readers/writers
-    LINEAGE_TRACE = "lineage_trace"     # Trace data flow from source to destination
-    IMPACT_ANALYSIS = "impact_analysis" # What breaks if X fails?
-    COMPLEXITY_QUERY = "complexity_query" # Complexity scores and migration effort
-    WAVE_QUERY = "wave_query"           # Migration wave planning questions
-    GROUP_QUERY = "group_query"         # Community/gravity group questions
-    COMPARISON = "comparison"           # Compare two sessions or tables
-    ENVIRONMENT = "environment"         # Overview/count/summary questions
-    GENERAL = "general"                 # Fallback — search all document types
+    SESSION_LOOKUP = "session_lookup"       # Ask about a specific session
+    TABLE_LOOKUP = "table_lookup"           # Ask about a specific table's readers/writers
+    LINEAGE_TRACE = "lineage_trace"         # Trace data flow from source to destination
+    IMPACT_ANALYSIS = "impact_analysis"     # What breaks if X fails?
+    COMPLEXITY_QUERY = "complexity_query"   # Complexity scores and migration effort
+    WAVE_QUERY = "wave_query"              # Migration wave planning questions
+    GROUP_QUERY = "group_query"            # Community/gravity group questions
+    COMPARISON = "comparison"              # Compare two sessions or tables
+    ENVIRONMENT = "environment"            # Overview/count/summary questions
+    CONFLICT_ANALYSIS = "conflict_analysis" # Write conflict / race condition analysis
+    RISK_QUERY = "risk_query"              # Cascade risk / failure impact assessment
+    LOOKUP_ANALYSIS = "lookup_analysis"    # Lookup table usage and optimization
+    MIGRATION_QUERY = "migration_query"    # Migration effort, timeline, recommendations
+    PATTERN_QUERY = "pattern_query"        # ETL patterns, anti-patterns, best practices
+    TIER_QUERY = "tier_query"              # Tier-specific questions (dependency depth)
+    GENERAL = "general"                    # Fallback — search all document types
 
 
 @dataclass
@@ -157,6 +165,77 @@ def classify_query(question: str) -> ClassifiedQuery:
             entities=entities,
             doc_types=["session", "group", "environment"],
             augment_with=["wave_members"],
+        )
+
+    # Write conflict / race condition analysis
+    if any(p in q for p in [
+        "write conflict", "race condition", "multiple writers", "shared target",
+        "who else writes", "conflict", "concurrent write",
+    ]):
+        return ClassifiedQuery(
+            intent=QueryIntent.CONFLICT_ANALYSIS,
+            entities=entities,
+            doc_types=["session", "table"],
+            augment_with=["writers", "conflict_details"],
+        )
+
+    # Risk / cascade / failure propagation
+    if any(p in q for p in [
+        "risk", "failure", "criticality", "critical path", "amplifier",
+        "propagat", "domino", "chain reaction",
+    ]):
+        return ClassifiedQuery(
+            intent=QueryIntent.RISK_QUERY,
+            entities=entities,
+            doc_types=["session", "chain"],
+            augment_with=["downstream_cascade"],
+        )
+
+    # Lookup table analysis
+    if any(p in q for p in [
+        "lookup", "cache", "lkp", "reference table", "dimension table",
+    ]):
+        return ClassifiedQuery(
+            intent=QueryIntent.LOOKUP_ANALYSIS,
+            entities=entities,
+            doc_types=["session", "table"],
+            augment_with=["lookup_details"],
+        )
+
+    # Migration effort / timeline / recommendations
+    if any(p in q for p in [
+        "migrat", "effort", "timeline", "how long", "estimate",
+        "priorit", "recommend", "should we start",
+    ]):
+        return ClassifiedQuery(
+            intent=QueryIntent.MIGRATION_QUERY,
+            entities=entities,
+            doc_types=["session", "group", "environment"],
+            augment_with=["complexity_ranking", "wave_members"],
+        )
+
+    # ETL patterns
+    if any(p in q for p in [
+        "pattern", "anti-pattern", "best practice", "common", "typical",
+        "similar to", "sessions like",
+    ]):
+        return ClassifiedQuery(
+            intent=QueryIntent.PATTERN_QUERY,
+            entities=entities,
+            doc_types=["session", "group"],
+            augment_with=[],
+        )
+
+    # Tier-specific questions
+    if any(p in q for p in [
+        "tier ", "tier 1", "tier 2", "tier 3", "tier 4",
+        "depth", "dependency level", "execution order",
+    ]):
+        return ClassifiedQuery(
+            intent=QueryIntent.TIER_QUERY,
+            entities=entities,
+            doc_types=["session", "environment"],
+            augment_with=[],
         )
 
     # Comparison
@@ -316,6 +395,10 @@ You have access to detailed parsed data about the user's ETL environment. When a
 7. For migration questions, reference wave assignments and estimated hours.
 8. Use markdown formatting for readability."""
 
+    # LLM response cache: {query_hash: (response_text, expire_time)}
+    _llm_cache: dict[str, tuple[str, float]] = {}
+    _LLM_CACHE_TTL = 3600  # 1 hour
+
     def __init__(
         self,
         search_engine: HybridSearchEngine,
@@ -327,6 +410,15 @@ You have access to detailed parsed data about the user's ETL environment. When a
         self.llm_provider = llm_provider
         self.api_key = api_key
         self.model = model or "claude-sonnet-4-20250514"
+
+    @staticmethod
+    def _cache_key(upload_id: int, question: str, context: str) -> str:
+        """Generate a cache key from upload_id + question + context hash."""
+        h = hashlib.sha256()
+        h.update(str(upload_id).encode())
+        h.update(question.lower().strip().encode())
+        h.update(context[:2000].encode())  # first 2K chars of context for stability
+        return h.hexdigest()[:32]
 
     async def chat(
         self,
@@ -352,26 +444,43 @@ You have access to detailed parsed data about the user's ETL environment. When a
         # ── Step 3: Assemble retrieved documents into a single context block ─
         context = self._build_context(search_results)
 
-        # ── Step 4: Build message list for the LLM ───────────────────────────
-        messages = []
-        if conversation_history:
-            # Include only the last 10 turns to avoid exceeding the context window
-            messages.extend(conversation_history[-10:])
+        # ── Step 3.5: Check LLM response cache ──────────────────────────────
+        cache_key = self._cache_key(upload_id, question, context)
+        cached = self._llm_cache.get(cache_key)
+        if cached and not conversation_history and cached[1] > time.monotonic():
+            logger.info("LLM cache hit for upload %d question=%s", upload_id, question[:50])
+            response_text = cached[0]
+        else:
+            # ── Step 4: Build message list for the LLM ───────────────────────
+            messages = []
+            if conversation_history:
+                # Include only the last 10 turns to avoid exceeding the context window
+                messages.extend(conversation_history[-10:])
 
-        # Inject retrieved context as XML-tagged block within the user message
-        messages.append({
-            "role": "user",
-            "content": f"""Based on the following ETL pipeline data, answer this question:
+            # Inject retrieved context as XML-tagged block within the user message
+            messages.append({
+                "role": "user",
+                "content": f"""Based on the following ETL pipeline data, answer this question:
 
 <retrieved_context>
 {context}
 </retrieved_context>
 
 Question: {question}""",
-        })
+            })
 
-        # ── Step 5: LLM inference ────────────────────────────────────────────
-        response_text = await self._call_llm(messages)
+            # ── Step 5: LLM inference ────────────────────────────────────────
+            response_text = await self._call_llm(messages)
+
+            # Cache the response (only for non-conversation queries)
+            if not conversation_history:
+                self._llm_cache[cache_key] = (response_text, time.monotonic() + self._LLM_CACHE_TTL)
+                # Evict expired entries periodically
+                if len(self._llm_cache) > 100:
+                    now = time.monotonic()
+                    expired = [k for k, v in self._llm_cache.items() if v[1] < now]
+                    for k in expired:
+                        del self._llm_cache[k]
 
         # ── Step 6: Post-process — find entity names mentioned in the response ─
         referenced = self._extract_references(response_text, search_results, tier_data)
@@ -530,6 +639,45 @@ Question: {question}""",
                 "What makes this session so complex?",
                 "Which sessions are in the same community?",
                 "What wave are the complex sessions in?",
+            ]
+        elif classification.intent == QueryIntent.CONFLICT_ANALYSIS:
+            suggestions = [
+                "Which tables have the most writers?",
+                "How do we resolve this conflict?",
+                "Show me the full lineage for this table",
+                "What wave should conflicting sessions be in?",
+            ]
+        elif classification.intent == QueryIntent.RISK_QUERY:
+            suggestions = [
+                "What sessions have the highest blast radius?",
+                "Which sessions are amplifiers?",
+                "What's the criticality tier distribution?",
+                "Show me sessions on the critical path",
+            ]
+        elif classification.intent == QueryIntent.LOOKUP_ANALYSIS:
+            suggestions = [
+                "Which lookups could benefit from caching?",
+                "Show me sessions with the most lookups",
+                "What tables are used as lookups?",
+            ]
+        elif classification.intent == QueryIntent.MIGRATION_QUERY:
+            suggestions = [
+                "What should we migrate first?",
+                "Show me the wave plan",
+                "What's the total estimated effort?",
+                "Which sessions are best candidates for automation?",
+            ]
+        elif classification.intent == QueryIntent.PATTERN_QUERY:
+            suggestions = [
+                "What are the most common ETL patterns?",
+                "Show me sessions with similar structure",
+                "Which sessions use stored procedures?",
+            ]
+        elif classification.intent == QueryIntent.TIER_QUERY:
+            suggestions = [
+                "Show me all Tier 1 sessions",
+                "What's the deepest dependency chain?",
+                "How many sessions are in each tier?",
             ]
         elif classification.intent == QueryIntent.ENVIRONMENT:
             suggestions = [

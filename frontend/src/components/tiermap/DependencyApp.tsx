@@ -59,11 +59,7 @@ import {
 } from '../../api/client';
 import { useUrlState, type UrlState } from '../../navigation/useUrlState';
 import ExplorerView from './ExplorerView';
-import ConflictsView from './ConflictsView';
-import ExecOrderView from './ExecOrderView';
 import TierDiagram from './TierDiagram';
-import MatrixView from './MatrixView';
-import ConstellationCanvas from './ConstellationCanvas';
 import ChunkSelector from './ChunkSelector';
 import ChunkSummary from './ChunkSummary';
 import { buildTierMapHTML } from './exportTierMapHTML';
@@ -74,6 +70,10 @@ import { NavigationProvider } from '../../navigation/NavigationProvider';
 import ErrorBoundary from '../shared/ErrorBoundary';
 
 // ── Lazy imports (code-split heavy views to keep initial bundle small) ────────
+const ConflictsView = lazy(() => import('./ConflictsView'));
+const ExecOrderView = lazy(() => import('./ExecOrderView'));
+const MatrixView = lazy(() => import('./MatrixView'));
+const ConstellationCanvas = lazy(() => import('./ConstellationCanvas'));
 const ComplexityOverlay = lazy(() => import('./ComplexityOverlay'));
 const HeatMapView = lazy(() => import('./HeatMapView'));
 const ConcentrationView = lazy(() => import('./ConcentrationView'));

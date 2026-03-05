@@ -32,6 +32,15 @@ class Settings(BaseSettings):
     lakebase_instance: str = ""                   # Lakebase instance name (empty = SQLite mode)
     databricks_app: bool = False                  # True when running as a Databricks App
 
+    # ── Connection Pool Tuning (PostgreSQL only) ──────────────────────
+    pool_size: int = 10                           # Base pool size (concurrent connections)
+    pool_max_overflow: int = 20                   # Extra connections beyond pool_size
+    pool_timeout: int = 30                        # Seconds to wait for a connection from pool
+    pool_recycle: int = 2700                      # Recycle connections after N seconds (45 min)
+
+    # ── Parse Settings ─────────────────────────────────────────────────
+    session_display_mode: str = "full"            # "full" (default), "short", or "smart" (strip prefixes only)
+
     # ── AI Chat / Vector DB ───────────────────────────────────────────────
     embedding_mode: str = "local"               # "local", "openai", or "databricks"
     embedding_model: str = "all-MiniLM-L6-v2"   # sentence-transformers model name

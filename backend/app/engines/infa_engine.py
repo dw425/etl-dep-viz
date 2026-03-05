@@ -195,8 +195,23 @@ _FROM_RE = re.compile(r'\bFROM\s+([\w\$#\.@]+)', re.I)
 
 
 def _short(name: str) -> str:
-    """Abbreviated display name: strip common prefixes, keep last 3 underscore parts."""
+    """Display name according to EDV_SESSION_DISPLAY_MODE setting.
+
+    - "full":  return the original name unchanged (default)
+    - "smart": strip common prefixes only, keep all remaining parts
+    - "short": strip prefixes and keep last 3 underscore parts (legacy)
+    """
+    from app.config import settings
+    mode = settings.session_display_mode
+
+    if mode == "full":
+        return name
+
     s = _PREFIX.sub('', name)
+    if mode == "smart":
+        return s
+
+    # Legacy "short" mode: keep last 3 underscore parts
     parts = s.split('_')
     return '_'.join(parts[-3:]) if len(parts) > 3 else s
 
@@ -647,16 +662,52 @@ def _process_folder(
         }
 
     # ── Parse workflow execution order ─────────────────────────────────
+    # ── Pre-parse WORKLET definitions ────────────────────────────────────
+    # WORKLETs contain nested TASKINSTANCEs referencing sessions.
+    # Build worklet_name → [session_names] map for resolving worklet references.
+    worklet_sessions: Dict[str, List[str]] = {}
+    _worklet_visited: set = set()  # cycle detection
+
+    def _resolve_worklet(wklt_el: Any, visited: set) -> List[str]:
+        wk_name = _attr(wklt_el, 'NAME')
+        if wk_name in visited:
+            return []  # cycle detected
+        visited.add(wk_name)
+        result: List[str] = []
+        for ti in _iter(wklt_el, 'TASKINSTANCE'):
+            tt = _attr(ti, 'TASKTYPE').lower()
+            ref = _attr(ti, 'REFERENCETASKNAME')
+            if not ref:
+                continue
+            if tt == 'session':
+                result.append(ref)
+            elif tt == 'worklet':
+                # Nested worklet — find its definition and recurse
+                for nested in folder.iter('WORKLET'):
+                    if _attr(nested, 'NAME') == ref:
+                        result.extend(_resolve_worklet(nested, visited))
+                        break
+        return result
+
+    for wklt in _iter(folder, 'WORKLET'):
+        wk_name = _attr(wklt, 'NAME')
+        if wk_name:
+            worklet_sessions[wk_name] = _resolve_worklet(wklt, set())
+
     for wf in _iter(folder, 'WORKFLOW'):
         wf_name = _attr(wf, 'NAME')
 
         task_names: List[str] = []
         for ti in _iter(wf, 'TASKINSTANCE'):
             tt = _attr(ti, 'TASKTYPE').lower()
+            ref = _attr(ti, 'REFERENCETASKNAME')
+            if not ref:
+                continue
             if tt in ('session', 'command', 'eventwaittask'):
-                ref = _attr(ti, 'REFERENCETASKNAME')
-                if ref:
-                    task_names.append(ref)
+                task_names.append(ref)
+            elif tt == 'worklet':
+                # Expand worklet reference to its contained sessions
+                task_names.extend(worklet_sessions.get(ref, []))
 
         # Build topological order from WORKFLOWLINK edges
         succ: Dict[str, List[str]] = defaultdict(list)
@@ -689,6 +740,67 @@ def _process_folder(
                 sessions[tname]['workflow'] = wf_name
                 if sessions[tname]['step'] == 0:
                     sessions[tname]['step'] = step
+
+    # ── Parse MAPPINGVARIABLE elements ────────────────────────────────
+    # MAPPINGVARIABLEs store SCD/incremental state (e.g. $$LAST_LOAD_DATE).
+    # Attach to sessions that use the parent MAPPING.
+    for m_el in _iter(folder, 'MAPPING'):
+        mname = _attr(m_el, 'NAME')
+        if not mname:
+            continue
+        mvars = []
+        for mv in _iter(m_el, 'MAPPINGVARIABLE'):
+            mv_name = _attr(mv, 'NAME')
+            if mv_name:
+                mvars.append({
+                    'name': mv_name,
+                    'datatype': _attr(mv, 'DATATYPE'),
+                    'default_value': _attr(mv, 'DEFAULTVALUE'),
+                    'aggregate_type': _attr(mv, 'AGGREGATETYPE'),
+                })
+        if mvars:
+            # Attach to all sessions that use this mapping
+            for sname, sd in sessions.items():
+                if sd.get('mapping', '').upper() == mname.upper():
+                    sd.setdefault('mapping_variables', []).extend(mvars)
+
+    # ── Parse SCHEDULER elements ──────────────────────────────────────
+    # SCHEDULERs define execution timing. Attach schedule info to workflows,
+    # then propagate to sessions.
+    scheduler_map: Dict[str, Dict] = {}
+    for sched in _iter(folder, 'SCHEDULER'):
+        sched_name = _attr(sched, 'NAME')
+        if sched_name:
+            scheduler_map[sched_name] = {
+                'name': sched_name,
+                'scheduler_type': _attr(sched, 'SCHEDULERTYPE') or _attr(sched, 'TYPE'),
+                'run_options': _attr(sched, 'RUNOPTIONS'),
+                'repeat_interval': _attr(sched, 'REPEATINTERVAL'),
+            }
+
+    # ── Parse CONFIGREFERENCE (CONFIG) elements ───────────────────────
+    # CONFIGREFERENCEs define buffer sizes, commit intervals, error handling.
+    for sess_el in _iter(folder, 'SESSION'):
+        sname = _attr(sess_el, 'NAME')
+        if sname not in sessions:
+            continue
+        # Config reference
+        config_name = _attr(sess_el, 'CONFIGREFERENCE')
+        if config_name:
+            sessions[sname]['config_reference'] = config_name
+        # Scheduler reference (from workflow TASKINSTANCE)
+        scheduler_name = _attr(sess_el, 'SCHEDULERREFERENCE')
+        if scheduler_name and scheduler_name in scheduler_map:
+            sessions[sname]['scheduler'] = scheduler_map[scheduler_name]
+
+    # Propagate scheduler from workflow to sessions
+    for wf in _iter(folder, 'WORKFLOW'):
+        wf_sched = _attr(wf, 'SCHEDULERREFERENCE') or _attr(wf, 'SCHEDULER')
+        if wf_sched and wf_sched in scheduler_map:
+            wf_name = _attr(wf, 'NAME')
+            for sname, sd in sessions.items():
+                if sd.get('workflow') == wf_name and 'scheduler' not in sd:
+                    sd['scheduler'] = scheduler_map[wf_sched]
 
     # ── Parse mapping detail for L5/L6 drill-down (ENHANCED) ─────────
     # Skipped in fast mode (deep=False) for ~3-5x speedup on large files.
@@ -1011,7 +1123,8 @@ def analyze(
     logger.info("Phase 2 done in %dms", int((_time.monotonic() - _phase_t0) * 1000))
 
     # ── Phase 2b: session deduplication ────────────────────────────────────
-    # Dedup key: (full_session_name, mapping_name, sorted_targets)
+    # Dedup key: (full_session_name, folder_name, mapping_name, sorted_targets)
+    # Including folder_name prevents collision of same-named sessions in different folders.
     # On duplicate: keep the session with richer data (more sources/lookups)
     _phase_t0 = _time.monotonic()
     before_dedup = len(all_sessions)
@@ -1020,6 +1133,7 @@ def analyze(
     for sname, sd in all_sessions.items():
         dedup_key = (
             sd.get('full', sname),
+            sd.get('folder', ''),
             sd.get('mapping', ''),
             tuple(sorted(sd.get('targets', []))),
         )

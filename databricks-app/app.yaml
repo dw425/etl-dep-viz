@@ -3,8 +3,14 @@ command:
   - "databricks-app/build.sh"
 
 env:
+  # Database URL — use valueFrom with a Databricks secret scope for production:
+  #   valueFrom:
+  #     secretScope: etl-dep-viz
+  #     secretKey: database-url
   - name: EDV_DATABASE_URL
-    value: "postgresql://dan%40bpcs.com:token@instance-82144a08-ea5e-4dfc-8a6f-d39f235c7252.database.azuredatabricks.net:5432/etl_dep_viz?sslmode=require"
+    valueFrom:
+      secretScope: etl-dep-viz
+      secretKey: database-url
   - name: EDV_DATABRICKS_APP
     value: "true"
   - name: EDV_CORS_ORIGINS

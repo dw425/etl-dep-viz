@@ -129,3 +129,84 @@ class ETLUser(HttpUser):
     @task(1)
     def error_aggregation(self):
         self.client.get("/api/health/errors?limit=10")
+
+    @task(1)
+    def health_metrics(self):
+        self.client.get("/api/health/metrics")
+
+    # ── Per-View Endpoints (DB-backed) ─────────────────────────────────
+
+    @task(4)
+    def view_explorer(self):
+        if self.upload_id:
+            self.client.get(f"/api/views/explorer?upload_id={self.upload_id}&limit=50")
+
+    @task(3)
+    def view_conflicts(self):
+        if self.upload_id:
+            self.client.get(f"/api/views/conflicts?upload_id={self.upload_id}")
+
+    @task(3)
+    def view_exec_order(self):
+        if self.upload_id:
+            self.client.get(f"/api/views/exec-order?upload_id={self.upload_id}&limit=100")
+
+    @task(2)
+    def view_matrix(self):
+        if self.upload_id:
+            self.client.get(f"/api/views/matrix?upload_id={self.upload_id}&page_size=50")
+
+    @task(2)
+    def view_tables(self):
+        if self.upload_id:
+            self.client.get(f"/api/views/tables?upload_id={self.upload_id}&limit=50")
+
+    @task(2)
+    def view_duplicates(self):
+        if self.upload_id:
+            self.client.get(f"/api/views/duplicates?upload_id={self.upload_id}")
+
+    @task(2)
+    def view_constellation(self):
+        if self.upload_id:
+            self.client.get(f"/api/views/constellation?upload_id={self.upload_id}")
+
+    @task(2)
+    def view_complexity(self):
+        if self.upload_id:
+            self.client.get(f"/api/views/complexity?upload_id={self.upload_id}")
+
+    @task(2)
+    def view_waves(self):
+        if self.upload_id:
+            self.client.get(f"/api/views/waves?upload_id={self.upload_id}")
+
+    @task(1)
+    def view_umap(self):
+        if self.upload_id:
+            self.client.get(f"/api/views/umap?upload_id={self.upload_id}")
+
+    @task(1)
+    def view_simulator(self):
+        if self.upload_id:
+            self.client.get(f"/api/views/simulator?upload_id={self.upload_id}")
+
+    @task(1)
+    def view_concentration(self):
+        if self.upload_id:
+            self.client.get(f"/api/views/concentration?upload_id={self.upload_id}")
+
+    @task(1)
+    def view_consensus(self):
+        if self.upload_id:
+            self.client.get(f"/api/views/consensus?upload_id={self.upload_id}")
+
+    @task(1)
+    def view_search_code(self):
+        if self.upload_id:
+            self.client.get(f"/api/views/search/code?q=IIF&upload_id={self.upload_id}")
+
+    @task(1)
+    def view_effort_estimate(self):
+        if self.upload_id:
+            self.client.get(f"/api/views/effort_estimate?upload_id={self.upload_id}&team_size=5")

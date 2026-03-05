@@ -75,6 +75,24 @@ class SessionFeatures:
     unique_table_ratio: float = 0.0
     workflow_name: str = ""
 
+    # Phase 7 expansion — 16 additional features
+    expression_count: int = 0
+    parameter_count: int = 0
+    sql_override_count: int = 0
+    join_count: int = 0
+    filter_count: int = 0
+    router_group_count: int = 0
+    lookup_cache_potential: int = 0
+    field_count: int = 0
+    connector_count: int = 0
+    mapplet_usage: int = 0
+    worklet_nesting_depth: int = 0
+    schedule_frequency_code: int = 0
+    command_task_count: int = 0
+    stored_procedure_count: int = 0
+    expression_complexity_score: float = 0.0
+    pre_post_sql_count: int = 0
+
     def __post_init__(self):
         all_tables = set(self.source_tables) | set(self.target_tables) | set(self.lookup_tables)
         total = len(self.source_tables) + len(self.target_tables) + len(self.lookup_tables)
@@ -93,12 +111,20 @@ class FeatureMatrixBuilder:
 
     # Feature columns for the dense matrix (order matters — index = column position)
     FEATURE_NAMES = [
+        # Original 16
         "tier", "transform_count", "ext_reads", "lookup_count",
         "source_table_count", "target_table_count", "lookup_table_count",
         "total_table_footprint", "unique_table_ratio",
         "is_critical", "upstream_count", "downstream_count",
         "dependency_depth", "write_conflict_count", "chain_involvement",
         "staleness_risk",
+        # Phase 7 expansion (16 more = 32 total)
+        "expression_count", "parameter_count", "sql_override_count",
+        "join_count", "filter_count", "router_group_count",
+        "lookup_cache_potential", "field_count", "connector_count",
+        "mapplet_usage", "worklet_nesting_depth", "schedule_frequency_code",
+        "command_task_count", "stored_procedure_count",
+        "expression_complexity_score", "pre_post_sql_count",
     ]
 
     def __init__(self, features: list[SessionFeatures]):
@@ -107,7 +133,7 @@ class FeatureMatrixBuilder:
         self._id_to_idx = {f.session_id: i for i, f in enumerate(features)}
 
     def build_dense_matrix(self):
-        """Build min-max normalized feature matrix (n_sessions x 16 features).
+        """Build min-max normalized feature matrix (n_sessions x 32 features).
 
         Each column is independently scaled to [0, 1]. Constant columns
         (where all sessions have the same value) remain at 0.
@@ -120,6 +146,7 @@ class FeatureMatrixBuilder:
 
         for i, f in enumerate(self.features):
             mat[i] = [
+                # Original 16
                 f.tier,
                 f.transform_count,
                 f.ext_reads,
@@ -136,6 +163,23 @@ class FeatureMatrixBuilder:
                 f.write_conflict_count,
                 f.chain_involvement,
                 f.staleness_risk,
+                # Phase 7 expansion
+                f.expression_count,
+                f.parameter_count,
+                f.sql_override_count,
+                f.join_count,
+                f.filter_count,
+                f.router_group_count,
+                f.lookup_cache_potential,
+                f.field_count,
+                f.connector_count,
+                f.mapplet_usage,
+                f.worklet_nesting_depth,
+                f.schedule_frequency_code,
+                f.command_task_count,
+                f.stored_procedure_count,
+                f.expression_complexity_score,
+                f.pre_post_sql_count,
             ]
 
         # Min-max normalize each column
@@ -315,6 +359,23 @@ def extract_session_features(tier_data: dict[str, Any]) -> list[SessionFeatures]
             if len(parts) > 1:
                 workflow = parts[0]
 
+        # Extract Phase 7 features from mapping_detail if available
+        md = s.get("mapping_detail") or {}
+        instances = md.get("instances", [])
+        connectors = md.get("connectors", [])
+        expressions = md.get("expressions", [])
+        expr_count = len(expressions)
+        param_count = len(s.get("mapping_variables", []))
+        sql_count = sum(1 for inst in instances if inst.get("sql_override"))
+        join_count = sum(1 for inst in instances if "joiner" in (inst.get("type", "")).lower())
+        filter_count = sum(1 for inst in instances if "filter" in (inst.get("type", "")).lower())
+        router_count = sum(1 for inst in instances if "router" in (inst.get("type", "")).lower())
+        lkp_cache = sum(1 for inst in instances if "lookup" in (inst.get("type", "")).lower())
+        field_count = sum(len(c.get("fields", [])) for c in connectors)
+        mapplet_use = sum(1 for inst in instances if "mapplet" in (inst.get("type", "")).lower())
+        sp_count = sum(1 for inst in instances if "stored" in (inst.get("type", "")).lower())
+        expr_complexity = sum(e.get("expression", "").count("(") for e in expressions) / max(expr_count, 1)
+
         feat = SessionFeatures(
             session_id=sid,
             name=s.get("name", sid),
@@ -334,6 +395,19 @@ def extract_session_features(tier_data: dict[str, Any]) -> list[SessionFeatures]
             chain_involvement=session_chains.get(sid, 0),
             staleness_risk=session_staleness.get(sid, 0),
             workflow_name=workflow,
+            # Phase 7 features
+            expression_count=expr_count,
+            parameter_count=param_count,
+            sql_override_count=sql_count,
+            join_count=join_count,
+            filter_count=filter_count,
+            router_group_count=router_count,
+            lookup_cache_potential=lkp_cache,
+            field_count=field_count,
+            connector_count=len(connectors),
+            mapplet_usage=mapplet_use,
+            stored_procedure_count=sp_count,
+            expression_complexity_score=expr_complexity,
         )
         features.append(feat)
 

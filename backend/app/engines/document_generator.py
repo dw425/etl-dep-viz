@@ -28,18 +28,79 @@ from typing import Any
 logger = logging.getLogger("edv.docgen")
 
 
+# ── Pre-computed lookup index ─────────────────────────────────────────────
+
+class _TierIndex:
+    """O(N) pre-computed maps from tier_data — eliminates O(N^2) lookups.
+
+    Built once in DocumentGenerator.__init__(), then passed to all helpers.
+    At 13K sessions / 19K tables this reduces document generation from
+    ~170M comparisons to ~32K.
+    """
+
+    def __init__(self, tier_data: dict) -> None:
+        sessions = tier_data.get("sessions", [])
+        connections = tier_data.get("connections", [])
+
+        # Session lookup by full/id
+        self.session_by_id: dict[str, dict] = {}
+        for s in sessions:
+            sid = s.get("full") or s.get("id", "")
+            self.session_by_id[sid] = s
+
+        # Table→writer/reader/lookup maps (O(sessions) total)
+        self.table_writers: dict[str, list[str]] = defaultdict(list)
+        self.table_readers: dict[str, list[str]] = defaultdict(list)
+        self.table_lookups: dict[str, list[str]] = defaultdict(list)
+        for s in sessions:
+            sid = s.get("full") or s.get("id", "")
+            for t in s.get("targets", []):
+                self.table_writers[t].append(sid)
+            for t in s.get("sources", []):
+                self.table_readers[t].append(sid)
+            for t in s.get("lookups", []):
+                self.table_lookups[t].append(sid)
+
+        # Upstream/downstream session maps from connections
+        self.upstream: dict[str, list[str]] = defaultdict(list)
+        self.downstream: dict[str, list[str]] = defaultdict(list)
+        for conn in connections:
+            ctype = conn.get("type")
+            if ctype in ("dep", "dependency", None):
+                self.upstream[conn["to"]].append(conn["from"])
+                self.downstream[conn["from"]].append(conn["to"])
+
+        # Pre-compute write conflicts per session: {table: [other_writers]}
+        self.write_conflicts: dict[str, list[dict]] = {}
+        for s in sessions:
+            sid = s.get("full") or s.get("id", "")
+            conflicts = []
+            for t in s.get("targets", []):
+                other_writers = [w for w in self.table_writers[t] if w != sid]
+                if other_writers:
+                    conflicts.append({"table": t, "other_writers": other_writers})
+            self.write_conflicts[sid] = conflicts
+
+    def find_session(self, session_id: str) -> dict | None:
+        return self.session_by_id.get(session_id)
+
+
 # ── Helper functions ──────────────────────────────────────────────────────
 
-def _find_session(session_id: str, tier_data: dict) -> dict | None:
+def _find_session(session_id: str, tier_data: dict, idx: _TierIndex | None = None) -> dict | None:
     """Find a session by its full ID."""
+    if idx:
+        return idx.find_session(session_id)
     for s in tier_data.get("sessions", []):
         if s.get("full") == session_id or s.get("id") == session_id:
             return s
     return None
 
 
-def _get_upstream_sessions(session_id: str, tier_data: dict) -> list[str]:
+def _get_upstream_sessions(session_id: str, tier_data: dict, idx: _TierIndex | None = None) -> list[str]:
     """Get sessions that this session depends on (upstream)."""
+    if idx:
+        return idx.upstream.get(session_id, [])
     upstream = []
     for conn in tier_data.get("connections", []):
         if conn.get("to") == session_id and conn.get("type") in ("dep", "dependency", None):
@@ -47,8 +108,10 @@ def _get_upstream_sessions(session_id: str, tier_data: dict) -> list[str]:
     return upstream
 
 
-def _get_downstream_sessions(session_id: str, tier_data: dict) -> list[str]:
+def _get_downstream_sessions(session_id: str, tier_data: dict, idx: _TierIndex | None = None) -> list[str]:
     """Get sessions that depend on this session (downstream)."""
+    if idx:
+        return idx.downstream.get(session_id, [])
     downstream = []
     for conn in tier_data.get("connections", []):
         if conn.get("from") == session_id and conn.get("type") in ("dep", "dependency", None):
@@ -56,28 +119,22 @@ def _get_downstream_sessions(session_id: str, tier_data: dict) -> list[str]:
     return downstream
 
 
-def _get_write_conflicts(session_id: str, tier_data: dict) -> list[dict]:
-    """Find write conflicts involving this session.
-
-    A write conflict occurs when two or more sessions target the same table,
-    which can cause race conditions or data overwrites at runtime.
-    """
+def _get_write_conflicts(session_id: str, tier_data: dict, idx: _TierIndex | None = None) -> list[dict]:
+    """Find write conflicts involving this session."""
+    if idx:
+        return idx.write_conflicts.get(session_id, [])
     conflicts = []
     session = _find_session(session_id, tier_data)
     if not session:
         return conflicts
-
     targets = set(session.get("targets", []))
     for other in tier_data.get("sessions", []):
         other_id = other.get("full") or other.get("id")
         if other_id == session_id:
-            # Skip self-comparison
             continue
         other_targets = set(other.get("targets", []))
-        # Intersection reveals tables written by both this session and 'other'
         shared = targets & other_targets
         for table in shared:
-            # Group multiple co-writers under the same table entry
             existing = next((c for c in conflicts if c["table"] == table), None)
             if existing:
                 existing["other_writers"].append(other_id)
@@ -151,8 +208,10 @@ def _get_criticality(session_id: str, vectors: dict | None) -> dict | None:
     return None
 
 
-def _get_writers(table_name: str, tier_data: dict) -> list[str]:
+def _get_writers(table_name: str, tier_data: dict, idx: _TierIndex | None = None) -> list[str]:
     """Sessions that write to this table."""
+    if idx:
+        return idx.table_writers.get(table_name, [])
     writers = []
     for s in tier_data.get("sessions", []):
         sid = s.get("full") or s.get("id")
@@ -161,8 +220,10 @@ def _get_writers(table_name: str, tier_data: dict) -> list[str]:
     return writers
 
 
-def _get_readers(table_name: str, tier_data: dict) -> list[str]:
+def _get_readers(table_name: str, tier_data: dict, idx: _TierIndex | None = None) -> list[str]:
     """Sessions that read from this table."""
+    if idx:
+        return idx.table_readers.get(table_name, [])
     readers = []
     for s in tier_data.get("sessions", []):
         sid = s.get("full") or s.get("id")
@@ -171,8 +232,10 @@ def _get_readers(table_name: str, tier_data: dict) -> list[str]:
     return readers
 
 
-def _get_lookup_users(table_name: str, tier_data: dict) -> list[str]:
+def _get_lookup_users(table_name: str, tier_data: dict, idx: _TierIndex | None = None) -> list[str]:
     """Sessions that use this table as a lookup."""
+    if idx:
+        return idx.table_lookups.get(table_name, [])
     users = []
     for s in tier_data.get("sessions", []):
         sid = s.get("full") or s.get("id")
@@ -181,23 +244,23 @@ def _get_lookup_users(table_name: str, tier_data: dict) -> list[str]:
     return users
 
 
-def _get_upstream_tables(table_name: str, tier_data: dict) -> list[str]:
+def _get_upstream_tables(table_name: str, tier_data: dict, idx: _TierIndex | None = None) -> list[str]:
     """Tables that feed data into this table (via sessions)."""
     upstream = set()
-    writers = _get_writers(table_name, tier_data)
+    writers = _get_writers(table_name, tier_data, idx)
     for w in writers:
-        session = _find_session(w, tier_data)
+        session = _find_session(w, tier_data, idx)
         if session:
             upstream.update(session.get("sources", []))
     return sorted(upstream)
 
 
-def _get_downstream_tables(table_name: str, tier_data: dict) -> list[str]:
+def _get_downstream_tables(table_name: str, tier_data: dict, idx: _TierIndex | None = None) -> list[str]:
     """Tables that this table feeds into (via sessions)."""
     downstream = set()
-    readers = _get_readers(table_name, tier_data)
+    readers = _get_readers(table_name, tier_data, idx)
     for r in readers:
-        session = _find_session(r, tier_data)
+        session = _find_session(r, tier_data, idx)
         if session:
             downstream.update(session.get("targets", []))
     downstream.discard(table_name)
@@ -259,28 +322,23 @@ def _extract_longest_chains(tier_data: dict, max_chains: int = 200) -> list[list
     return chains[:max_chains]
 
 
-def _get_tier(session_id: str, tier_data: dict) -> int:
+def _get_tier(session_id: str, tier_data: dict, idx: _TierIndex | None = None) -> int:
     """Get tier for a session."""
-    s = _find_session(session_id, tier_data)
+    s = _find_session(session_id, tier_data, idx)
     return s.get("tier", 0) if s else 0
 
 
-def _common_tables(members: list[str], field: str, tier_data: dict) -> list[str]:
-    """Find tables common to all members by intersecting their source/target sets.
-
-    `field` is either "sources" or "targets". Only inspects the first 20 members
-    to keep runtime bounded for large groups.
-    """
+def _common_tables(members: list[str], field: str, tier_data: dict, idx: _TierIndex | None = None) -> list[str]:
+    """Find tables common to all members by intersecting their source/target sets."""
     if not members:
         return []
     table_sets = []
-    for mid in members[:20]:  # Cap to avoid O(n) cost on very large groups
-        s = _find_session(mid, tier_data)
+    for mid in members[:20]:
+        s = _find_session(mid, tier_data, idx)
         if s:
             table_sets.append(set(s.get(field, [])))
     if not table_sets:
         return []
-    # Rolling intersection — start from the first set and narrow down
     common = table_sets[0]
     for ts in table_sets[1:]:
         common &= ts
@@ -301,7 +359,9 @@ def _avg_complexity(members: list[str], vectors: dict | None) -> float:
 
 # ── Document generation functions ─────────────────────────────────────────
 
-def generate_session_document(session: dict, tier_data: dict, vectors: dict | None) -> str:
+def generate_session_document(
+    session: dict, tier_data: dict, vectors: dict | None, idx: _TierIndex | None = None,
+) -> str:
     """Generate a rich natural-language document for one session."""
     sid = session.get("full") or session.get("id", "")
     short = session.get("name", sid)
@@ -313,9 +373,9 @@ def generate_session_document(session: dict, tier_data: dict, vectors: dict | No
     lookup_count = session.get("lookupCount", 0)
     critical = session.get("critical", False)
 
-    upstream = _get_upstream_sessions(sid, tier_data)
-    downstream = _get_downstream_sessions(sid, tier_data)
-    write_conflicts = _get_write_conflicts(sid, tier_data)
+    upstream = _get_upstream_sessions(sid, tier_data, idx)
+    downstream = _get_downstream_sessions(sid, tier_data, idx)
+    write_conflicts = _get_write_conflicts(sid, tier_data, idx)
 
     complexity = _get_complexity(sid, vectors)
     wave = _get_wave(sid, vectors)
@@ -376,15 +436,15 @@ CRITICALITY:
     return doc
 
 
-def generate_table_document(table: dict, tier_data: dict) -> str:
+def generate_table_document(table: dict, tier_data: dict, idx: _TierIndex | None = None) -> str:
     """Generate a document for a single table."""
     name = table.get("name", "")
     ttype = table.get("type", "unknown")
     tier = table.get("tier", 0)
 
-    writers = _get_writers(name, tier_data)
-    readers = _get_readers(name, tier_data)
-    lookup_users = _get_lookup_users(name, tier_data)
+    writers = _get_writers(name, tier_data, idx)
+    readers = _get_readers(name, tier_data, idx)
+    lookup_users = _get_lookup_users(name, tier_data, idx)
 
     doc = f"""TABLE: {name}
 Type: {ttype}
@@ -397,8 +457,8 @@ LOOKUP USERS ({len(lookup_users)}): {', '.join(lookup_users[:20]) if lookup_user
     if len(writers) > 1:
         doc += f"\nWRITE CONFLICT: Multiple sessions write to this table: {', '.join(writers)}\n"
 
-    upstream = _get_upstream_tables(name, tier_data)
-    downstream = _get_downstream_tables(name, tier_data)
+    upstream = _get_upstream_tables(name, tier_data, idx)
+    downstream = _get_downstream_tables(name, tier_data, idx)
     doc += f"""
 LINEAGE:
 - Data flows INTO this table from: {', '.join(upstream[:20]) or 'external sources'}
@@ -407,11 +467,11 @@ LINEAGE:
     return doc
 
 
-def generate_chain_document(chain: list[str], tier_data: dict) -> str:
+def generate_chain_document(chain: list[str], tier_data: dict, idx: _TierIndex | None = None) -> str:
     """Document a dependency chain for lineage queries."""
     steps = []
     for i, sid in enumerate(chain):
-        session = _find_session(sid, tier_data)
+        session = _find_session(sid, tier_data, idx)
         if session:
             sources = session.get("sources", [])
             targets = session.get("targets", [])
@@ -426,22 +486,23 @@ Steps:
 {chr(10).join(steps)}
 
 This chain represents a complete data flow spanning {len(chain)} processing steps.
-Tier range: {_get_tier(chain[0], tier_data)} -> {_get_tier(chain[-1], tier_data)}
+Tier range: {_get_tier(chain[0], tier_data, idx)} -> {_get_tier(chain[-1], tier_data, idx)}
 """
     return doc
 
 
 def generate_group_document(
     group_id: int, members: list[str], tier_data: dict, vectors: dict | None,
+    idx: _TierIndex | None = None,
 ) -> str:
     """Summarize a group of related sessions."""
-    common_src = _common_tables(members, "sources", tier_data)
-    common_tgt = _common_tables(members, "targets", tier_data)
+    common_src = _common_tables(members, "sources", tier_data, idx)
+    common_tgt = _common_tables(members, "targets", tier_data, idx)
     avg_cx = _avg_complexity(members, vectors)
 
     tiers = []
     for m in members[:50]:
-        s = _find_session(m, tier_data)
+        s = _find_session(m, tier_data, idx)
         if s:
             tiers.append(s.get("tier", 0))
 
@@ -557,6 +618,29 @@ COMMUNITY STRUCTURE:
     return doc
 
 
+# ── Document chunking ─────────────────────────────────────────────────────
+
+def _chunk_text(text: str, max_tokens: int = 400, overlap_tokens: int = 50) -> list[str]:
+    """Split text into chunks of approximately max_tokens words with overlap.
+
+    BGE embedding models have a 512-token limit. We chunk at 400 tokens
+    (words) with 50-token overlap so no context is lost at boundaries.
+    Returns a list of 1+ chunks. Short texts are returned as-is.
+    """
+    words = text.split()
+    if len(words) <= max_tokens:
+        return [text]
+
+    chunks = []
+    start = 0
+    while start < len(words):
+        end = start + max_tokens
+        chunk = " ".join(words[start:end])
+        chunks.append(chunk)
+        start = end - overlap_tokens
+    return chunks
+
+
 # ── Main generator class ──────────────────────────────────────────────────
 
 class DocumentGenerator:
@@ -570,6 +654,8 @@ class DocumentGenerator:
         self.tier_data = tier_data
         self.vectors = vector_results
         self.documents: list[dict] = []
+        # Pre-compute O(N) index to eliminate O(N^2) lookups
+        self._idx = _TierIndex(tier_data)
 
     def generate_all(self) -> list[dict]:
         """Generate all document types. Returns list of {id, type, content, metadata}.
@@ -579,29 +665,32 @@ class DocumentGenerator:
         """
         t0 = time.monotonic()
 
-        # ── Type 1: Session profiles (one per session) ──────────────────────
+        # ── Type 1: Session profiles (one per session, chunked) ────────────
         for session in self.tier_data.get("sessions", []):
             sid = session.get("full") or session.get("id", "")
-            doc = generate_session_document(session, self.tier_data, self.vectors)
-            self.documents.append({
-                "id": f"session:{sid}",
-                "type": "session",
-                "content": doc,
-                # Metadata fields are stored in ChromaDB for post-retrieval filtering
-                "metadata": {
-                    "session_id": sid,
-                    "session_name": session.get("name", ""),
-                    "tier": session.get("tier", 0),
-                    "transforms": session.get("transforms", 0),
-                    "lookup_count": session.get("lookupCount", 0),
-                    "critical": session.get("critical", False),
-                },
-            })
+            doc = generate_session_document(session, self.tier_data, self.vectors, self._idx)
+            meta = {
+                "session_id": sid,
+                "session_name": session.get("name", ""),
+                "tier": session.get("tier", 0),
+                "transforms": session.get("transforms", 0),
+                "lookup_count": session.get("lookupCount", 0),
+                "critical": session.get("critical", False),
+            }
+            chunks = _chunk_text(doc)
+            for ci, chunk in enumerate(chunks):
+                self.documents.append({
+                    "id": f"session:{sid}" + (f":c{ci}" if ci > 0 else ""),
+                    "type": "session",
+                    "content": chunk,
+                    "metadata": meta,
+                    "chunk_index": ci,
+                })
 
         # ── Type 2: Table profiles (one per table) ───────────────────────────
         for table in self.tier_data.get("tables", []):
             name = table.get("name", "")
-            doc = generate_table_document(table, self.tier_data)
+            doc = generate_table_document(table, self.tier_data, self._idx)
             self.documents.append({
                 "id": f"table:{name}",
                 "type": "table",
@@ -616,7 +705,7 @@ class DocumentGenerator:
         # ── Type 3: Dependency chains (top 200 longest paths) ───────────────
         chains = _extract_longest_chains(self.tier_data, max_chains=200)
         for i, chain in enumerate(chains):
-            doc = generate_chain_document(chain, self.tier_data)
+            doc = generate_chain_document(chain, self.tier_data, self._idx)
             self.documents.append({
                 "id": f"chain:{i}",
                 "type": "chain",
@@ -634,7 +723,7 @@ class DocumentGenerator:
         if self.vectors and "v10_concentration" in self.vectors:
             for group in self.vectors["v10_concentration"].get("groups", []):
                 doc = generate_group_document(
-                    group["id"], group["members"], self.tier_data, self.vectors,
+                    group["id"], group["members"], self.tier_data, self.vectors, self._idx,
                 )
                 self.documents.append({
                     "id": f"group:{group['id']}",

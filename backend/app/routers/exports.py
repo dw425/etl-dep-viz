@@ -29,22 +29,36 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/exports", tags=["exports"])
 
 
+def _resolve_tier_data(
+    tier_data: dict | None, upload_id: int | None, db: Session,
+) -> dict:
+    """Resolve tier_data from body or upload_id with DB reconstruction fallback."""
+    if tier_data and tier_data.get("sessions"):
+        return tier_data
+    if upload_id:
+        upload = db.query(Upload).filter(Upload.id == upload_id).first()
+        if not upload:
+            raise HTTPException(404, f"Upload {upload_id} not found")
+        td = upload.get_tier_data()
+        if td and td.get("sessions"):
+            return td
+        from app.engines.data_populator import reconstruct_tier_data
+        td = reconstruct_tier_data(db, upload_id)
+        if td:
+            return td
+    raise HTTPException(400, "Either tier_data body or upload_id query param required")
+
+
 # ── Lineage Exports (Item 59) ─────────────────────────────────────────────
 
 @router.post("/lineage/dot")
-async def export_lineage_dot(tier_data: dict[str, Any] = Body(...)):
-    """Export lineage graph as Graphviz DOT format.
-
-    Downloads a .dot file that can be rendered with Graphviz or pasted into
-    online DOT viewers. Useful for sharing lineage with teams that don't have
-    access to this tool.
-
-    Args:
-        tier_data: Full tier data with sessions, tables, connections.
-
-    Returns:
-        Response with text/vnd.graphviz content-type and .dot attachment.
-    """
+async def export_lineage_dot(
+    tier_data: dict[str, Any] = Body(None),
+    upload_id: int | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    """Export lineage graph as Graphviz DOT format. Accepts tier_data body or upload_id."""
+    tier_data = _resolve_tier_data(tier_data, upload_id, db)
     from app.routers.lineage import _build_lineage_graph
     from app.exports.lineage_export import lineage_to_dot
 
@@ -58,18 +72,13 @@ async def export_lineage_dot(tier_data: dict[str, Any] = Body(...)):
 
 
 @router.post("/lineage/mermaid")
-async def export_lineage_mermaid(tier_data: dict[str, Any] = Body(...)):
-    """Export lineage graph as Mermaid flowchart format.
-
-    Downloads a .mmd file compatible with Mermaid.js rendering in Markdown
-    documents, Confluence, GitHub, etc.
-
-    Args:
-        tier_data: Full tier data with sessions, tables, connections.
-
-    Returns:
-        Response with text/plain content-type and .mmd attachment.
-    """
+async def export_lineage_mermaid(
+    tier_data: dict[str, Any] = Body(None),
+    upload_id: int | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    """Export lineage graph as Mermaid format. Accepts tier_data body or upload_id."""
+    tier_data = _resolve_tier_data(tier_data, upload_id, db)
     from app.routers.lineage import _build_lineage_graph
     from app.exports.lineage_export import lineage_to_mermaid
 
@@ -83,15 +92,13 @@ async def export_lineage_mermaid(tier_data: dict[str, Any] = Body(...)):
 
 
 @router.post("/lineage/json")
-async def export_lineage_json(tier_data: dict[str, Any] = Body(...)):
-    """Export lineage graph as JSON (nodes + edges structure).
-
-    Args:
-        tier_data: Full tier data with sessions, tables, connections.
-
-    Returns:
-        JSON dict with nodes, edges, lineage_edges, and table_sessions.
-    """
+async def export_lineage_json(
+    tier_data: dict[str, Any] = Body(None),
+    upload_id: int | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    """Export lineage graph as JSON. Accepts tier_data body or upload_id."""
+    tier_data = _resolve_tier_data(tier_data, upload_id, db)
     from app.routers.lineage import _build_lineage_graph
     from app.exports.lineage_export import lineage_to_json
 
@@ -103,26 +110,12 @@ async def export_lineage_json(tier_data: dict[str, Any] = Body(...)):
 
 @router.post("/excel")
 async def export_excel(
-    tier_data: dict[str, Any] = Body(...),
+    tier_data: dict[str, Any] = Body(None),
     upload_id: int | None = Query(None),
     db: Session = Depends(get_db),
 ):
-    """Export tier data as multi-sheet Excel workbook (.xlsx).
-
-    Sheets include: Sessions, Tables, Connections, and optionally complexity
-    scores and wave assignments if vector_results are available.
-
-    Args:
-        tier_data: Full tier data with sessions, tables, connections.
-        upload_id: Optional — enriches workbook with cached vector results.
-        db: SQLAlchemy session (injected).
-
-    Returns:
-        .xlsx file download.
-
-    Raises:
-        HTTPException(501): openpyxl not installed.
-    """
+    """Export as multi-sheet Excel workbook. Accepts tier_data body or upload_id."""
+    tier_data = _resolve_tier_data(tier_data, upload_id, db)
     try:
         from app.exports.excel_workbook import generate_excel_workbook
     except ImportError:
@@ -147,23 +140,12 @@ async def export_excel(
 
 @router.post("/jira/csv")
 async def export_jira_csv(
-    tier_data: dict[str, Any] = Body(...),
+    tier_data: dict[str, Any] = Body(None),
     upload_id: int | None = Query(None),
     db: Session = Depends(get_db),
 ):
-    """Export migration tasks as JIRA-importable CSV.
-
-    Generates one row per session with summary, description, priority,
-    and estimated story points derived from V11 complexity scores.
-
-    Args:
-        tier_data: Full tier data with sessions.
-        upload_id: Optional — enriches with vector-based estimates.
-        db: SQLAlchemy session (injected).
-
-    Returns:
-        .csv file download with JIRA-compatible columns.
-    """
+    """Export as JIRA-importable CSV. Accepts tier_data body or upload_id."""
+    tier_data = _resolve_tier_data(tier_data, upload_id, db)
     from app.integrations.jira_export import generate_jira_csv
 
     vector_results = None
@@ -183,20 +165,12 @@ async def export_jira_csv(
 
 @router.post("/jira/json")
 async def export_jira_json(
-    tier_data: dict[str, Any] = Body(...),
+    tier_data: dict[str, Any] = Body(None),
     upload_id: int | None = Query(None),
     db: Session = Depends(get_db),
 ):
-    """Export migration tasks as JSON for JIRA REST API (bulk create).
-
-    Args:
-        tier_data: Full tier data with sessions.
-        upload_id: Optional — enriches with vector-based estimates.
-        db: SQLAlchemy session (injected).
-
-    Returns:
-        Dict with tickets list and count.
-    """
+    """Export as JIRA REST API JSON. Accepts tier_data body or upload_id."""
+    tier_data = _resolve_tier_data(tier_data, upload_id, db)
     from app.integrations.jira_export import generate_jira_json
 
     vector_results = None
@@ -213,18 +187,13 @@ async def export_jira_json(
 # ── Databricks Scaffold (Item 84) ──────────────────────────────────────────
 
 @router.post("/databricks")
-async def export_databricks(tier_data: dict[str, Any] = Body(...)):
-    """Export Databricks notebook scaffolding (.py format).
-
-    Generates a Python notebook with cell markers for each session's migration
-    task, pre-populated with source/target table names and skeleton SQL.
-
-    Args:
-        tier_data: Full tier data with sessions.
-
-    Returns:
-        .py file download with Databricks notebook format.
-    """
+async def export_databricks(
+    tier_data: dict[str, Any] = Body(None),
+    upload_id: int | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    """Export Databricks notebook scaffolding. Accepts tier_data body or upload_id."""
+    tier_data = _resolve_tier_data(tier_data, upload_id, db)
     from app.exports.databricks_scaffold import generate_databricks_notebook
 
     notebook = generate_databricks_notebook(tier_data)
@@ -239,23 +208,12 @@ async def export_databricks(tier_data: dict[str, Any] = Body(...)):
 
 @router.post("/snapshot")
 async def export_snapshot(
-    tier_data: dict[str, Any] = Body(...),
+    tier_data: dict[str, Any] = Body(None),
     upload_id: int | None = Query(None),
     db: Session = Depends(get_db),
 ):
-    """Export complete state snapshot (tier data + vector results + constellation).
-
-    Bundles everything needed to restore a full analysis session into a single
-    JSON file. Can be re-imported later or shared with other team members.
-
-    Args:
-        tier_data: Full tier data.
-        upload_id: Optional — enriches with vectors, constellation, and metadata.
-        db: SQLAlchemy session (injected).
-
-    Returns:
-        .json file download with version-tagged snapshot.
-    """
+    """Export complete state snapshot. Accepts tier_data body or upload_id."""
+    tier_data = _resolve_tier_data(tier_data, upload_id, db)
     snapshot = {
         'version': '1.0',
         'tier_data': tier_data,

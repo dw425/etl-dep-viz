@@ -24,6 +24,40 @@ import type { VectorResults, WavePlan, ComplexityResult, WhatIfResult, L1Data, A
 
 const BASE = '/api';
 
+// ── Request deduplication with AbortController ───────────────────────────
+// When a new request for the same endpoint arrives, the previous in-flight
+// request is automatically aborted to prevent duplicate/stale responses.
+const _inflightControllers = new Map<string, AbortController>();
+const _MAX_CONCURRENT = 4;
+let _activeRequests = 0;
+
+/**
+ * Fetch with automatic deduplication — aborts previous in-flight request
+ * for the same dedup key. Use for GET-like requests where only the latest
+ * response matters (e.g. tab switches, search-as-you-type).
+ */
+export async function dedupFetch(url: string, init?: RequestInit, dedupKey?: string): Promise<Response> {
+  const key = dedupKey || url;
+
+  // Abort previous request for this key
+  const prev = _inflightControllers.get(key);
+  if (prev) prev.abort();
+
+  const controller = new AbortController();
+  _inflightControllers.set(key, controller);
+
+  try {
+    _activeRequests++;
+    const res = await fetch(url, { ...init, signal: controller.signal });
+    return res;
+  } finally {
+    _activeRequests--;
+    if (_inflightControllers.get(key) === controller) {
+      _inflightControllers.delete(key);
+    }
+  }
+}
+
 // ── User ID management ────────────────────────────────────────────────────
 // A UUID is generated on first visit and stored in localStorage so the user's
 // upload history persists across sessions without requiring auth.

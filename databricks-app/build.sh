@@ -9,7 +9,7 @@ echo "=== Building frontend ==="
 cd frontend && npm ci && npm run build && cd ..
 
 echo "=== Installing Python dependencies ==="
-# Install core backend deps including chromadb for AI Chat
+# Install core backend deps (PgVectorStore replaces ChromaDB; Databricks BGE endpoint replaces sentence-transformers)
 pip install \
   "fastapi>=0.115.0" \
   "uvicorn[standard]>=0.30.0" \
@@ -27,7 +27,9 @@ pip install \
   "chardet>=5.0.0" \
   "httpx>=0.24" \
   "psycopg2-binary>=2.9.0" \
-  "chromadb>=0.5.0"
+  "umap-learn>=0.5.0" \
+  "hdbscan>=0.8.33" \
+  "gunicorn>=22.0.0"
 
 # Make backend importable
 pip install -e "./backend" --no-deps
