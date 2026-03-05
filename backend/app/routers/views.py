@@ -645,19 +645,33 @@ def get_concentration(
             "confidence": m.confidence,
         })
 
+    # Build gravity_groups in the shape the frontend ConcentrationResult expects
+    gravity_groups = []
+    independent_sessions = []
+    for g in groups:
+        group_members = members_by_group.get(g.group_id, [])
+        session_ids = [m["session_id"] for m in group_members]
+        gravity_groups.append({
+            "group_id": g.group_id,
+            "medoid_session_id": g.medoid_session_id,
+            "session_ids": session_ids,
+            "core_tables": _json_load(g.core_tables_json),
+            "signature_transforms": [],
+            "cohesion": g.cohesion,
+            "coupling": g.coupling,
+            "session_count": g.session_count,
+            "members": group_members,
+        })
+        # Collect independent sessions from members
+        for m in group_members:
+            if m.get("independence_type") in ("full", "near"):
+                independent_sessions.append(m)
+
     return {
-        "groups": [
-            {
-                "group_id": g.group_id,
-                "medoid_session_id": g.medoid_session_id,
-                "core_tables": _json_load(g.core_tables_json),
-                "cohesion": g.cohesion,
-                "coupling": g.coupling,
-                "session_count": g.session_count,
-                "members": members_by_group.get(g.group_id, []),
-            }
-            for g in groups
-        ],
+        "gravity_groups": gravity_groups,
+        "independent_sessions": independent_sessions,
+        "optimal_k": len(groups),
+        "silhouette": 0,
     }
 
 
