@@ -29,7 +29,7 @@ pip install \
   "psycopg2-binary>=2.9.0" \
   "umap-learn>=0.5.0" \
   "hdbscan>=0.8.33" \
-  "gunicorn>=22.0.0"
+  "orjson>=3.9.0"
 
 # Make backend importable
 pip install -e "./backend" --no-deps
