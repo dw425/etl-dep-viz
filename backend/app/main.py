@@ -284,6 +284,15 @@ _ROUTE_TIMEOUTS: list[tuple[str, int]] = [
 ]
 _DEFAULT_TIMEOUT = 60
 
+# SSE streaming endpoints have their own internal timeouts (up to 4hr cap).
+# Exempt them from the middleware timeout to avoid killing long-running streams.
+_TIMEOUT_EXEMPT = frozenset({
+    "/api/tier-map/analyze",
+    "/api/tier-map/constellation-stream",
+    "/api/chat/index",
+    "/api/vectors/analyze-stream",
+})
+
 
 def _get_timeout(path: str) -> int:
     for prefix, timeout in _ROUTE_TIMEOUTS:
@@ -294,8 +303,11 @@ def _get_timeout(path: str) -> int:
 
 @app.middleware("http")
 async def request_timeout(request: Request, call_next):
-    """Apply per-route timeouts. Returns 504 if the deadline is exceeded."""
-    timeout = _get_timeout(request.url.path)
+    """Apply per-route timeouts. SSE streams are exempt (they manage their own)."""
+    path = request.url.path
+    if any(path.startswith(p) for p in _TIMEOUT_EXEMPT):
+        return await call_next(request)
+    timeout = _get_timeout(path)
     try:
         return await asyncio.wait_for(call_next(request), timeout=timeout)
     except asyncio.TimeoutError:
@@ -680,6 +692,7 @@ MIGRATE_TABLES = [
     "vw_transform_centrality", "vw_table_gravity",
     "transform_records", "field_mapping_records", "expression_records",
     "workflow_records", "lookup_config_records", "parameter_records", "sql_override_records",
+    "embedded_code_records", "function_usage_records", "session_code_profiles",
 ]
 
 

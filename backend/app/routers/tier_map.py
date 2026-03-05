@@ -443,9 +443,10 @@ async def analyze_tier_map(
         db.refresh(upload)
 
         # Populate per-view materialized tables
-        from app.engines.data_populator import populate_core_tables, populate_view_tables
+        from app.engines.data_populator import populate_core_tables, populate_view_tables, populate_code_analysis_tables
         try:
             populate_core_tables(db, upload.id, result, result.get('connection_profiles'))
+            populate_code_analysis_tables(db, upload.id, result)
             populate_view_tables(db, upload.id)
             db.commit()
         except Exception as exc:
@@ -538,9 +539,10 @@ async def analyze_constellation(
         db.refresh(upload)
 
         # Populate per-view materialized tables
-        from app.engines.data_populator import populate_core_tables, populate_view_tables, populate_constellation_tables
+        from app.engines.data_populator import populate_core_tables, populate_view_tables, populate_constellation_tables, populate_code_analysis_tables
         try:
             populate_core_tables(db, upload.id, tier_data, tier_data.get('connection_profiles'))
+            populate_code_analysis_tables(db, upload.id, tier_data)
             populate_view_tables(db, upload.id)
             populate_constellation_tables(db, upload.id, constellation)
             db.commit()
@@ -715,9 +717,10 @@ async def analyze_constellation_stream(
             db.refresh(upload)
 
             # Populate per-view materialized tables
-            from app.engines.data_populator import populate_core_tables, populate_view_tables, populate_constellation_tables
+            from app.engines.data_populator import populate_core_tables, populate_view_tables, populate_constellation_tables, populate_code_analysis_tables
             try:
                 populate_core_tables(db, upload.id, tier_data, tier_data.get('connection_profiles'))
+                populate_code_analysis_tables(db, upload.id, tier_data)
                 populate_view_tables(db, upload.id)
                 populate_constellation_tables(db, upload.id, constellation)
                 db.commit()
@@ -747,12 +750,20 @@ async def analyze_constellation_stream(
             await queue.put({'phase': 'error', 'message': str(exc), 'elapsed_ms': elapsed_ms})
 
     async def _event_generator():
-        """Pull events from the queue and yield as SSE-formatted lines until terminal phase."""
+        """Pull events from the queue and yield as SSE-formatted lines until terminal phase.
+
+        Sends a heartbeat comment every 15s if no real event arrives, keeping
+        proxies and load balancers from closing the connection.
+        """
         while True:
-            event = await queue.get()
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=15)
+            except asyncio.TimeoutError:
+                yield ": heartbeat\n\n"
+                continue
             yield f"data: {json.dumps(event)}\n\n"
             # 'complete' and 'error' are terminal events — stop the stream
-            if event.get('phase') in ('complete', 'error'):
+            if event.get('phase') in ('complete', 'error', 'timeout'):
                 break
 
     # Start the heavy processing in the background so the SSE response can be

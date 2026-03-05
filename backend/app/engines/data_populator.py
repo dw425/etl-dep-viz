@@ -38,11 +38,14 @@ from sqlalchemy.orm import Session
 from app.models.database import (
     ConnectionProfileRecord,
     ConnectionRecord,
+    EmbeddedCodeRecord,
     ExpressionRecord,
     FieldMappingRecord,
+    FunctionUsageRecord,
     LookupConfigRecord,
     ParameterRecord,
     SQLOverrideRecord,
+    SessionCodeProfile,
     SessionRecord,
     TableRecord,
     TransformRecord,
@@ -148,6 +151,14 @@ def populate_core_tables(
             scheduler_name=(s.get('scheduler') or {}).get('name', ''),
             expression_count=len(md.get('expressions', [])),
             field_mapping_count=len(md.get('connectors', [])),
+            # Phase 6 code analysis fields
+            total_loc=cp.get('total_loc', 0) if (cp := s.get('code_profile')) else 0,
+            total_functions_used=cp.get('total_functions_used', 0) if (cp := s.get('code_profile')) else 0,
+            distinct_functions_used=cp.get('distinct_functions_used', 0) if (cp := s.get('code_profile')) else 0,
+            has_embedded_sql=cp.get('has_sql', 0) if (cp := s.get('code_profile')) else 0,
+            has_embedded_java=cp.get('has_java', 0) if (cp := s.get('code_profile')) else 0,
+            has_stored_procedure=cp.get('has_stored_procedure', 0) if (cp := s.get('code_profile')) else 0,
+            core_intent=cp.get('core_intent') if (cp := s.get('code_profile')) else None,
         ))
     _bulk_save(db, session_records)
 
@@ -395,6 +406,107 @@ def populate_normalized_tables(
                 "%d lookups, %d params, %d sql_overrides, %d workflows",
                 len(transform_rows), len(field_rows), len(expr_rows),
                 len(lookup_rows), len(param_rows), len(sql_rows), len(wf_rows))
+
+
+# ── 1c. Code Analysis Table Population ────────────────────────────────────────
+
+
+def populate_code_analysis_tables(
+    db: Session,
+    upload_id: int,
+    tier_data: dict,
+) -> None:
+    """Populate embedded_code_records, function_usage_records, and session_code_profiles.
+
+    Extracts data from 'embedded_code', 'function_usage', and 'code_profile' keys
+    that were added to session dicts by _enrich_session_code_analysis in infa_engine.
+    """
+    logger.info("populate_code_analysis_tables: upload_id=%d", upload_id)
+
+    # Delete existing rows
+    for model in [SessionCodeProfile, FunctionUsageRecord, EmbeddedCodeRecord]:
+        _delete_for_upload(db, model, upload_id)
+
+    ec_rows = []
+    fu_rows = []
+    cp_rows = []
+
+    for s in tier_data.get('sessions', []):
+        sname = s.get('full', s.get('name', ''))
+
+        # Embedded code records
+        for ec in s.get('embedded_code', []):
+            ec_rows.append(EmbeddedCodeRecord(
+                upload_id=upload_id,
+                session_name=sname,
+                transform_name=ec.get('transform_name', ''),
+                code_type=ec.get('code_type', 'unknown'),
+                code_subtype=ec.get('code_subtype'),
+                code_text=ec.get('code_text'),
+                line_count=ec.get('line_count', 0),
+                char_count=ec.get('char_count', 0),
+                language_confidence=ec.get('language_confidence', 1.0),
+                contains_dml=ec.get('contains_dml', 0),
+                contains_ddl=ec.get('contains_ddl', 0),
+                referenced_tables_json=_json_dumps(ec.get('referenced_tables')),
+                referenced_functions_json=_json_dumps(ec.get('referenced_functions')),
+            ))
+
+        # Function usage records
+        for fu in s.get('function_usage', []):
+            fu_rows.append(FunctionUsageRecord(
+                upload_id=upload_id,
+                session_name=sname,
+                transform_name=fu.get('transform_name', ''),
+                field_name=fu.get('field_name', ''),
+                function_name=fu.get('function_name', ''),
+                function_category=fu.get('function_category', 'custom_udf'),
+                call_count=fu.get('call_count', 1),
+                nested_depth=fu.get('nested_depth', 0),
+                arguments_json=_json_dumps(fu.get('arguments')),
+            ))
+
+        # Session code profile
+        cp = s.get('code_profile')
+        if cp:
+            cp_rows.append(SessionCodeProfile(
+                upload_id=upload_id,
+                session_name=sname,
+                has_sql=cp.get('has_sql', 0),
+                has_plsql=cp.get('has_plsql', 0),
+                has_java=cp.get('has_java', 0),
+                has_python=cp.get('has_python', 0),
+                has_r_code=cp.get('has_r_code', 0),
+                has_shell=cp.get('has_shell', 0),
+                has_javascript=cp.get('has_javascript', 0),
+                has_stored_procedure=cp.get('has_stored_procedure', 0),
+                has_custom_transform=cp.get('has_custom_transform', 0),
+                has_pre_post_sql=cp.get('has_pre_post_sql', 0),
+                total_code_blocks=cp.get('total_code_blocks', 0),
+                total_loc=cp.get('total_loc', 0),
+                total_functions_used=cp.get('total_functions_used', 0),
+                distinct_functions_used=cp.get('distinct_functions_used', 0),
+                total_expressions=cp.get('total_expressions', 0),
+                aggregate_function_count=cp.get('aggregate_function_count', 0),
+                string_function_count=cp.get('string_function_count', 0),
+                date_function_count=cp.get('date_function_count', 0),
+                math_function_count=cp.get('math_function_count', 0),
+                conversion_function_count=cp.get('conversion_function_count', 0),
+                conditional_function_count=cp.get('conditional_function_count', 0),
+                lookup_function_count=cp.get('lookup_function_count', 0),
+                custom_udf_count=cp.get('custom_udf_count', 0),
+                core_intent=cp.get('core_intent'),
+                intent_confidence=cp.get('intent_confidence', 0.0),
+                intent_details_json=_json_dumps(cp.get('intent_details')),
+            ))
+
+    _bulk_save(db, ec_rows)
+    _bulk_save(db, fu_rows)
+    _bulk_save(db, cp_rows)
+
+    db.flush()
+    logger.info("populate_code_analysis_tables: done — %d embedded_code, %d function_usage, %d code_profiles",
+                len(ec_rows), len(fu_rows), len(cp_rows))
 
 
 # ── 2. Per-View Table Population ─────────────────────────────────────────────
@@ -1337,7 +1449,7 @@ def _populate_table_gravity(db: Session, upload_id: int, data: dict) -> None:
 # TTL cache for reconstruct_tier_data: {upload_id: (data, expire_time)}
 _tier_cache: dict[int, tuple[dict, float]] = {}
 _tier_cache_lock = threading.Lock()
-_TIER_CACHE_TTL = 600  # 10 minutes
+_TIER_CACHE_TTL = 3600  # 1 hour
 
 
 def invalidate_tier_cache(upload_id: int) -> None:

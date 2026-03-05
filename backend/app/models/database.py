@@ -187,7 +187,7 @@ def _create_engine():
             pool_timeout=settings.pool_timeout,
             pool_pre_ping=True,
             pool_recycle=settings.pool_recycle,
-            connect_args={"options": "-c statement_timeout=120000"},
+            connect_args={"options": "-c statement_timeout=600000"},
         )
         if settings.databricks_app:
             _attach_token_refresh(eng)
@@ -306,6 +306,14 @@ class SessionRecord(Base):
     expression_count = Column(Integer, default=0)
     field_mapping_count = Column(Integer, default=0)
     parse_completeness_pct = Column(Float, nullable=True)
+    # Phase 6 expansion — code analysis summary
+    total_loc = Column(Integer, default=0)
+    total_functions_used = Column(Integer, default=0)
+    distinct_functions_used = Column(Integer, default=0)
+    has_embedded_sql = Column(Integer, default=0)
+    has_embedded_java = Column(Integer, default=0)
+    has_stored_procedure = Column(Integer, default=0)
+    core_intent = Column(String(64), nullable=True)
 
     __table_args__ = (
         Index("ix_session_upload", "upload_id"),
@@ -1216,6 +1224,101 @@ class SQLOverrideRecord(Base):
     )
 
 
+# ── Code Analysis Tables ──────────────────────────────────────────────────
+
+class EmbeddedCodeRecord(Base):
+    """Stores detected embedded code per session — SQL overrides, Java transforms,
+    stored procedures, pre/post SQL, R code, Python, shell scripts."""
+
+    __tablename__ = "embedded_code_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    upload_id = Column(Integer, ForeignKey("uploads.id", ondelete="CASCADE"), nullable=False)
+    session_name = Column(String(512), nullable=False)
+    transform_name = Column(String(512), nullable=True)
+    code_type = Column(String(32), nullable=False)      # sql, java, python, r, shell, plsql, javascript, informatica_expression
+    code_subtype = Column(String(64), nullable=True)     # sql_override, pre_sql, post_sql, stored_proc, custom_transform, filter, join_condition, lookup_condition, router_expression
+    code_text = Column(Text, nullable=True)
+    line_count = Column(Integer, default=0)
+    char_count = Column(Integer, default=0)
+    language_confidence = Column(Float, default=1.0)
+    contains_dml = Column(Integer, default=0)            # INSERT/UPDATE/DELETE/MERGE
+    contains_ddl = Column(Integer, default=0)            # CREATE/ALTER/DROP
+    referenced_tables_json = Column(Text, nullable=True)
+    referenced_functions_json = Column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_embcode_upload_session", "upload_id", "session_name"),
+        Index("ix_embcode_upload_type", "upload_id", "code_type"),
+    )
+
+
+class FunctionUsageRecord(Base):
+    """Catalogs every function call found in expressions and SQL."""
+
+    __tablename__ = "function_usage_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    upload_id = Column(Integer, ForeignKey("uploads.id", ondelete="CASCADE"), nullable=False)
+    session_name = Column(String(512), nullable=False)
+    transform_name = Column(String(512), nullable=True)
+    field_name = Column(String(512), nullable=True)
+    function_name = Column(String(256), nullable=False)
+    function_category = Column(String(64), nullable=True)  # aggregate, string, date, math, conversion, conditional, lookup, custom_udf, system
+    call_count = Column(Integer, default=1)
+    nested_depth = Column(Integer, default=0)
+    arguments_json = Column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_funcusage_upload_func", "upload_id", "function_name"),
+        Index("ix_funcusage_upload_session", "upload_id", "session_name"),
+    )
+
+
+class SessionCodeProfile(Base):
+    """Per-session summary of all code metrics — flags and counts."""
+
+    __tablename__ = "session_code_profiles"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    upload_id = Column(Integer, ForeignKey("uploads.id", ondelete="CASCADE"), nullable=False)
+    session_name = Column(String(512), nullable=False)
+    # Code presence flags (0/1)
+    has_sql = Column(Integer, default=0)
+    has_plsql = Column(Integer, default=0)
+    has_java = Column(Integer, default=0)
+    has_python = Column(Integer, default=0)
+    has_r_code = Column(Integer, default=0)
+    has_shell = Column(Integer, default=0)
+    has_javascript = Column(Integer, default=0)
+    has_stored_procedure = Column(Integer, default=0)
+    has_custom_transform = Column(Integer, default=0)
+    has_pre_post_sql = Column(Integer, default=0)
+    # Counts
+    total_code_blocks = Column(Integer, default=0)
+    total_loc = Column(Integer, default=0)
+    total_functions_used = Column(Integer, default=0)
+    distinct_functions_used = Column(Integer, default=0)
+    total_expressions = Column(Integer, default=0)
+    # Function type breakdown
+    aggregate_function_count = Column(Integer, default=0)
+    string_function_count = Column(Integer, default=0)
+    date_function_count = Column(Integer, default=0)
+    math_function_count = Column(Integer, default=0)
+    conversion_function_count = Column(Integer, default=0)
+    conditional_function_count = Column(Integer, default=0)
+    lookup_function_count = Column(Integer, default=0)
+    custom_udf_count = Column(Integer, default=0)
+    # Core intent classification
+    core_intent = Column(String(64), nullable=True)
+    intent_confidence = Column(Float, default=0.0)
+    intent_details_json = Column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_codeprof_upload_session", "upload_id", "session_name", unique=True),
+    )
+
+
 # ── Schema Migrations ─────────────────────────────────────────────────────
 
 def _migrate_db() -> None:
@@ -1279,6 +1382,21 @@ def _migrate_db() -> None:
                     conn.execute(sa_text(f"ALTER TABLE session_records ADD COLUMN {col_name} {col_type}"))
                     logger.info("Migrated: added %s column to session_records", col_name)
 
+        # Phase 6 code analysis columns
+        for col_name, col_type in [
+            ("total_loc", "INTEGER DEFAULT 0"),
+            ("total_functions_used", "INTEGER DEFAULT 0"),
+            ("distinct_functions_used", "INTEGER DEFAULT 0"),
+            ("has_embedded_sql", "INTEGER DEFAULT 0"),
+            ("has_embedded_java", "INTEGER DEFAULT 0"),
+            ("has_stored_procedure", "INTEGER DEFAULT 0"),
+            ("core_intent", "VARCHAR(64)"),
+        ]:
+            if col_name not in sr_cols:
+                with engine.begin() as conn:
+                    conn.execute(sa_text(f"ALTER TABLE session_records ADD COLUMN {col_name} {col_type}"))
+                    logger.info("Migrated: added %s column to session_records", col_name)
+
 
 # ── Public API ────────────────────────────────────────────────────────────
 
@@ -1287,8 +1405,15 @@ def init_db() -> None:
 
     Called once during application startup (see ``main.py`` lifespan hook).
     Safe to call repeatedly -- ``create_all`` is a no-op for existing tables.
+    Handles concurrent worker startup gracefully (DuplicateTable is ignored).
     """
-    Base.metadata.create_all(bind=engine)
+    try:
+        Base.metadata.create_all(bind=engine)
+    except Exception as e:
+        if "already exists" in str(e).lower() or "DuplicateTable" in type(e).__name__:
+            logger.info("Tables already exist (concurrent worker startup) — skipping create_all")
+        else:
+            raise
     _migrate_db()
 
 

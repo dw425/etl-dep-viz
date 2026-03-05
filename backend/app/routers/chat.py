@@ -219,10 +219,10 @@ async def index_upload(upload_id: int, db: Session = Depends(get_db)):
     if not upload:
         raise HTTPException(404, "Upload not found")
 
-    tier_data = _load_tier_data(upload, db)
+    tier_data = await asyncio.to_thread(_load_tier_data, upload, db)
     if not tier_data:
         raise HTTPException(400, "No tier data available. Parse an upload first.")
-    vector_results = _load_vector_results(upload, db)
+    vector_results = await asyncio.to_thread(_load_vector_results, upload, db)
 
     from app.engines.indexing_pipeline import IndexingPipeline
     embed_mode = "databricks" if settings.databricks_app else settings.embedding_mode
@@ -233,7 +233,7 @@ async def index_upload(upload_id: int, db: Session = Depends(get_db)):
         chroma_persist_dir=settings.chroma_persist_dir,
         use_pg_store=settings.databricks_app,
     )
-    stats = pipeline.index_upload(upload_id, tier_data, vector_results)
+    stats = await asyncio.to_thread(pipeline.index_upload, upload_id, tier_data, vector_results)
 
     response = {"status": "indexed", **stats}
     if pipeline.embedding_engine and pipeline.embedding_engine.using_zero_vectors:
@@ -270,10 +270,10 @@ async def reindex_upload(upload_id: int, db: Session = Depends(get_db)):
     if not upload:
         raise HTTPException(404, "Upload not found")
 
-    tier_data = _load_tier_data(upload, db)
+    tier_data = await asyncio.to_thread(_load_tier_data, upload, db)
     if not tier_data:
         raise HTTPException(400, "No tier data available. Parse an upload first.")
-    vector_results = _load_vector_results(upload, db)
+    vector_results = await asyncio.to_thread(_load_vector_results, upload, db)
     if not vector_results:
         raise HTTPException(400, "No vector results available. Run vector analysis first.")
 
@@ -286,7 +286,7 @@ async def reindex_upload(upload_id: int, db: Session = Depends(get_db)):
         chroma_persist_dir=settings.chroma_persist_dir,
         use_pg_store=settings.databricks_app,
     )
-    stats = pipeline.reindex_with_vectors(upload_id, tier_data, vector_results)
+    stats = await asyncio.to_thread(pipeline.reindex_with_vectors, upload_id, tier_data, vector_results)
     return {"status": "reindexed", **stats}
 
 
@@ -307,19 +307,19 @@ async def chat(upload_id: int, request: ChatRequest, db: Session = Depends(get_d
     if not upload:
         raise HTTPException(404, "Upload not found")
 
-    engines = _get_engines()
+    engines = await asyncio.to_thread(_get_engines)
     store = engines["store"]
     chat_engine = engines["chat"]
 
     # tier_data provides session/table metadata for grounding the LLM response
-    tier_data = _load_tier_data(upload, db)
+    tier_data = await asyncio.to_thread(_load_tier_data, upload, db)
 
     # Auto-index on first chat if no index exists
-    if not store.collection_exists(upload_id):
+    if not await asyncio.to_thread(store.collection_exists, upload_id):
         if not tier_data:
             raise HTTPException(400, "No tier data available. Parse an upload first.")
         logger.info("Auto-indexing upload %d on first chat request", upload_id)
-        vector_results = _load_vector_results(upload, db)
+        vector_results = await asyncio.to_thread(_load_vector_results, upload, db)
         from app.engines.indexing_pipeline import IndexingPipeline
         embed_mode = "databricks" if settings.databricks_app else settings.embedding_mode
         embed_model = settings.databricks_embedding_model if settings.databricks_app else settings.embedding_model
@@ -329,7 +329,7 @@ async def chat(upload_id: int, request: ChatRequest, db: Session = Depends(get_d
             chroma_persist_dir=settings.chroma_persist_dir,
             use_pg_store=settings.databricks_app,
         )
-        pipeline.index_upload(upload_id, tier_data, vector_results)
+        await asyncio.to_thread(pipeline.index_upload, upload_id, tier_data, vector_results)
 
     result = await chat_engine.chat(
         upload_id=upload_id,
@@ -359,10 +359,10 @@ async def index_upload_background(upload_id: int, db: Session = Depends(get_db))
         if existing and existing.get("status") == "running":
             return {"status": "already_running", "progress": existing.get("progress", 0)}
 
-    tier_data = _load_tier_data(upload, db)
+    tier_data = await asyncio.to_thread(_load_tier_data, upload, db)
     if not tier_data:
         raise HTTPException(400, "No tier data available. Parse an upload first.")
-    vector_results = _load_vector_results(upload, db)
+    vector_results = await asyncio.to_thread(_load_vector_results, upload, db)
 
     thread = threading.Thread(
         target=_run_indexing_background,
@@ -403,16 +403,17 @@ async def search(upload_id: int, request: SearchRequest):
     indexed document chunks would be fed to the LLM for a given question.
     doc_type can be 'session', 'table', 'vector_insight', etc. to narrow results.
     """
-    engines = _get_engines()
+    engines = await asyncio.to_thread(_get_engines)
     embedding = engines["embedding"]
     store = engines["store"]
 
-    if not store.collection_exists(upload_id):
+    if not await asyncio.to_thread(store.collection_exists, upload_id):
         raise HTTPException(400, "Upload not indexed.")
 
     # Embed the query text into a dense vector before searching ChromaDB
-    query_embedding = embedding.embed_single(request.query)
-    results = store.search(
+    query_embedding = await asyncio.to_thread(embedding.embed_single, request.query)
+    results = await asyncio.to_thread(
+        store.search,
         upload_id, query_embedding,
         n_results=request.n_results,
         doc_type=request.doc_type,
@@ -436,12 +437,12 @@ async def index_status(upload_id: int):
     Returns:
         Dict with indexed (bool) and document_count (int).
     """
-    engines = _get_engines()
+    engines = await asyncio.to_thread(_get_engines)
     store = engines["store"]
 
-    if store.collection_exists(upload_id):
+    if await asyncio.to_thread(store.collection_exists, upload_id):
         return {
             "indexed": True,
-            "document_count": store.get_collection_count(upload_id),
+            "document_count": await asyncio.to_thread(store.get_collection_count, upload_id),
         }
     return {"indexed": False, "document_count": 0}

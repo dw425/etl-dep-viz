@@ -165,7 +165,7 @@ export default function AIChat({ uploadId, tierData, onNavigate, onToast }: AICh
     } catch (err) {
       setMessages(prev => [...prev, {
         role: 'assistant',
-        content: `Error: ${err instanceof Error ? err.message : 'Unknown error'}. Make sure EDV_LLM_API_KEY is set.`,
+        content: `Error: ${err instanceof Error ? err.message : 'Unknown error'}. Check server logs for details.`,
         timestamp: new Date().toISOString(),
       }]);
     } finally {

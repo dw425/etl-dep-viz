@@ -21,6 +21,7 @@ Entities are extracted as uppercase identifiers (4+ chars) from the raw question
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import re
@@ -437,7 +438,8 @@ You have access to detailed parsed data about the user's ETL environment. When a
         logger.info("Query classified: intent=%s entities=%s", classification.intent.value, classification.entities)
 
         # ── Step 2: Hybrid vector + entity search ────────────────────────────
-        search_results = self.search_engine.search(
+        search_results = await asyncio.to_thread(
+            self.search_engine.search,
             upload_id, question, tier_data, classification,
         )
 

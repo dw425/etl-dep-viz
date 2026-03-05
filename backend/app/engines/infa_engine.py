@@ -24,6 +24,7 @@ We build a lkp_map from TRANSFORMATION elements first, then look up by instance 
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from collections import defaultdict, deque
@@ -340,6 +341,440 @@ def _extract_session_connections(root: Any) -> Dict[str, List[Dict[str, str]]]:
                     'dbtype': dbtype or 'Unknown',
                 })
     return dict(session_conns)
+
+
+# ── Code Analysis — function/language classification ──────────────────────────
+
+# Regex to extract function calls from Informatica expressions and SQL
+_FUNCTION_RE = re.compile(r'\b([A-Z_][A-Z_0-9]*)\s*\(', re.IGNORECASE)
+
+# Known Informatica function categories
+_KNOWN_FUNCTIONS: Dict[str, str] = {
+    # Aggregate
+    'SUM': 'aggregate', 'AVG': 'aggregate', 'COUNT': 'aggregate',
+    'MIN': 'aggregate', 'MAX': 'aggregate', 'FIRST': 'aggregate',
+    'LAST': 'aggregate', 'MEDIAN': 'aggregate', 'STDDEV': 'aggregate',
+    'VARIANCE': 'aggregate', 'PERCENTILE': 'aggregate',
+    # String
+    'CONCAT': 'string', 'SUBSTR': 'string', 'LTRIM': 'string',
+    'RTRIM': 'string', 'LPAD': 'string', 'RPAD': 'string',
+    'UPPER': 'string', 'LOWER': 'string', 'INITCAP': 'string',
+    'INSTR': 'string', 'LENGTH': 'string', 'REPLACE': 'string',
+    'REPLACESTR': 'string', 'REPLACECHR': 'string', 'REG_EXTRACT': 'string',
+    'REG_MATCH': 'string', 'REG_REPLACE': 'string', 'REVERSE': 'string',
+    'METAPHONE': 'string', 'SOUNDEX': 'string', 'TRIM': 'string',
+    'CHR': 'string', 'ASCII': 'string',
+    # Date
+    'TO_DATE': 'date', 'ADD_TO_DATE': 'date', 'DATE_DIFF': 'date',
+    'DATE_COMPARE': 'date', 'GET_DATE_PART': 'date', 'TRUNC': 'date',
+    'ROUND': 'date', 'LAST_DAY': 'date', 'NEXT_DAY': 'date',
+    'SYSDATE': 'date', 'SYSTIMESTAMP': 'date', 'SET_DATE_PART': 'date',
+    'IS_DATE': 'date', 'MAKE_DATE_TIME': 'date',
+    # Math
+    'ABS': 'math', 'CEIL': 'math', 'FLOOR': 'math', 'MOD': 'math',
+    'POWER': 'math', 'SQRT': 'math', 'LOG': 'math', 'EXP': 'math',
+    'SIGN': 'math', 'RAND': 'math', 'CUME': 'math', 'MOVINGAVG': 'math',
+    'MOVINGSUM': 'math',
+    # Conversion
+    'TO_CHAR': 'conversion', 'TO_INTEGER': 'conversion', 'TO_DECIMAL': 'conversion',
+    'TO_FLOAT': 'conversion', 'TO_BIGINT': 'conversion',
+    'CAST': 'conversion', 'IS_NUMBER': 'conversion', 'IS_SPACES': 'conversion',
+    # Conditional
+    'IIF': 'conditional', 'DECODE': 'conditional', 'CASE': 'conditional',
+    'NVL': 'conditional', 'NVL2': 'conditional', 'COALESCE': 'conditional',
+    'NULLIF': 'conditional', 'GREATEST': 'conditional', 'LEAST': 'conditional',
+    # Lookup
+    'LOOKUP': 'lookup', 'LKP': 'lookup',
+    # System
+    'ERROR': 'system', 'ABORT': 'system', 'SETCOUNTVARIABLE': 'system',
+    'SETVARIABLE': 'system', 'GETVAR': 'system',
+    'MD5': 'system', 'CRC32': 'system', 'SHA256': 'system',
+}
+
+# SQL DML/DDL keywords for classification
+_DML_RE = re.compile(r'\b(INSERT|UPDATE|DELETE|MERGE)\b', re.IGNORECASE)
+_DDL_RE = re.compile(r'\b(CREATE|ALTER|DROP|TRUNCATE)\b', re.IGNORECASE)
+_SQL_KEYWORDS_RE = re.compile(
+    r'\b(SELECT|INSERT|UPDATE|DELETE|CREATE|JOIN|WHERE|FROM|INTO|GROUP\s+BY|ORDER\s+BY|HAVING|UNION)\b',
+    re.IGNORECASE,
+)
+_PLSQL_RE = re.compile(r'\b(BEGIN|END|DECLARE|EXCEPTION|CURSOR|LOOP|PROCEDURE|FUNCTION|PACKAGE)\b', re.IGNORECASE)
+_TABLE_IN_SQL_RE = re.compile(
+    r'\b(?:FROM|JOIN|INTO|UPDATE|TABLE|MERGE\s+INTO|USING)\s+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)',
+    re.IGNORECASE,
+)
+# SQL keywords that should never be treated as table names
+_NOT_TABLE_NAMES = frozenset({
+    'SELECT', 'SET', 'VALUES', 'WHERE', 'ON', 'AND', 'OR', 'NOT', 'NULL',
+    'AS', 'IN', 'EXISTS', 'BETWEEN', 'LIKE', 'CASE', 'WHEN', 'THEN', 'ELSE',
+    'END', 'IS', 'BY', 'ASC', 'DESC', 'ALL', 'ANY', 'TOP', 'DISTINCT',
+})
+
+
+def _classify_code_language(text: str, context_type: str = '') -> Tuple[str, float]:
+    """Classify code text into a language type.
+
+    Returns (code_type, confidence).
+    """
+    if not text or not text.strip():
+        return ('informatica_expression', 0.5)
+
+    upper = text.upper()
+
+    # Check for PL/SQL markers first (more specific than plain SQL)
+    plsql_hits = len(_PLSQL_RE.findall(text))
+    if plsql_hits >= 2:
+        return ('plsql', min(0.7 + plsql_hits * 0.05, 1.0))
+
+    # Check for SQL
+    sql_hits = len(_SQL_KEYWORDS_RE.findall(text))
+    if sql_hits >= 2:
+        return ('sql', min(0.6 + sql_hits * 0.05, 1.0))
+
+    # Java indicators
+    if any(kw in upper for kw in ('PUBLIC CLASS', 'PRIVATE ', 'IMPORT JAVA', '.GETCLASS()', 'THROWS ')):
+        return ('java', 0.85)
+
+    # Python indicators
+    if any(kw in text for kw in ('import ', 'def ', 'class ', 'print(', 'self.')):
+        return ('python', 0.8)
+
+    # Shell indicators
+    if any(kw in text for kw in ('#!/bin/', 'echo ', 'export ', '| grep', '$HOME', '$PATH')):
+        return ('shell', 0.8)
+
+    # R indicators
+    if any(kw in text for kw in ('<- ', 'library(', 'data.frame', 'ggplot')):
+        return ('r', 0.8)
+
+    # JavaScript indicators
+    if any(kw in text for kw in ('function(', 'var ', 'const ', 'let ', '=>', 'console.log')):
+        return ('javascript', 0.75)
+
+    # Default: if it's from an expression context, it's Informatica expression language
+    if context_type in ('expression', 'filter', 'router', 'joiner', 'lookup_condition'):
+        return ('informatica_expression', 0.9)
+
+    # If it has SQL keywords but only a few, still likely SQL
+    if sql_hits >= 1:
+        return ('sql', 0.5)
+
+    return ('informatica_expression', 0.5)
+
+
+def _extract_functions_from_text(text: str) -> List[Dict[str, Any]]:
+    """Extract function calls from expression or SQL text.
+
+    Returns list of {function_name, function_category, nested_depth}.
+    """
+    if not text:
+        return []
+
+    results: List[Dict[str, Any]] = []
+    seen: Dict[str, int] = {}  # function_name -> count
+
+    for match in _FUNCTION_RE.finditer(text):
+        fname = match.group(1).upper()
+        # Skip common SQL keywords that look like functions
+        if fname in ('SELECT', 'FROM', 'WHERE', 'INSERT', 'UPDATE', 'DELETE',
+                     'CREATE', 'ALTER', 'DROP', 'INTO', 'VALUES', 'SET',
+                     'AND', 'NOT', 'EXISTS', 'BETWEEN', 'LIKE', 'TABLE',
+                     'INDEX', 'VIEW', 'HAVING', 'GROUP', 'ORDER', 'UNION'):
+            continue
+
+        category = _KNOWN_FUNCTIONS.get(fname, 'custom_udf')
+
+        # Estimate nesting depth by counting open parens before this position
+        prefix = text[:match.start()]
+        depth = prefix.count('(') - prefix.count(')')
+
+        if fname in seen:
+            seen[fname] += 1
+        else:
+            seen[fname] = 1
+            results.append({
+                'function_name': fname,
+                'function_category': category,
+                'nested_depth': max(0, depth),
+                'call_count': 1,
+            })
+
+    # Update call counts for duplicates
+    for r in results:
+        r['call_count'] = seen[r['function_name']]
+
+    return results
+
+
+def _count_loc(text: str) -> int:
+    """Count lines of code, excluding blank lines."""
+    if not text:
+        return 0
+    return len([line for line in text.strip().split('\n') if line.strip()])
+
+
+def _extract_tables_from_sql(sql: str) -> List[str]:
+    """Extract table names referenced in SQL text."""
+    if not sql:
+        return []
+    return list(set(m.upper() for m in _TABLE_IN_SQL_RE.findall(sql) if len(m) > 1 and m.upper() not in _NOT_TABLE_NAMES))
+
+
+def _classify_session_intent(session_data: Dict[str, Any]) -> Tuple[str, float, Dict]:
+    """Classify the core intent of a session based on its transform composition.
+
+    Returns (intent, confidence, details_dict).
+    """
+    tx_detail = session_data.get('tx_detail', {})
+    sources = session_data.get('sources', [])
+    targets = session_data.get('targets', [])
+    lookups = session_data.get('lookups', [])
+    tx_count = session_data.get('tx_count', 0)
+    mapping_detail = session_data.get('mapping_detail', {})
+
+    signals: Dict[str, float] = {}
+
+    # Check for aggregator transforms
+    for ttype, count in tx_detail.items():
+        ttype_l = ttype.lower()
+        if 'aggregat' in ttype_l:
+            signals['aggregate'] = signals.get('aggregate', 0) + count * 2
+        if 'filter' in ttype_l:
+            signals['filter'] = signals.get('filter', 0) + count
+        if 'router' in ttype_l:
+            signals['route'] = signals.get('route', 0) + count * 2
+        if 'lookup' in ttype_l:
+            signals['lookup_enrich'] = signals.get('lookup_enrich', 0) + count
+        if 'update strategy' in ttype_l:
+            signals['scd'] = signals.get('scd', 0) + count * 3
+        if 'expression' in ttype_l:
+            signals['transform'] = signals.get('transform', 0) + count * 0.5
+        if 'joiner' in ttype_l:
+            signals['transform'] = signals.get('transform', 0) + count
+
+    # Check for mapping variables (SCD indicator)
+    if session_data.get('mapping_variables'):
+        signals['scd'] = signals.get('scd', 0) + 2
+
+    # Lookup enrichment signal
+    if len(lookups) >= 2:
+        signals['lookup_enrich'] = signals.get('lookup_enrich', 0) + len(lookups)
+
+    # Audit/logging targets
+    for t in targets:
+        t_lower = t.lower()
+        if any(kw in t_lower for kw in ('audit', 'log', 'error', 'reject')):
+            signals['audit'] = signals.get('audit', 0) + 2
+
+    # Replicate: same source and target tables
+    if sources and targets:
+        overlap = set(s.upper() for s in sources) & set(t.upper() for t in targets)
+        if overlap:
+            signals['replicate'] = signals.get('replicate', 0) + len(overlap) * 3
+
+    # Load: minimal transforms, mostly source→target
+    if tx_count <= 3 and not signals:
+        signals['load'] = 3.0
+
+    # Default to transform if heavy expression/derived work
+    if not signals:
+        signals['transform'] = 1.0
+
+    # Pick the strongest signal
+
+    best_intent = max(signals, key=lambda k: signals[k])
+    total = sum(signals.values())
+    confidence = min(signals[best_intent] / max(total, 1), 1.0)
+
+    return (best_intent, round(confidence, 2), signals)
+
+
+def _enrich_session_code_analysis(sessions: Dict[str, Dict[str, Any]]) -> None:
+    """Post-process sessions to extract embedded code, functions, and intent.
+
+    Adds 'embedded_code', 'function_usage', 'code_profile' keys to each session dict.
+    """
+    for sname, sdata in sessions.items():
+        embedded_code: List[Dict] = []
+        all_functions: List[Dict] = []
+        mapping_detail = sdata.get('mapping_detail', {})
+
+        # ── Scan SQL overrides ──────────────────────────────────────
+        for sql_override in mapping_detail.get('sql_overrides', []):
+            sql_text = sql_override.get('sql', '')
+            if not sql_text or not sql_text.strip():
+                continue
+            code_type, confidence = _classify_code_language(sql_text, 'sql_override')
+            loc = _count_loc(sql_text)
+            embedded_code.append({
+                'transform_name': sql_override.get('transform', ''),
+                'code_type': code_type,
+                'code_subtype': 'sql_override',
+                'code_text': sql_text,
+                'line_count': loc,
+                'char_count': len(sql_text),
+                'language_confidence': confidence,
+                'contains_dml': 1 if _DML_RE.search(sql_text) else 0,
+                'contains_ddl': 1 if _DDL_RE.search(sql_text) else 0,
+                'referenced_tables': _extract_tables_from_sql(sql_text),
+                'referenced_functions': [f['function_name'] for f in _extract_functions_from_text(sql_text)],
+            })
+            all_functions.extend(_extract_functions_from_text(sql_text))
+
+        # ── Scan Pre/Post SQL ──────────────────────────────────────
+        for subtype, sql_list in [('pre_sql', mapping_detail.get('pre_sql', [])),
+                                  ('post_sql', mapping_detail.get('post_sql', []))]:
+            for sql_text in sql_list:
+                if not sql_text or not sql_text.strip():
+                    continue
+                code_type, confidence = _classify_code_language(sql_text, subtype)
+                loc = _count_loc(sql_text)
+                embedded_code.append({
+                    'transform_name': '',
+                    'code_type': code_type,
+                    'code_subtype': subtype,
+                    'code_text': sql_text,
+                    'line_count': loc,
+                    'char_count': len(sql_text),
+                    'language_confidence': confidence,
+                    'contains_dml': 1 if _DML_RE.search(sql_text) else 0,
+                    'contains_ddl': 1 if _DDL_RE.search(sql_text) else 0,
+                    'referenced_tables': _extract_tables_from_sql(sql_text),
+                    'referenced_functions': [f['function_name'] for f in _extract_functions_from_text(sql_text)],
+                })
+                all_functions.extend(_extract_functions_from_text(sql_text))
+
+        # ── Scan join conditions ──────────────────────────────────
+        for jc in mapping_detail.get('join_conditions', []):
+            cond = jc.get('condition', '')
+            if cond:
+                funcs = _extract_functions_from_text(cond)
+                for f in funcs:
+                    f['transform_name'] = jc.get('joiner', '')
+                    f['field_name'] = ''
+                all_functions.extend(funcs)
+
+        # ── Scan filter conditions ────────────────────────────────
+        for fc in mapping_detail.get('filter_conditions', []):
+            cond = fc.get('condition', '')
+            if cond:
+                funcs = _extract_functions_from_text(cond)
+                for f in funcs:
+                    f['transform_name'] = fc.get('filter', '')
+                all_functions.extend(funcs)
+
+        # ── Scan lookup conditions ────────────────────────────────
+        for lc in mapping_detail.get('lookup_configs', []):
+            cond = lc.get('condition', '')
+            if cond:
+                code_type, confidence = _classify_code_language(cond, 'lookup_condition')
+                if code_type == 'sql' and _count_loc(cond) >= 2:
+                    embedded_code.append({
+                        'transform_name': lc.get('lookup', ''),
+                        'code_type': code_type,
+                        'code_subtype': 'lookup_condition',
+                        'code_text': cond,
+                        'line_count': _count_loc(cond),
+                        'char_count': len(cond),
+                        'language_confidence': confidence,
+                        'contains_dml': 1 if _DML_RE.search(cond) else 0,
+                        'contains_ddl': 0,
+                        'referenced_tables': _extract_tables_from_sql(cond),
+                        'referenced_functions': [f['function_name'] for f in _extract_functions_from_text(cond)],
+                    })
+                funcs = _extract_functions_from_text(cond)
+                for f in funcs:
+                    f['transform_name'] = lc.get('lookup', '')
+                all_functions.extend(funcs)
+
+        # ── Scan router group expressions ─────────────────────────
+        for rg in mapping_detail.get('router_groups', []):
+            for grp in rg.get('groups', []):
+                cond = grp.get('condition', '')
+                if cond:
+                    funcs = _extract_functions_from_text(cond)
+                    for f in funcs:
+                        f['transform_name'] = rg.get('router', '')
+                    all_functions.extend(funcs)
+
+        # ── Scan TRANSFORMFIELD expressions ───────────────────────
+        for field in mapping_detail.get('fields', []):
+            expr = field.get('expression', '')
+            if not expr or field.get('expression_type') == 'passthrough':
+                continue
+            funcs = _extract_functions_from_text(expr)
+            for f in funcs:
+                f['transform_name'] = field.get('transform', '')
+                f['field_name'] = field.get('name', '')
+            all_functions.extend(funcs)
+
+        # ── Check for Java / Custom transforms (from instances) ──
+        for inst in mapping_detail.get('instances', []):
+            itype = (inst.get('transformation_type') or '').lower()
+            if 'custom transformation' in itype or itype == 'java':
+                embedded_code.append({
+                    'transform_name': inst.get('name', ''),
+                    'code_type': 'java',
+                    'code_subtype': 'custom_transform',
+                    'code_text': '',
+                    'line_count': 0,
+                    'char_count': 0,
+                    'language_confidence': 0.7,
+                    'contains_dml': 0,
+                    'contains_ddl': 0,
+                    'referenced_tables': [],
+                    'referenced_functions': [],
+                })
+
+        # ── Build code profile ────────────────────────────────────
+        code_types = set(ec['code_type'] for ec in embedded_code)
+        code_subtypes = set(ec['code_subtype'] for ec in embedded_code)
+        func_names = set(f['function_name'] for f in all_functions)
+        func_categories: Dict[str, int] = {}
+        for f in all_functions:
+            cat = f.get('function_category', 'custom_udf')
+            func_categories[cat] = func_categories.get(cat, 0) + f.get('call_count', 1)
+
+        total_loc = sum(ec['line_count'] for ec in embedded_code)
+        total_expressions = len([f for f in mapping_detail.get('fields', [])
+                                 if f.get('expression_type') != 'passthrough' and f.get('expression')])
+
+        # Classify intent
+        intent, intent_confidence, intent_details = _classify_session_intent(sdata)
+
+        code_profile = {
+            'has_sql': 1 if 'sql' in code_types else 0,
+            'has_plsql': 1 if 'plsql' in code_types else 0,
+            'has_java': 1 if 'java' in code_types else 0,
+            'has_python': 1 if 'python' in code_types else 0,
+            'has_r_code': 1 if 'r' in code_types else 0,
+            'has_shell': 1 if 'shell' in code_types else 0,
+            'has_javascript': 1 if 'javascript' in code_types else 0,
+            'has_stored_procedure': 1 if 'stored_proc' in code_subtypes else 0,
+            'has_custom_transform': 1 if 'custom_transform' in code_subtypes else 0,
+            'has_pre_post_sql': 1 if ('pre_sql' in code_subtypes or 'post_sql' in code_subtypes) else 0,
+            'total_code_blocks': len(embedded_code),
+            'total_loc': total_loc,
+            'total_functions_used': sum(f.get('call_count', 1) for f in all_functions),
+            'distinct_functions_used': len(func_names),
+            'total_expressions': total_expressions,
+            'aggregate_function_count': func_categories.get('aggregate', 0),
+            'string_function_count': func_categories.get('string', 0),
+            'date_function_count': func_categories.get('date', 0),
+            'math_function_count': func_categories.get('math', 0),
+            'conversion_function_count': func_categories.get('conversion', 0),
+            'conditional_function_count': func_categories.get('conditional', 0),
+            'lookup_function_count': func_categories.get('lookup', 0),
+            'custom_udf_count': func_categories.get('custom_udf', 0),
+            'core_intent': intent,
+            'intent_confidence': intent_confidence,
+            'intent_details': intent_details,
+        }
+
+        # Store on session dict
+        sdata['embedded_code'] = embedded_code
+        sdata['function_usage'] = all_functions
+        sdata['code_profile'] = code_profile
 
 
 # ── Per-file parsing ───────────────────────────────────────────────────────────
@@ -1009,6 +1444,10 @@ def _process_folder(
                 md['post_sql'] = post_sql_list
             sessions[sname]['mapping_detail'] = md
 
+    # ── Code analysis enrichment ──────────────────────────────────
+    # Extract embedded code, function usage, and classify intent for each session
+    _enrich_session_code_analysis(sessions)
+
 
 # ── Main entry point ───────────────────────────────────────────────────────────
 
@@ -1328,6 +1767,22 @@ def analyze(
         conn_info = session_connections.get(sname.upper(), [])
         if conn_info:
             sess_entry['connections_used'] = conn_info
+        # Carry forward deep-parse data for downstream consumers (data_populator)
+        if sd.get('mapping_detail'):
+            sess_entry['mapping_detail'] = sd['mapping_detail']
+        if sd.get('code_profile'):
+            sess_entry['code_profile'] = sd['code_profile']
+        if sd.get('embedded_code'):
+            sess_entry['embedded_code'] = sd['embedded_code']
+        if sd.get('function_usage'):
+            sess_entry['function_usage'] = sd['function_usage']
+        # Workflow and folder metadata
+        if sd.get('workflow'):
+            sess_entry['workflow'] = sd['workflow']
+        if sd.get('folder'):
+            sess_entry['folder'] = sd['folder']
+        if sd.get('mapping'):
+            sess_entry['mapping'] = sd['mapping']
         sessions_out.append(sess_entry)
 
     # ── Phase 6: build table nodes ─────────────────────────────────────────

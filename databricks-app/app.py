@@ -14,4 +14,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 port = int(os.environ.get("DATABRICKS_APP_PORT", "8000"))
 
 import uvicorn
-uvicorn.run("app.main:app", host="0.0.0.0", port=port, timeout_keep_alive=300)
+uvicorn.run(
+    "app.main:app",
+    host="0.0.0.0",
+    port=port,
+    timeout_keep_alive=300,
+    workers=int(os.environ.get("EDV_WORKERS", "2")),
+)
