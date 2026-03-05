@@ -288,6 +288,7 @@ _DEFAULT_TIMEOUT = 60
 # Exempt them from the middleware timeout to avoid killing long-running streams.
 _TIMEOUT_EXEMPT = frozenset({
     "/api/tier-map/analyze",
+    "/api/tier-map/analyze-path",
     "/api/tier-map/constellation-stream",
     "/api/chat/index",
     "/api/vectors/analyze-stream",

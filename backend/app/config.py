@@ -40,6 +40,7 @@ class Settings(BaseSettings):
 
     # ── Parse Settings ─────────────────────────────────────────────────
     session_display_mode: str = "full"            # "full" (default), "short", or "smart" (strip prefixes only)
+    server_parse_allowed_paths: list[str] = ["/tmp"]  # Local path prefixes allowed for analyze-path (DBFS always allowed)
 
     # ── AI Chat / Vector DB ───────────────────────────────────────────────
     embedding_mode: str = "local"               # "local", "openai", or "databricks"

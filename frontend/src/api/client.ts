@@ -218,6 +218,69 @@ export function analyzeConstellationStream(
   return ctrl;
 }
 
+// ── Server-side path parse (SSE) ─────────────────────────────────────────
+// For large files uploaded to DBFS via CLI, trigger parse from a server path.
+
+/**
+ * Parse ETL files from a server-side path (DBFS or local) via SSE streaming.
+ * Same event format as analyzeConstellationStream.
+ * @param filePath - Server-side file path (e.g. "dbfs:/landing/export.zip")
+ * @param algorithm - Clustering algorithm (default: 'louvain')
+ * @param onEvent - Callback for SSE progress events
+ * @param projectId - Optional project association
+ * @returns AbortController to cancel the in-flight request
+ * @endpoint POST /api/tier-map/analyze-path
+ */
+export function analyzeFromPath(
+  filePath: string,
+  algorithm: AlgorithmKey = 'louvain',
+  onEvent: (event: StreamEvent) => void,
+  projectId?: number,
+): AbortController {
+  const ctrl = new AbortController();
+
+  const params = new URLSearchParams({ file_path: filePath, algorithm });
+  if (projectId) params.set('project_id', String(projectId));
+  fetch(`${BASE}/tier-map/analyze-path?${params}`, {
+    method: 'POST',
+    signal: ctrl.signal,
+    headers: userHeaders(),
+  }).then(async res => {
+    if (!res.ok) {
+      onEvent({ phase: 'error', message: (await res.json()).detail || res.statusText });
+      return;
+    }
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.replace(/^data:\s*/, '').trim();
+        if (!trimmed) continue;
+        try {
+          const event: StreamEvent = JSON.parse(trimmed);
+          onEvent(event);
+          if (event.phase === 'complete' || event.phase === 'error') return;
+        } catch { /* skip malformed frames */ }
+      }
+    }
+  }).catch(err => {
+    if (err.name !== 'AbortError') {
+      onEvent({ phase: 'error', message: err.message });
+    }
+  });
+
+  return ctrl;
+}
+
 // ── Recluster (no re-upload) ──────────────────────────────────────────────
 // Re-runs clustering on already-stored tier data using a different algorithm
 // without requiring the user to re-upload their files.

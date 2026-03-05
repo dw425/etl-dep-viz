@@ -40,6 +40,7 @@ import type {
 import type { VectorResults, DrillFilter } from '../../types/vectors';
 import {
   analyzeConstellationStream,
+  analyzeFromPath,
   analyzeVectors,
   recluster,
   listUploads,
@@ -230,6 +231,9 @@ export function DependencyApp() {
   // lastEventTime is a ref (not state) so updates don't cause re-renders
   const lastEventTime = useRef<number>(0);
   const abortRef = useRef<AbortController | null>(null);
+  // Server-side path parse
+  const [showPathInput, setShowPathInput] = useState(false);
+  const [serverPath, setServerPath] = useState('');
 
   // Tick the elapsed counter every second while an upload is running
   useEffect(() => {
@@ -507,6 +511,62 @@ export function DependencyApp() {
     setProgress(0);
     setProgressPhase('');
   }, []);
+
+  // ── Parse from server path — reuses SSE event handling from handleUpload ──
+  const handlePathParse = useCallback(() => {
+    if (!serverPath.trim()) return;
+    setError(null);
+    setUploading(true);
+    setProgress(0);
+    setProgressPhase(`Reading ${serverPath}...`);
+    setParseStartTime(Date.now());
+    setElapsedSeconds(0);
+    setStaleDetected(false);
+    lastEventTime.current = Date.now();
+
+    const ctrl = analyzeFromPath(serverPath.trim(), algorithm, (event: StreamEvent) => {
+      lastEventTime.current = Date.now();
+      setStaleDetected(false);
+      setProgress(event.percent ?? 0);
+      if (event.phase === 'extracting') {
+        const sizePart = event.total_size_mb ? ` (${event.total_size_mb}MB total)` : '';
+        setProgressPhase(`Extracted ${event.current} files${sizePart}`);
+      } else if (event.phase === 'parsing') {
+        const fsize = event.file_size_mb ? ` (${event.file_size_mb}MB)` : '';
+        const sessions = event.sessions_found ? ` — ${event.sessions_found.toLocaleString()} sessions found` : '';
+        const eta = event.eta_ms && event.eta_ms > 5000 ? ` — ETA ${Math.ceil(event.eta_ms / 1000)}s` : '';
+        setProgressPhase(`Parsing ${event.filename || ''}${fsize} (${event.current}/${event.total})${sessions}${eta}`);
+      }
+      else if (event.phase === 'clustering') setProgressPhase('Clustering...');
+      else if (event.phase === 'complete' && event.result) {
+        setTierData(event.result.tier_data);
+        setConstellation(event.result.constellation);
+        const newUploadId = event.result.upload_id ?? null;
+        setUploadId(newUploadId);
+        if (newUploadId) localStorage.setItem('edv-last-upload', String(newUploadId));
+        setUploading(false);
+        setParseStartTime(null);
+        setView('chunking');
+        localStorage.setItem('edv-last-view', 'chunking');
+        listUploads(10).then(setRecentUploads).catch(() => {});
+        logActivity('upload', serverPath, {
+          session_count: event.result.tier_data?.stats?.session_count,
+          elapsed_ms: event.elapsed_ms,
+          source: 'server_path',
+        });
+      } else if (event.phase === 'error' || event.phase === 'timeout') {
+        setError({
+          message: event.message || 'Parse failed',
+          phase: event.phase,
+          type: event.phase === 'timeout' ? 'TimeoutError' : 'ParseError',
+          timestamp: new Date().toISOString(),
+        });
+        setUploading(false);
+        setParseStartTime(null);
+      }
+    }, activeProjectId ?? undefined);
+    abortRef.current = ctrl;
+  }, [serverPath, algorithm, activeProjectId]);
 
   // ── Recluster — re-runs clustering on already-parsed tierData, no re-upload ─
   const [reclusterLoading, setReclusterLoading] = useState(false);
@@ -988,6 +1048,52 @@ export function DependencyApp() {
             e.target.value = '';
           }}
         />
+
+        {/* Server-side path parse */}
+        {!uploading && (
+          <div style={{ maxWidth: 480, width: '100%', textAlign: 'center' }}>
+            <button
+              onClick={() => setShowPathInput(!showPathInput)}
+              style={{
+                fontSize: 11, color: T.textMuted, background: 'transparent',
+                border: 'none', cursor: 'pointer', textDecoration: 'underline',
+              }}
+            >
+              {showPathInput ? 'Hide' : 'Parse from server path'}
+            </button>
+            {showPathInput && (
+              <div style={{ marginTop: 8 }}>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input
+                    value={serverPath}
+                    onChange={e => setServerPath(e.target.value)}
+                    placeholder="dbfs:/landing/etl-dep-viz/export.zip"
+                    onKeyDown={e => { if (e.key === 'Enter') handlePathParse(); }}
+                    style={{
+                      flex: 1, padding: '8px 12px', borderRadius: 8,
+                      border: `1px solid ${T.border}`, background: T.bgCard,
+                      color: T.text, fontSize: 12, outline: 'none', fontFamily: 'monospace',
+                    }}
+                  />
+                  <button
+                    onClick={handlePathParse}
+                    disabled={!serverPath.trim()}
+                    style={{
+                      padding: '8px 16px', borderRadius: 8, border: 'none',
+                      background: serverPath.trim() ? T.accent : T.border,
+                      color: '#fff', fontSize: 12, fontWeight: 600, cursor: serverPath.trim() ? 'pointer' : 'default',
+                    }}
+                  >
+                    Parse
+                  </button>
+                </div>
+                <div style={{ fontSize: 10, color: T.textDim, marginTop: 6, fontFamily: 'monospace' }}>
+                  Upload via CLI: databricks fs cp local.zip dbfs:/landing/etl-dep-viz/file.zip
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {error && (
           <div style={{ color: '#ef4444', fontSize: 12, maxWidth: 480, textAlign: 'center' }}>
