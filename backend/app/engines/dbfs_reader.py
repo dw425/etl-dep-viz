@@ -46,9 +46,8 @@ def get_file_size(path: str) -> int:
 def read_file(path: str) -> bytes:
     """Read a file from DBFS or local filesystem, returning raw bytes.
 
-    DBFS paths are streamed via ``WorkspaceClient().dbfs.open()`` so
-    arbitrarily large files are supported without loading the full SDK
-    response into memory at once.
+    DBFS paths use ``WorkspaceClient().dbfs.download()`` which returns
+    a context-managed file-like object.
     """
     if is_dbfs_path(path):
         logger.info("Reading DBFS path: %s", path)
@@ -56,11 +55,8 @@ def read_file(path: str) -> bytes:
 
         w = WorkspaceClient()
         normalized = normalize_dbfs_path(path)
-        resp = w.dbfs.open(normalized)
-        chunks = []
-        for chunk in resp:
-            chunks.append(chunk if isinstance(chunk, bytes) else chunk.encode())
-        data = b"".join(chunks)
+        with w.dbfs.download(normalized) as f:
+            data = f.read()
         logger.info("Read %d bytes from DBFS: %s", len(data), path)
         return data
 
