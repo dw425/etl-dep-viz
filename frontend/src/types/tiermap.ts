@@ -23,6 +23,52 @@ export interface TierSession {
   lookupCount: number;
   /** True if this session is on the critical dependency path. */
   critical: boolean;
+  /** Source table names read by this session. */
+  sources?: string[];
+  /** Target table names written by this session. */
+  targets?: string[];
+  /** Lookup table names used by this session. */
+  lookups?: string[];
+  /** Raw (unstripped) source table names from the XML. */
+  raw_sources?: string[];
+  /** Raw (unstripped) target table names from the XML. */
+  raw_targets?: string[];
+  /** Raw (unstripped) lookup table names from the XML. */
+  raw_lookups?: string[];
+  /** Workflow name. */
+  workflow?: string;
+  /** Folder name. */
+  folder?: string;
+  /** Mapping name. */
+  mapping?: string;
+  /** Named connections used by this session. */
+  connections_used?: Array<{ connection_name: string; connection_type?: string; source_instance?: string; target_instance?: string }>;
+  /** Deep-parsed mapping detail (instances, connectors, fields). */
+  mapping_detail?: Record<string, unknown>;
+  /** Code profile metrics for this session. */
+  code_profile?: Record<string, unknown>;
+  /** Embedded code blocks (SQL, Java, stored procedures). */
+  embedded_code?: Array<Record<string, unknown>>;
+  /** Function usage records. */
+  function_usage?: Array<Record<string, unknown>>;
+  /** Config reference identifier. */
+  config_reference?: string;
+  /** Scheduler metadata. */
+  scheduler?: { name?: string };
+  /** Total lines of code. */
+  total_loc?: number;
+  /** Total function invocations. */
+  total_functions_used?: number;
+  /** Distinct function count. */
+  distinct_functions_used?: number;
+  /** Whether session contains embedded SQL (0 or 1). */
+  has_embedded_sql?: number;
+  /** Whether session contains embedded Java (0 or 1). */
+  has_embedded_java?: number;
+  /** Whether session uses stored procedures (0 or 1). */
+  has_stored_procedure?: number;
+  /** Core intent classification. */
+  core_intent?: string;
 }
 
 /** A database table referenced by one or more sessions. */
@@ -75,6 +121,8 @@ export interface TierMapResult {
   };
   /** Parser warnings (e.g. unresolved references, skipped elements). */
   warnings: string[];
+  /** Named connection profiles parsed from the XML (dbtype, connection string, etc.). */
+  connection_profiles?: Array<{ name: string; type?: string; connection_string?: string; database?: string }>;
 }
 
 // ── Constellation Map types ──────────────────────────────────────────────

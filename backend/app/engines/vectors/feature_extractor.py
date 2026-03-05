@@ -19,7 +19,6 @@ Two main components:
 
 from __future__ import annotations
 
-import math
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
@@ -328,7 +327,6 @@ def extract_session_features(tier_data: dict[str, Any]) -> list[SessionFeatures]
         # Table → Session connections (source reads, lookups)
         if src in table_ids and dst in session_ids:
             tname = table_name_by_id.get(src, src)
-            tobj = table_by_id.get(src, {})
             if ctype == "source_read":
                 session_sources[dst].append(tname)
             elif ctype == "lookup_stale":

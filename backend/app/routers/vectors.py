@@ -218,6 +218,7 @@ async def analyze_vectors_stream(
                         populate_vector_tables(db, upload_id, p3)
                         db.commit()
                     except Exception as exc:
+                        db.rollback()
                         logger.warning("Failed to populate vector tables (stream): %s", exc)
 
             await queue.put({"phase": "complete", "percent": 100, "result": p3})
@@ -412,6 +413,7 @@ async def analyze_selective(
                 populate_vector_tables(db, upload_id, result)
                 db.commit()
             except Exception as exc:
+                db.rollback()
                 logger.warning("Failed to populate vector tables (selective): %s", exc)
 
     return result
@@ -477,6 +479,7 @@ async def analyze_incremental(
                 populate_vector_tables(db, upload_id, result)
                 db.commit()
             except Exception as exc:
+                db.rollback()
                 logger.warning("Failed to populate vector tables (incremental): %s", exc)
 
     return result

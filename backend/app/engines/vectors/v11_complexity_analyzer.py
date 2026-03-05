@@ -64,9 +64,9 @@ class ComplexityConfig:
     # Bucket boundaries (0-100 scale)
     bucket_thresholds: dict[str, tuple[int, int]] = field(default_factory=lambda: {
         "Simple": (0, 30),
-        "Medium": (31, 55),
-        "Complex": (56, 75),
-        "Very Complex": (76, 100),
+        "Medium": (30, 55),
+        "Complex": (55, 75),
+        "Very Complex": (75, 101),
     })
 
     # Hours estimates per bucket (low, high)
@@ -166,7 +166,7 @@ class ComplexityAnalyzer:
         self.config = config or ComplexityConfig()
 
     def run(self, features: list[SessionFeatures]) -> ComplexityAnalysisResult:
-        """Score all sessions across 8 complexity dimensions.
+        """Score all sessions across 16 complexity dimensions.
 
         Args:
             features: Per-session feature vectors from FeatureMatrixBuilder.
@@ -375,9 +375,9 @@ class ComplexityAnalyzer:
 
     def _assign_bucket(self, score: float) -> str:
         for name, (low, high) in self.config.bucket_thresholds.items():
-            if low <= score <= high:
+            if low <= score < high:
                 return name
-        return "Very Complex" if score > 75 else "Simple"
+        return "Very Complex" if score >= 75 else "Simple"
 
     @staticmethod
     def _std(values: list[float]) -> float:

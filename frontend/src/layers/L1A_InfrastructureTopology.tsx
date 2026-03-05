@@ -42,7 +42,7 @@ export default function L1A_InfrastructureTopology({ tierData, vectorResults, on
   const [hoveredSystem, setHoveredSystem] = useState<string | null>(null);
   const [expandedSidebar, setExpandedSidebar] = useState<string | null>(null);
 
-  const connectionProfiles = (tierData as any).connection_profiles as
+  const connectionProfiles = tierData.connection_profiles as
     | { name: string; dbtype: string; dbsubtype?: string; connection_string?: string }[]
     | undefined;
 
@@ -122,7 +122,7 @@ export default function L1A_InfrastructureTopology({ tierData, vectorResults, on
 
       // Count sessions per system and sub-node, derive edges
       for (const session of tierData.sessions) {
-        const sessConns = (session as any).connections_used as
+        const sessConns = session.connections_used as
           | { connection_name: string; dbtype: string }[]
           | undefined;
 
@@ -159,13 +159,13 @@ export default function L1A_InfrastructureTopology({ tierData, vectorResults, on
         const sourceSystems = new Set<string>();
         const targetSystems = new Set<string>();
 
-        for (const src of (session as any).sources ?? []) {
+        for (const src of session.sources ?? []) {
           const inf = inferSystem(src);
           if (touchedSystems.has(inf.system_id)) {
             sourceSystems.add(inf.system_id);
           }
         }
-        for (const tgt of (session as any).targets ?? []) {
+        for (const tgt of session.targets ?? []) {
           const inf = inferSystem(tgt);
           if (touchedSystems.has(inf.system_id)) {
             targetSystems.add(inf.system_id);
@@ -233,10 +233,10 @@ export default function L1A_InfrastructureTopology({ tierData, vectorResults, on
         // Derive edges from source/target tables
         const sourceSystems = new Set<string>();
         const targetSystems = new Set<string>();
-        for (const src of (session as any).sources ?? []) {
+        for (const src of session.sources ?? []) {
           sourceSystems.add(inferSystem(src).system_id);
         }
-        for (const tgt of (session as any).targets ?? []) {
+        for (const tgt of session.targets ?? []) {
           targetSystems.add(inferSystem(tgt).system_id);
         }
         for (const srcSys of sourceSystems) {

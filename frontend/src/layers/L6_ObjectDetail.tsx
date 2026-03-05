@@ -176,13 +176,13 @@ function TransformDetail({ objectId }: { objectId: string }) {
   const detail = useMemo(() => {
     if (!tierData) return null;
     for (const s of tierData.sessions) {
-      const md = (s as any).mapping_detail;
+      const md = s.mapping_detail as { instances?: Array<Record<string, string>>; fields?: Array<Record<string, string>>; connectors?: Array<Record<string, string>> } | undefined;
       if (!md) continue;
-      const inst = md.instances?.find((i: any) => i.name === objectId || i.transformation_name === objectId);
+      const inst = md.instances?.find((i) => i.name === objectId || i.transformation_name === objectId);
       if (inst) {
-        const fields = md.fields?.filter((f: any) => f.transform === objectId || f.transform === inst.transformation_name) || [];
-        const incoming = md.connectors?.filter((c: any) => c.to_instance === objectId) || [];
-        const outgoing = md.connectors?.filter((c: any) => c.from_instance === objectId) || [];
+        const fields = md.fields?.filter((f) => f.transform === objectId || f.transform === inst.transformation_name) || [];
+        const incoming = md.connectors?.filter((c) => c.to_instance === objectId) || [];
+        const outgoing = md.connectors?.filter((c) => c.from_instance === objectId) || [];
         return { instance: inst, fields, incoming, outgoing, sessionId: s.id };
       }
     }
@@ -211,7 +211,7 @@ function TransformDetail({ objectId }: { objectId: string }) {
               {/* Input Ports */}
               <div>
                 <h3 className="text-sm font-medium text-gray-300 mb-2">Input Ports ({detail.incoming.length})</h3>
-                {detail.incoming.map((c: any, i: number) => (
+                {detail.incoming.map((c, i) => (
                   <div key={i} className="text-xs text-gray-400 flex gap-2 py-1">
                     <span className="text-green-400">{c.from_instance}</span>
                     <span className="text-gray-600">.</span>
@@ -225,7 +225,7 @@ function TransformDetail({ objectId }: { objectId: string }) {
               {/* Output Ports */}
               <div>
                 <h3 className="text-sm font-medium text-gray-300 mb-2">Output Ports ({detail.outgoing.length})</h3>
-                {detail.outgoing.map((c: any, i: number) => (
+                {detail.outgoing.map((c, i) => (
                   <div key={i} className="text-xs text-gray-400 flex gap-2 py-1">
                     <span className="text-blue-400">{c.from_field}</span>
                     <span className="text-gray-600">→</span>
@@ -241,7 +241,7 @@ function TransformDetail({ objectId }: { objectId: string }) {
                 <div>
                   <h3 className="text-sm font-medium text-gray-300 mb-2">Fields ({detail.fields.length})</h3>
                   <div className="space-y-1">
-                    {detail.fields.map((f: any, i: number) => (
+                    {detail.fields.map((f, i) => (
                       <div key={i} className="flex items-start gap-3 text-xs py-1 border-b border-gray-700/50">
                         <span className="text-gray-300 font-medium w-32 truncate">{f.name}</span>
                         <span className="text-gray-500 w-20">{f.datatype}{f.precision ? `(${f.precision})` : ''}</span>
@@ -279,14 +279,14 @@ function ExpressionDetail({ objectId }: { objectId: string }) {
   const detail = useMemo(() => {
     if (!tierData) return null;
     for (const s of tierData.sessions) {
-      const md = (s as any).mapping_detail;
+      const md = s.mapping_detail as { fields?: Array<Record<string, string>> } | undefined;
       if (!md) continue;
       const field = md.fields?.find(
-        (f: any) => (f.transform === transformName) && (f.name === fieldName)
+        (f) => (f.transform === transformName) && (f.name === fieldName)
       );
       if (field) {
         // Find all fields from this transform that contribute
-        const allFields = md.fields?.filter((f: any) => f.transform === transformName) || [];
+        const allFields = md.fields?.filter((f) => f.transform === transformName) || [];
         return { field, allFields, sessionId: s.id };
       }
     }
@@ -342,7 +342,7 @@ function ExpressionDetail({ objectId }: { objectId: string }) {
                     Other Fields in {transformName} ({detail.allFields.length - 1})
                   </h3>
                   <div className="space-y-1 max-h-40 overflow-auto">
-                    {detail.allFields.filter((f: any) => f.name !== fieldName).map((f: any, i: number) => (
+                    {detail.allFields.filter((f) => f.name !== fieldName).map((f, i) => (
                       <div key={i} className="text-xs text-gray-400 flex gap-2">
                         <span className="w-32 truncate">{f.name}</span>
                         <span className="text-gray-600">{f.datatype}</span>

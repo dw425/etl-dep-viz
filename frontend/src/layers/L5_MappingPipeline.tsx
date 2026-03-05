@@ -95,7 +95,7 @@ export default function L5_MappingPipeline() {
 
   const detail: MappingDetail | null = useMemo(() => {
     if (!session) return null;
-    return (session as any).mapping_detail || null;
+    return (session.mapping_detail as unknown as MappingDetail) || null;
   }, [session]);
 
   // Categorize instances
@@ -151,9 +151,9 @@ export default function L5_MappingPipeline() {
               {session ? (
                 <>
                   <div className="mb-3">Mapping detail not available in parsed data.</div>
-                  <div className="text-xs">Sources: {(session as any).sources?.join(', ') || 'None'}</div>
-                  <div className="text-xs mt-1">Targets: {(session as any).targets?.join(', ') || 'None'}</div>
-                  <div className="text-xs mt-1">Lookups: {(session as any).lookups?.join(', ') || 'None'}</div>
+                  <div className="text-xs">Sources: {session.sources?.join(', ') || 'None'}</div>
+                  <div className="text-xs mt-1">Targets: {session.targets?.join(', ') || 'None'}</div>
+                  <div className="text-xs mt-1">Lookups: {session.lookups?.join(', ') || 'None'}</div>
                 </>
               ) : 'Session not found'}
             </div>

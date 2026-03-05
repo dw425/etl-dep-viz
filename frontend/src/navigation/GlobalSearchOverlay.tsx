@@ -103,7 +103,7 @@ export default function GlobalSearchOverlay({
       // Search sessions
       for (const s of data.sessions) {
         const name = s.name?.toLowerCase() ?? '';
-        const full = (s as any).full?.toLowerCase() ?? '';
+        const full = s.full?.toLowerCase() ?? '';
         if (name.includes(q) || full.includes(q) || s.id.toLowerCase().includes(q)) {
           matches.push({
             type: 'session',

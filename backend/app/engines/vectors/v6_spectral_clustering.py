@@ -23,8 +23,11 @@ and 2D spectral embedding coordinates.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 try:
     import numpy as np
@@ -108,7 +111,8 @@ class SpectralClusteringVector:
                 n_init=10,
             )
             labels = sc.fit_predict(sim)
-        except Exception:
+        except Exception as exc:
+            logger.warning("SpectralClustering failed with k=%d, falling back to k=2: %s", optimal_k, exc)
             sc = SpectralClustering(
                 n_clusters=2,
                 affinity="precomputed",
@@ -183,7 +187,8 @@ class SpectralClusteringVector:
             L_norm = np.eye(sample_size) - D_inv_sqrt @ sub_sim @ D_inv_sqrt
             eigenvalues_s, eigenvectors_s = np.linalg.eigh(L_norm)
             embedding = eigenvectors_s[:, 1:optimal_k + 1]
-        except Exception:
+        except Exception as exc:
+            logger.warning("Spectral embedding failed, using random coordinates: %s", exc)
             embedding = rng.rand(sample_size, optimal_k)
 
         # KMeans on embedding

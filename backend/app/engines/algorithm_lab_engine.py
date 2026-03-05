@@ -699,7 +699,8 @@ def compute_quality_metrics(
     if G.number_of_edges() > 0 and n_clusters > 0:
         try:
             modularity = round(nx.community.modularity(G, communities), 4)
-        except Exception:
+        except Exception as exc:
+            logger.warning("Modularity computation failed: %s", exc)
             pass
 
     # Silhouette score from layout coordinates
@@ -718,7 +719,8 @@ def compute_quality_metrics(
                         coord_list.append(coords[nd])
             if len(set(label_list)) >= 2 and len(coord_list) >= 3:
                 silhouette = round(silhouette_score(coord_list, label_list), 4)
-        except Exception:
+        except Exception as exc:
+            logger.warning("Silhouette score computation failed: %s", exc)
             pass
 
     # Entropy of cluster size distribution

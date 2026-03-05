@@ -29,10 +29,13 @@ class ExpressionComplexityVector:
                     break
             expressions = md.get("expressions", [])
             total_depth = sum(e.get("expression", "").count("(") for e in expressions)
-            total_funcs = sum(len([c for c in e.get("expression", "") if c == "("]) for e in expressions)
+            # Count distinct function calls (uppercase identifiers followed by '(')
+            import re
+            _FUNC_PAT = re.compile(r'\b[A-Z_][A-Z_0-9]*\s*\(', re.IGNORECASE)
+            total_funcs = sum(len(_FUNC_PAT.findall(e.get("expression", ""))) for e in expressions)
             avg_depth = total_depth / max(len(expressions), 1)
             density = len(expressions) / max(f.transform_count, 1)
-            score = min(100, int(avg_depth * 10 + density * 5 + total_funcs * 0.1))
+            score = min(100, int(avg_depth * 10 + density * 5 + total_funcs * 0.5))
             bucket = "Simple" if score < 25 else "Moderate" if score < 50 else "Complex" if score < 75 else "Very Complex"
             result.sessions.append({
                 "session_id": f.session_id,

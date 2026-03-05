@@ -48,9 +48,9 @@ export default function InfraDetailPanel({ system, edges, nodes, tierData, onNav
   const schemaGroups = useMemo((): SchemaGroup[] => {
     const rawNames: string[] = [];
     for (const sess of sessions) {
-      const rs = (sess as any).raw_sources as string[] | undefined;
-      const rt = (sess as any).raw_targets as string[] | undefined;
-      const rl = (sess as any).raw_lookups as string[] | undefined;
+      const rs = sess.raw_sources;
+      const rt = sess.raw_targets;
+      const rl = sess.raw_lookups;
       if (rs) rawNames.push(...rs);
       if (rt) rawNames.push(...rt);
       if (rl) rawNames.push(...rl);
@@ -151,7 +151,7 @@ export default function InfraDetailPanel({ system, edges, nodes, tierData, onNav
                 className="w-full text-left flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-700/50 transition-colors group"
               >
                 <span className="text-[10px] text-gray-500 font-mono w-6">{s.id}</span>
-                <span className="text-xs text-gray-300 flex-1 truncate">{(s as any).name ?? s.id}</span>
+                <span className="text-xs text-gray-300 flex-1 truncate">{s.name ?? s.id}</span>
                 <span className="text-[10px] text-gray-600 group-hover:text-blue-400">\u2192</span>
               </button>
             ))}

@@ -1,8 +1,9 @@
-"""Databricks App entry point for the ETL Dependency Visualizer.
+"""Databricks App entry point for the Pipeline Analyzer.
 
-Single-process uvicorn server. Databricks Apps run one container per app,
-so multi-worker Gunicorn adds complexity (table-creation race conditions on
-Lakebase) without meaningful concurrency benefit.
+Multi-worker uvicorn server (EDV_WORKERS, default 2). Databricks Apps run
+one container per app. Workers are managed by uvicorn's built-in process
+spawning (no Gunicorn needed). Database init is guarded against concurrent
+table-creation races via CREATE IF NOT EXISTS + DuplicateTable handling.
 """
 
 import os

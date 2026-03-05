@@ -1060,7 +1060,7 @@ class DocumentEmbedding(Base):
     embedding_blob = Column(LargeBinary, nullable=True) # numpy float32 bytes
     metadata_json = Column(Text, nullable=True)         # JSON metadata dict
     chunk_index = Column(Integer, default=0)            # chunk position for chunked docs
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
         Index("ix_docembed_upload", "upload_id"),

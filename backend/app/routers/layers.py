@@ -21,12 +21,7 @@ from typing import Any
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
 from sqlalchemy.orm import Session as DBSession
 
-from app.engines.vectors.feature_extractor import (
-    FeatureMatrixBuilder,
-    extract_session_features,
-)
 from app.engines.vectors.orchestrator import VectorOrchestrator
-from app.engines.vectors.drill_through import DrillThroughEngine
 from app.models.database import Upload, get_db
 
 logger = logging.getLogger(__name__)
@@ -146,11 +141,15 @@ async def enterprise_constellation(
         "cyclic_sessions": v4.get("cyclic_session_count", 0),
     }
 
+    # Strip internal numpy matrices — they're not JSON-serializable and only
+    # needed when chaining to Phase 2/3 within the orchestrator.
+    serializable_vr = {k: v for k, v in vector_results.items() if not k.startswith("_")}
+
     return {
         "layer": 1,
         "supernode_graph": supernode_graph,
         "environment_summary": env_summary,
-        "vector_results": vector_results,
+        "vector_results": serializable_vr,
     }
 
 

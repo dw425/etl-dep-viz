@@ -308,7 +308,8 @@ def _cluster_label_prop(
         comms = nx.community.asyn_lpa_communities(G, weight='weight', seed=42)
         result = [set(c) for c in comms if c]
         return result if result else [{n} for n in G.nodes()]
-    except Exception:
+    except Exception as exc:
+        logger.warning("Label propagation failed, falling back to singleton communities: %s", exc)
         return [{n} for n in G.nodes()]
 
 
@@ -325,7 +326,8 @@ def _cluster_greedy_mod(
         comms = nx.community.greedy_modularity_communities(G, weight='weight')
         result = [set(c) for c in comms if c]
         return result if result else [{n} for n in G.nodes()]
-    except Exception:
+    except Exception as exc:
+        logger.warning("Greedy modularity failed, falling back to singleton communities: %s", exc)
         return [{n} for n in G.nodes()]
 
 

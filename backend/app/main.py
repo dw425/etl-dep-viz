@@ -103,7 +103,7 @@ async def lifespan(app: FastAPI):
     On startup: initializes the SQLite database (creates tables, runs migrations).
     On shutdown: logs a clean exit message.
     """
-    logger.info("Starting ETL Dependency Visualizer v1.0.0")
+    logger.info("Starting Pipeline Analyzer v6.0.0")
     init_db()
     logger.info("Database initialized")
     yield
@@ -119,11 +119,11 @@ app = FastAPI(
         "## Key Features\n"
         "- **Tier Map**: Session dependency graph with automatic tier assignment\n"
         "- **Constellation**: Clustering algorithms (Louvain, Label Prop, Table Gravity, etc.)\n"
-        "- **Vector Analysis**: 11 analysis vectors across 3 phases (Core/Advanced/Ensemble)\n"
+        "- **Vector Analysis**: 16 analysis vectors across 3 phases (Core/Advanced/Ensemble)\n"
         "- **Lineage**: Cross-session table lineage and column-level data flow\n"
         "- **Exports**: Excel, DOT, Mermaid, JIRA CSV, Databricks notebooks\n"
     ),
-    version="2.0.0",
+    version="6.0.0",
     lifespan=lifespan,
     docs_url="/api/docs",
     redoc_url="/api/redoc",
@@ -693,6 +693,7 @@ MIGRATE_TABLES = [
     "transform_records", "field_mapping_records", "expression_records",
     "workflow_records", "lookup_config_records", "parameter_records", "sql_override_records",
     "embedded_code_records", "function_usage_records", "session_code_profiles",
+    "document_embeddings", "active_tags",
 ]
 
 

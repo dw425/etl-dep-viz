@@ -1559,3 +1559,77 @@ export async function runLabAlgorithm(
   if (!res.ok) throw new Error((await res.json()).detail || `runLabAlgorithm failed: ${res.status}`);
   return res.json();
 }
+
+// ── Code Analysis, Embedded Code, Function Usage ─────────────────────────
+
+export async function getCodeAnalysis(uploadId: number): Promise<Record<string, unknown>> {
+  const res = await fetch(`${BASE}/views/code_analysis?upload_id=${uploadId}`);
+  if (!res.ok) throw new Error(`Code analysis failed: ${res.status}`);
+  return res.json();
+}
+
+export async function getEmbeddedCode(uploadId: number, sessionName?: string): Promise<Record<string, unknown>> {
+  const params = new URLSearchParams({ upload_id: String(uploadId) });
+  if (sessionName) params.set('session_name', sessionName);
+  const res = await fetch(`${BASE}/views/embedded_code?${params}`);
+  if (!res.ok) throw new Error(`Embedded code failed: ${res.status}`);
+  return res.json();
+}
+
+export async function getFunctionUsage(uploadId: number, sessionName?: string): Promise<Record<string, unknown>> {
+  const params = new URLSearchParams({ upload_id: String(uploadId) });
+  if (sessionName) params.set('session_name', sessionName);
+  const res = await fetch(`${BASE}/views/function_usage?${params}`);
+  if (!res.ok) throw new Error(`Function usage failed: ${res.status}`);
+  return res.json();
+}
+
+// ── Vector Config & Selective Analysis ───────────────────────────────────
+
+export async function getVectorConfig(): Promise<Record<string, unknown>> {
+  const res = await fetch(`${BASE}/vectors/config`);
+  if (!res.ok) throw new Error(`Vector config failed: ${res.status}`);
+  return res.json();
+}
+
+export async function analyzeVectorsSelective(uploadId: number, vectors: string[]): Promise<Record<string, unknown>> {
+  const res = await fetch(`${BASE}/vectors/analyze-selective`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ upload_id: uploadId, vectors }),
+  });
+  if (!res.ok) throw new Error(`Selective analysis failed: ${res.status}`);
+  return res.json();
+}
+
+// ── Chat Background Index ────────────────────────────────────────────────
+
+export async function chatIndexBackground(uploadId: number): Promise<Record<string, unknown>> {
+  const res = await fetch(`${BASE}/chat/index/${uploadId}/background`, { method: 'POST' });
+  if (!res.ok) throw new Error(`Background index failed: ${res.status}`);
+  return res.json();
+}
+
+// ── Anomalies, Effort Estimate, Transpile ────────────────────────────────
+
+export async function getAnomalies(uploadId: number): Promise<Record<string, unknown>> {
+  const res = await fetch(`${BASE}/views/anomalies?upload_id=${uploadId}`);
+  if (!res.ok) throw new Error(`Anomalies failed: ${res.status}`);
+  return res.json();
+}
+
+export async function getEffortEstimate(uploadId: number): Promise<Record<string, unknown>> {
+  const res = await fetch(`${BASE}/views/effort_estimate?upload_id=${uploadId}`);
+  if (!res.ok) throw new Error(`Effort estimate failed: ${res.status}`);
+  return res.json();
+}
+
+export async function transpileExpression(expression: string, sourceDialect: string, targetDialect: string): Promise<Record<string, unknown>> {
+  const res = await fetch(`${BASE}/views/transpile`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expression, source_dialect: sourceDialect, target_dialect: targetDialect }),
+  });
+  if (!res.ok) throw new Error(`Transpile failed: ${res.status}`);
+  return res.json();
+}

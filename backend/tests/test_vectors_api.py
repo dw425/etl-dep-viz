@@ -33,6 +33,10 @@ class TestVectorsAPI:
             params={"phase": 3},
         )
         assert response.status_code == 200
+        data = response.json()
+        # Phase 3 should include all prior phase keys plus ensemble vectors
+        assert "v1_communities" in data
+        assert "v11_complexity" in data
 
     def test_wave_plan(self, client, sample_tier_data):
         response = client.post("/api/vectors/wave-plan", json=sample_tier_data)
@@ -53,6 +57,10 @@ class TestVectorsAPI:
             json=sample_tier_data,
         )
         assert response.status_code == 200
+        data = response.json()
+        # What-if should return impact analysis with session id
+        assert isinstance(data, dict)
+        assert len(data) > 0
 
     def test_empty_sessions_rejected(self, client):
         response = client.post(

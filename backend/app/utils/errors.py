@@ -103,34 +103,3 @@ class ETLMigrationError(Exception):
         }
 
 
-class ParseError(ETLMigrationError):
-    """Raised when a file cannot be parsed (XML syntax, encoding, etc.)."""
-
-    def __init__(self, message: str, code: ErrorCode | str = ErrorCode.PARSE_001, **kwargs):
-        super().__init__(message, code=code, **kwargs)
-
-
-class UnsupportedFormatError(ParseError):
-    """Raised when the uploaded file format is not recognized by any parse engine."""
-
-    def __init__(self, message: str, **kwargs):
-        super().__init__(message, code=ErrorCode.PARSE_003, **kwargs)
-
-
-class AnalysisError(ETLMigrationError):
-    """Raised when a vector engine or clustering algorithm fails."""
-
-    def __init__(self, message: str, code: ErrorCode | str = ErrorCode.ANALYSIS_001, **kwargs):
-        super().__init__(message, code=code, **kwargs)
-
-
-class MappingError(ETLMigrationError):
-    """Raised when processor-to-Databricks mapping fails during notebook generation."""
-
-
-class GenerationError(ETLMigrationError):
-    """Raised when Databricks notebook code generation fails."""
-
-
-class ValidationError(ETLMigrationError):
-    """Raised when input validation fails (e.g. missing required fields)."""

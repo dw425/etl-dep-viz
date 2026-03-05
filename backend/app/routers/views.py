@@ -43,6 +43,9 @@ from app.models.database import (
     VwWaveAssignments,
     VwWaveFunction,
     VwWriteConflicts,
+    EmbeddedCodeRecord,
+    FunctionUsageRecord,
+    SessionCodeProfile,
     ExpressionRecord,
     SQLOverrideRecord,
     ParameterRecord,
@@ -1130,3 +1133,105 @@ def transpile_expressions(
         })
 
     return {"results": results, "total": len(results)}
+
+
+# ── Code Analysis Endpoints ──────────────────────────────────────────────
+
+
+@router.get("/code_analysis", summary="Session code profiles with language flags and intent")
+def get_code_analysis(
+    upload_id: int = Query(..., description="Upload primary key"),
+    session_name: str = Query(None, description="Filter to a specific session"),
+    db: Session = Depends(get_db),
+):
+    """Return per-session code analysis profiles (language flags, LOC, function counts, intent)."""
+    _check_upload(db, upload_id)
+    query = db.query(SessionCodeProfile).filter(SessionCodeProfile.upload_id == upload_id)
+    if session_name:
+        query = query.filter(SessionCodeProfile.session_name == session_name)
+    rows = query.all()
+    return {
+        "profiles": [
+            {
+                "session_name": r.session_name,
+                "has_sql": r.has_sql, "has_plsql": r.has_plsql, "has_java": r.has_java,
+                "has_python": r.has_python, "has_r_code": r.has_r_code, "has_shell": r.has_shell,
+                "has_javascript": r.has_javascript, "has_stored_procedure": r.has_stored_procedure,
+                "has_custom_transform": r.has_custom_transform, "has_pre_post_sql": r.has_pre_post_sql,
+                "total_code_blocks": r.total_code_blocks, "total_loc": r.total_loc,
+                "total_functions_used": r.total_functions_used,
+                "distinct_functions_used": r.distinct_functions_used,
+                "total_expressions": r.total_expressions,
+                "aggregate_function_count": r.aggregate_function_count,
+                "string_function_count": r.string_function_count,
+                "date_function_count": r.date_function_count,
+                "math_function_count": r.math_function_count,
+                "conversion_function_count": r.conversion_function_count,
+                "conditional_function_count": r.conditional_function_count,
+                "lookup_function_count": r.lookup_function_count,
+                "custom_udf_count": r.custom_udf_count,
+                "core_intent": r.core_intent, "intent_confidence": r.intent_confidence,
+            }
+            for r in rows
+        ],
+        "total": len(rows),
+    }
+
+
+@router.get("/embedded_code", summary="Embedded code blocks per session")
+def get_embedded_code(
+    upload_id: int = Query(..., description="Upload primary key"),
+    session_name: str = Query(None, description="Filter to a specific session"),
+    code_type: str = Query(None, description="Filter by code type (sql, java, plsql, etc.)"),
+    db: Session = Depends(get_db),
+):
+    """Return embedded code blocks (SQL overrides, Java, PL/SQL, etc.) found in sessions."""
+    _check_upload(db, upload_id)
+    query = db.query(EmbeddedCodeRecord).filter(EmbeddedCodeRecord.upload_id == upload_id)
+    if session_name:
+        query = query.filter(EmbeddedCodeRecord.session_name == session_name)
+    if code_type:
+        query = query.filter(EmbeddedCodeRecord.code_type == code_type)
+    rows = query.limit(500).all()
+    return {
+        "records": [
+            {
+                "session_name": r.session_name, "transform_name": r.transform_name,
+                "code_type": r.code_type, "code_subtype": r.code_subtype,
+                "code_text": r.code_text, "line_count": r.line_count,
+                "char_count": r.char_count, "language_confidence": r.language_confidence,
+                "contains_dml": r.contains_dml, "contains_ddl": r.contains_ddl,
+            }
+            for r in rows
+        ],
+        "total": len(rows),
+    }
+
+
+@router.get("/function_usage", summary="Function usage records per session")
+def get_function_usage(
+    upload_id: int = Query(..., description="Upload primary key"),
+    session_name: str = Query(None, description="Filter to a specific session"),
+    function_name: str = Query(None, description="Filter by function name"),
+    db: Session = Depends(get_db),
+):
+    """Return function usage records (IIF, DECODE, SUM, etc.) found in expressions."""
+    _check_upload(db, upload_id)
+    query = db.query(FunctionUsageRecord).filter(FunctionUsageRecord.upload_id == upload_id)
+    if session_name:
+        query = query.filter(FunctionUsageRecord.session_name == session_name)
+    if function_name:
+        query = query.filter(FunctionUsageRecord.function_name == function_name.upper())
+    rows = query.limit(1000).all()
+    return {
+        "records": [
+            {
+                "session_name": r.session_name, "transform_name": r.transform_name,
+                "field_name": r.field_name, "function_name": r.function_name,
+                "function_category": r.function_category, "call_count": r.call_count,
+                "nested_depth": r.nested_depth,
+            }
+            for r in rows
+        ],
+        "total": len(rows),
+    }

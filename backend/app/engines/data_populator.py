@@ -1461,7 +1461,7 @@ def invalidate_tier_cache(upload_id: int) -> None:
 def reconstruct_tier_data(db: Session, upload_id: int) -> dict | None:
     """Reconstruct full tier_data dict from normalized DB tables.
 
-    Results are cached for 10 minutes per upload_id. Call invalidate_tier_cache()
+    Results are cached for 1 hour per upload_id. Call invalidate_tier_cache()
     after re-parse or delete. Returns None if no sessions exist.
     """
     # Check TTL cache first

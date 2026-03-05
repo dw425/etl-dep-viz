@@ -64,6 +64,7 @@ class VectorStore:
             # Silently ignore errors if the collection doesn't exist yet
             self.client.delete_collection(name)
         except Exception:
+            logger.debug("No existing collection to delete for upload_%d", upload_id)
             pass
         collection = self.client.create_collection(
             name=name,
@@ -135,8 +136,9 @@ class VectorStore:
         """
         try:
             collection = self.client.get_collection(f"upload_{upload_id}")
-        except Exception:
+        except Exception as exc:
             # Collection missing — indexing may not have run yet
+            logger.warning("Collection not found for upload %d: %s", upload_id, exc)
             return []
 
         # Build a ChromaDB `where` clause only when filtering by type
@@ -168,6 +170,7 @@ class VectorStore:
             self.client.delete_collection(f"upload_{upload_id}")
             logger.info("Deleted collection for upload %d", upload_id)
         except Exception:
+            logger.debug("Collection for upload %d not found for deletion", upload_id)
             pass
 
     def collection_exists(self, upload_id: int) -> bool:
@@ -175,7 +178,8 @@ class VectorStore:
         try:
             self.client.get_collection(f"upload_{upload_id}")
             return True
-        except Exception:
+        except Exception as exc:
+            logger.debug("Collection check failed for upload %d: %s", upload_id, exc)
             return False
 
     def get_collection_count(self, upload_id: int) -> int:
@@ -183,5 +187,6 @@ class VectorStore:
         try:
             collection = self.client.get_collection(f"upload_{upload_id}")
             return collection.count()
-        except Exception:
+        except Exception as exc:
+            logger.debug("Collection count failed for upload %d: %s", upload_id, exc)
             return 0

@@ -839,7 +839,7 @@ export function DependencyApp() {
                       setActiveProjectId(p.id);
                       setNewProjectName('');
                       setShowNewProject(false);
-                    }).catch(() => {});
+                    }).catch((err) => { addToast(err.message || 'Failed to create project', 'error'); });
                   }
                 }}
                 style={{
@@ -856,7 +856,7 @@ export function DependencyApp() {
                     setActiveProjectId(p.id);
                     setNewProjectName('');
                     setShowNewProject(false);
-                  }).catch(() => {});
+                  }).catch((err) => { addToast(err.message || 'Failed to create project', 'error'); });
                 }}
                 style={{
                   padding: '6px 14px', borderRadius: 6, border: 'none',

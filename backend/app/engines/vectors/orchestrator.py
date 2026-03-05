@@ -1,13 +1,14 @@
 """Vector Orchestrator — runs analysis vectors in dependency order.
 
-Coordinates the execution of 11 analysis vectors (V1-V11) across three phases,
+Coordinates the execution of 16 analysis vectors (V1-V16) across three phases,
 respecting inter-vector dependencies and sharing precomputed feature matrices.
 
 Phase Architecture (dependency-ordered):
   Phase 1 (Core):     Feature extraction + V11 (complexity) + V1 (community) + V4 (SCC/waves)
                       V11 runs first because V4 wave plan uses complexity scores for hour estimates.
   Phase 2 (Advanced): V2 (hierarchical) + V3 (UMAP) + V9 (wave function) + V10 (concentration)
-                      V9 depends on V11 complexity scores. V3 produces UMAP coords for V7.
+                      + V12 (expression complexity) + V13 (data flow) + V14 (schema drift)
+                      + V15 (transform centrality) + V16 (table gravity)
   Phase 3 (Ensemble): V5 (affinity) + V6 (spectral) + V7 (HDBSCAN) + V8 (ensemble consensus)
                       V8 aggregates cluster assignments from V1, V5, V6, V7.
 
@@ -23,8 +24,6 @@ Incremental Mode:
 
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 import time
 from typing import Any
@@ -91,8 +90,6 @@ class VectorOrchestrator:
 
     def __init__(self):
         self._timings: dict[str, float] = {}
-        self._computed: set[str] = set()
-        self._cached_results: dict[str, Any] = {}
 
     def _build_matrices(self, tier_data: dict[str, Any], results: dict[str, Any] | None = None):
         """Build or retrieve cached feature matrices.

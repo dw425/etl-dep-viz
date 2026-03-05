@@ -25,8 +25,11 @@ optimal K, and silhouette score.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 try:
     import numpy as np
@@ -171,7 +174,8 @@ class ConcentrationVector:
                 if sil > best_sil:
                     best_sil = sil
                     best_k = k
-            except Exception:
+            except Exception as exc:
+                logger.debug("KMeans k=%d failed: %s", k, exc)
                 continue
 
         # Final clustering

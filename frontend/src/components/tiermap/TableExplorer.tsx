@@ -73,19 +73,19 @@ export default function TableExplorer({ data, onSessionSelect }: Props) {
 
     // Count session references
     for (const s of filteredData.sessions) {
-      for (const tbl of (s as any).sources || []) {
+      for (const tbl of s.sources || []) {
         if (!profiles[tbl]) profiles[tbl] = { name: tbl, id: '', type: 'source', tier: 0, writers: [], readers: [], lookupUsers: [], totalRefs: 0 };
         if (!profiles[tbl].readers.includes(s.full || s.name)) {
           profiles[tbl].readers.push(s.full || s.name);
         }
       }
-      for (const tbl of (s as any).targets || []) {
+      for (const tbl of s.targets || []) {
         if (!profiles[tbl]) profiles[tbl] = { name: tbl, id: '', type: 'target', tier: 0, writers: [], readers: [], lookupUsers: [], totalRefs: 0 };
         if (!profiles[tbl].writers.includes(s.full || s.name)) {
           profiles[tbl].writers.push(s.full || s.name);
         }
       }
-      for (const tbl of (s as any).lookups || []) {
+      for (const tbl of s.lookups || []) {
         if (!profiles[tbl]) profiles[tbl] = { name: tbl, id: '', type: 'lookup', tier: 0, writers: [], readers: [], lookupUsers: [], totalRefs: 0 };
         if (!profiles[tbl].lookupUsers.includes(s.full || s.name)) {
           profiles[tbl].lookupUsers.push(s.full || s.name);

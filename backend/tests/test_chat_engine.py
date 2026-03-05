@@ -120,7 +120,11 @@ class TestQueryClassification:
         from app.engines.query_engine import classify_query
 
         result = classify_query("Tell me about session S_DIM_CUSTOMER")
-        assert len(result.entities) >= 0  # May or may not extract depending on pattern
+        # Entity extraction should find at least the session name
+        assert isinstance(result.entities, list)
+        entity_texts = [e.lower() if isinstance(e, str) else str(e).lower() for e in result.entities]
+        # Should extract S_DIM_CUSTOMER or at least produce a non-empty list
+        assert len(result.entities) > 0 or result.intent.value == "general"
 
 
 class TestEmbeddingEngine:
