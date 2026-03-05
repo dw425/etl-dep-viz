@@ -36,20 +36,29 @@ from collections import defaultdict
 from sqlalchemy.orm import Session
 
 from app.models.database import (
+    ConfigRecord,
     ConnectionProfileRecord,
     ConnectionRecord,
     EmbeddedCodeRecord,
     ExpressionRecord,
     FieldMappingRecord,
+    FolderRecord,
     FunctionUsageRecord,
     LookupConfigRecord,
+    MappingRecord,
+    MetadataExtensionRecord,
     ParameterRecord,
+    RepositoryMetadataRecord,
     SQLOverrideRecord,
     SessionCodeProfile,
     SessionRecord,
+    ShortcutRecord,
+    SourceDefinitionRecord,
     TableRecord,
+    TargetDefinitionRecord,
     TransformRecord,
     WorkflowRecord,
+    WorkflowTaskEdgeRecord,
     VwAffinityPropagation,
     VwDataFlow,
     VwExpressionComplexity,
@@ -159,6 +168,13 @@ def populate_core_tables(
             has_embedded_java=cp.get('has_java', 0) if (cp := s.get('code_profile')) else 0,
             has_stored_procedure=cp.get('has_stored_procedure', 0) if (cp := s.get('code_profile')) else 0,
             core_intent=cp.get('core_intent') if (cp := s.get('code_profile')) else None,
+            # Phase 7 (V7) expanded columns
+            session_attributes_json=_json_dumps(s.get('session_attributes')),
+            folder_owner=(s.get('_folder_meta') or {}).get('owner', ''),
+            mapping_is_valid=(s.get('_mapping_meta') or {}).get('is_valid', ''),
+            workflow_enabled=(s.get('_workflow_meta') or {}).get('is_enabled', ''),
+            pipeline_partitions_json=_json_dumps(s.get('pipeline_partitions')),
+            connection_references_json=_json_dumps(s.get('connection_references')),
         ))
     _bulk_save(db, session_records)
 
@@ -391,13 +407,33 @@ def populate_normalized_tables(
             wf_map[wf]['tasks'] += 1
 
     wf_rows = []
+    # Collect workflow metadata from sessions
+    wf_meta_map: dict[str, dict] = {}
+    for s in tier_data.get('sessions', []):
+        wf = s.get('workflow', '')
+        if wf and wf not in wf_meta_map:
+            wm = s.get('_workflow_meta', {})
+            if wm:
+                wf_meta_map[wf] = wm
+
     for wf_name, info in wf_map.items():
+        wm = wf_meta_map.get(wf_name, {})
         wf_rows.append(WorkflowRecord(
             upload_id=upload_id,
             workflow_name=wf_name,
             folder_name=info.get('folder', ''),
             session_count=info['sessions'],
             task_count=info['tasks'],
+            # Phase 7 (V7) expanded columns
+            is_enabled=wm.get('is_enabled', ''),
+            is_service=wm.get('is_service', ''),
+            suspend_on_error=wm.get('suspend_on_error', ''),
+            server_name=wm.get('server_name', ''),
+            description=wm.get('description', ''),
+            schedule_info_json=_json_dumps(wm.get('schedule_info')),
+            workflow_variables_json=_json_dumps(wm.get('workflow_variables')),
+            task_edges_count=wm.get('task_edges_count', 0),
+            conditional_links_count=wm.get('conditional_links_count', 0),
         ))
     _bulk_save(db, wf_rows)
 
@@ -495,6 +531,11 @@ def populate_code_analysis_tables(
                 conditional_function_count=cp.get('conditional_function_count', 0),
                 lookup_function_count=cp.get('lookup_function_count', 0),
                 custom_udf_count=cp.get('custom_udf_count', 0),
+                analytic_function_count=cp.get('analytic_function_count', 0),
+                financial_function_count=cp.get('financial_function_count', 0),
+                binary_function_count=cp.get('binary_function_count', 0),
+                encoding_function_count=cp.get('encoding_function_count', 0),
+                encryption_function_count=cp.get('encryption_function_count', 0),
                 core_intent=cp.get('core_intent'),
                 intent_confidence=cp.get('intent_confidence', 0.0),
                 intent_details_json=_json_dumps(cp.get('intent_details')),
@@ -507,6 +548,270 @@ def populate_code_analysis_tables(
     db.flush()
     logger.info("populate_code_analysis_tables: done — %d embedded_code, %d function_usage, %d code_profiles",
                 len(ec_rows), len(fu_rows), len(cp_rows))
+
+
+# ── 1d. Deep Parse Expansion Population (V7) ──────────────────────────────────
+
+
+def populate_deep_parse_tables(
+    db: Session,
+    upload_id: int,
+    tier_data: dict,
+) -> None:
+    """Populate all 8 new V7 deep-parse tables from tier_data.
+
+    Extracts metadata from the _ prefixed keys on session dicts that were
+    added by the expanded infa_engine parser. Idempotent (deletes first).
+    """
+    logger.info("populate_deep_parse_tables: upload_id=%d", upload_id)
+
+    # Delete existing rows for all new tables
+    for model in [ConfigRecord, WorkflowTaskEdgeRecord, TargetDefinitionRecord,
+                  SourceDefinitionRecord, MetadataExtensionRecord, ShortcutRecord,
+                  MappingRecord, FolderRecord, RepositoryMetadataRecord]:
+        _delete_for_upload(db, model, upload_id)
+
+    sessions = tier_data.get('sessions', [])
+    if not sessions:
+        return
+
+    # ── Repository metadata (from first session's _repo_meta) ────────────
+    repo_meta = None
+    for s in sessions:
+        rm = s.get('_repo_meta')
+        if rm and rm.get('repository_name'):
+            repo_meta = rm
+            break
+    if repo_meta:
+        _bulk_save(db, [RepositoryMetadataRecord(
+            upload_id=upload_id,
+            creation_date=repo_meta.get('creation_date', ''),
+            repository_version=repo_meta.get('repository_version', ''),
+            repository_name=repo_meta.get('repository_name', ''),
+            version=repo_meta.get('version', ''),
+            codepage=repo_meta.get('codepage', ''),
+            database_type=repo_meta.get('database_type', ''),
+        )])
+
+    # ── Folders (deduplicated from session _folder_meta) ─────────────────
+    seen_folders: dict[str, dict] = {}
+    folder_session_counts: dict[str, int] = defaultdict(int)
+    folder_workflow_names: dict[str, set] = defaultdict(set)
+    for s in sessions:
+        fm = s.get('_folder_meta')
+        if fm and fm.get('name'):
+            fname = fm['name']
+            if fname not in seen_folders:
+                seen_folders[fname] = fm
+            folder_session_counts[fname] += 1
+            wf = s.get('workflow', '')
+            if wf:
+                folder_workflow_names[fname].add(wf)
+
+    folder_rows = []
+    for fname, fm in seen_folders.items():
+        shortcuts = []
+        for s in sessions:
+            if (s.get('_folder_meta') or {}).get('name') == fname:
+                shortcuts = s.get('_shortcuts', [])
+                break
+        folder_rows.append(FolderRecord(
+            upload_id=upload_id,
+            name=fname,
+            description=fm.get('description', ''),
+            owner=fm.get('owner', ''),
+            shared=fm.get('shared', ''),
+            permissions=fm.get('permissions', ''),
+            session_count=folder_session_counts.get(fname, 0),
+            workflow_count=len(folder_workflow_names.get(fname, set())),
+            shortcut_count=len(shortcuts),
+        ))
+    _bulk_save(db, folder_rows)
+
+    # ── Shortcuts (deduplicated across sessions) ─────────────────────────
+    seen_shortcuts: set = set()
+    shortcut_rows = []
+    for s in sessions:
+        for sc in s.get('_shortcuts', []):
+            key = (sc.get('name', ''), sc.get('source_folder', ''))
+            if key not in seen_shortcuts:
+                seen_shortcuts.add(key)
+                shortcut_rows.append(ShortcutRecord(
+                    upload_id=upload_id,
+                    name=sc.get('name', ''),
+                    ref_object_name=sc.get('ref_object_name', ''),
+                    object_type=sc.get('object_type', ''),
+                    source_folder=sc.get('source_folder', ''),
+                    repository_name=sc.get('repository_name', ''),
+                    reference_type=sc.get('reference_type', ''),
+                ))
+    _bulk_save(db, shortcut_rows)
+
+    # ── Metadata extensions (from folder metadata) ───────────────────────
+    ext_rows = []
+    seen_ext: set = set()
+    for fname, fm in seen_folders.items():
+        for ext in fm.get('metadata_extensions', []):
+            key = ('FOLDER', fname, ext.get('name', ''))
+            if key not in seen_ext:
+                seen_ext.add(key)
+                ext_rows.append(MetadataExtensionRecord(
+                    upload_id=upload_id,
+                    parent_type='FOLDER',
+                    parent_name=fname,
+                    extension_name=ext.get('name', ''),
+                    extension_value=ext.get('value', ''),
+                    datatype=ext.get('datatype', ''),
+                    domain_name=ext.get('domain_name', ''),
+                ))
+    # Mapping-level metadata extensions
+    for s in sessions:
+        mm = s.get('_mapping_meta', {})
+        mapping_name = s.get('mapping', '')
+        for ext in mm.get('metadata_extensions', []):
+            key = ('MAPPING', mapping_name, ext.get('name', ''))
+            if key not in seen_ext:
+                seen_ext.add(key)
+                ext_rows.append(MetadataExtensionRecord(
+                    upload_id=upload_id,
+                    parent_type='MAPPING',
+                    parent_name=mapping_name,
+                    extension_name=ext.get('name', ''),
+                    extension_value=ext.get('value', ''),
+                    datatype=ext.get('datatype', ''),
+                    domain_name=ext.get('domain_name', ''),
+                ))
+    _bulk_save(db, ext_rows)
+
+    # ── Mappings (deduplicated, with usage counts) ───────────────────────
+    mapping_sessions: dict[str, list] = defaultdict(list)
+    mapping_meta: dict[str, dict] = {}
+    for s in sessions:
+        mname = s.get('mapping', '')
+        if mname:
+            mapping_sessions[mname].append(s.get('full', s.get('name', '')))
+            if mname not in mapping_meta:
+                mm = s.get('_mapping_meta', {})
+                md = s.get('mapping_detail', {})
+                mapping_meta[mname] = {
+                    'folder': s.get('folder', ''),
+                    'is_valid': mm.get('is_valid', ''),
+                    'is_profile_mapping': mm.get('is_profile_mapping', ''),
+                    'description': mm.get('description', ''),
+                    'source_count': len(s.get('sources', [])),
+                    'target_count': len(s.get('targets', [])),
+                    'transform_count': len(md.get('instances', [])) if isinstance(md, dict) else 0,
+                    'connector_count': len(md.get('connectors', [])) if isinstance(md, dict) else 0,
+                    'target_load_order': mm.get('target_load_order', []),
+                    'map_dependencies': mm.get('map_dependencies', []),
+                    'metadata_extensions': mm.get('metadata_extensions', []),
+                }
+
+    mapping_rows = []
+    for mname, meta in mapping_meta.items():
+        mapping_rows.append(MappingRecord(
+            upload_id=upload_id,
+            mapping_name=mname,
+            folder_name=meta.get('folder', ''),
+            is_valid=meta.get('is_valid', ''),
+            is_profile_mapping=meta.get('is_profile_mapping', ''),
+            description=meta.get('description', ''),
+            source_count=meta.get('source_count', 0),
+            target_count=meta.get('target_count', 0),
+            transform_count=meta.get('transform_count', 0),
+            connector_count=meta.get('connector_count', 0),
+            used_by_sessions_json=_json_dumps(mapping_sessions.get(mname, [])),
+            target_load_order_json=_json_dumps(meta.get('target_load_order')),
+            map_dependencies_json=_json_dumps(meta.get('map_dependencies')),
+            metadata_extensions_json=_json_dumps(meta.get('metadata_extensions')),
+        ))
+    _bulk_save(db, mapping_rows)
+
+    # ── Source definitions (deduplicated) ─────────────────────────────────
+    seen_src: set = set()
+    src_rows = []
+    for s in sessions:
+        for sd in s.get('_source_definitions', []):
+            sname = sd.get('source_name', '')
+            if sname and sname not in seen_src:
+                seen_src.add(sname)
+                src_rows.append(SourceDefinitionRecord(
+                    upload_id=upload_id,
+                    source_name=sname,
+                    database_name=sd.get('database_name', ''),
+                    database_type=sd.get('database_type', ''),
+                    folder_name=sd.get('folder_name', ''),
+                    flatfile_info_json=_json_dumps(sd.get('flatfile_info')),
+                ))
+    _bulk_save(db, src_rows)
+
+    # ── Target definitions (deduplicated) ─────────────────────────────────
+    seen_tgt: set = set()
+    tgt_rows = []
+    for s in sessions:
+        for td in s.get('_target_definitions', []):
+            tname = td.get('target_name', '')
+            if tname and tname not in seen_tgt:
+                seen_tgt.add(tname)
+                tgt_rows.append(TargetDefinitionRecord(
+                    upload_id=upload_id,
+                    target_name=tname,
+                    database_name=td.get('database_name', ''),
+                    database_type=td.get('database_type', ''),
+                    folder_name=td.get('folder_name', ''),
+                    indexes_json=_json_dumps(td.get('indexes')),
+                ))
+    _bulk_save(db, tgt_rows)
+
+    # ── Workflow task edges (from _workflow_meta) ─────────────────────────
+    seen_wf_edges: set = set()
+    edge_rows = []
+    for s in sessions:
+        wm = s.get('_workflow_meta')
+        wf_name = s.get('workflow', '')
+        if wm and wf_name:
+            for edge in wm.get('task_edges', []):
+                key = (wf_name, edge.get('from_task', ''), edge.get('to_task', ''))
+                if key not in seen_wf_edges:
+                    seen_wf_edges.add(key)
+                    edge_rows.append(WorkflowTaskEdgeRecord(
+                        upload_id=upload_id,
+                        workflow_name=wf_name,
+                        from_task=edge.get('from_task', ''),
+                        to_task=edge.get('to_task', ''),
+                        condition=edge.get('condition', ''),
+                    ))
+    _bulk_save(db, edge_rows)
+
+    # ── Config records (from _config_map) ─────────────────────────────────
+    seen_configs: set = set()
+    config_rows = []
+    config_usage: dict[str, list] = defaultdict(list)
+    for s in sessions:
+        cfg_ref = s.get('config_reference', '')
+        if cfg_ref:
+            config_usage[cfg_ref].append(s.get('full', s.get('name', '')))
+        for cfg_name, cfg in (s.get('_config_map') or {}).items():
+            if cfg_name not in seen_configs:
+                seen_configs.add(cfg_name)
+                config_rows.append(ConfigRecord(
+                    upload_id=upload_id,
+                    config_name=cfg_name,
+                    is_default=cfg.get('is_default', ''),
+                    description=cfg.get('description', ''),
+                    attributes_json=_json_dumps(cfg.get('attributes')),
+                ))
+    # Update used_by_sessions after building usage map
+    for cr in config_rows:
+        cr.used_by_sessions_json = _json_dumps(config_usage.get(cr.config_name, []))
+    _bulk_save(db, config_rows)
+
+    db.flush()
+    logger.info("populate_deep_parse_tables: done — %d folders, %d shortcuts, %d metadata_ext, "
+                "%d mappings, %d source_defs, %d target_defs, %d task_edges, %d configs",
+                len(folder_rows), len(shortcut_rows), len(ext_rows),
+                len(mapping_rows), len(src_rows), len(tgt_rows),
+                len(edge_rows), len(config_rows))
 
 
 # ── 2. Per-View Table Population ─────────────────────────────────────────────

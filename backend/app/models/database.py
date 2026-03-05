@@ -314,6 +314,13 @@ class SessionRecord(Base):
     has_embedded_java = Column(Integer, default=0)
     has_stored_procedure = Column(Integer, default=0)
     core_intent = Column(String(64), nullable=True)
+    # Phase 7 (V7) expansion
+    session_attributes_json = Column(Text, nullable=True)
+    folder_owner = Column(String(256), nullable=True)
+    mapping_is_valid = Column(String(16), nullable=True)
+    workflow_enabled = Column(String(16), nullable=True)
+    pipeline_partitions_json = Column(Text, nullable=True)
+    connection_references_json = Column(Text, nullable=True)
 
     __table_args__ = (
         Index("ix_session_upload", "upload_id"),
@@ -1090,6 +1097,10 @@ class TransformRecord(Base):
     lookup_condition = Column(Text, nullable=True)
     filter_condition = Column(Text, nullable=True)
     expression_count = Column(Integer, default=0)
+    # Phase 7 (V7) expansion
+    is_reusable = Column(String(16), nullable=True)
+    component_version = Column(String(64), nullable=True)
+    description = Column(Text, nullable=True)
 
     __table_args__ = (
         Index("ix_transform_upload_session", "upload_id", "session_name"),
@@ -1159,6 +1170,16 @@ class WorkflowRecord(Base):
     has_scheduler = Column(Integer, default=0)
     critical_path_length = Column(Integer, default=0)
     parallelism_degree = Column(Integer, default=0)
+    # Phase 7 (V7) expansion
+    is_enabled = Column(String(16), nullable=True)
+    is_service = Column(String(16), nullable=True)
+    suspend_on_error = Column(String(16), nullable=True)
+    server_name = Column(String(256), nullable=True)
+    description = Column(Text, nullable=True)
+    schedule_info_json = Column(Text, nullable=True)
+    workflow_variables_json = Column(Text, nullable=True)
+    task_edges_count = Column(Integer, default=0)
+    conditional_links_count = Column(Integer, default=0)
 
     __table_args__ = (
         Index("ix_workflow_upload", "upload_id"),
@@ -1309,6 +1330,12 @@ class SessionCodeProfile(Base):
     conditional_function_count = Column(Integer, default=0)
     lookup_function_count = Column(Integer, default=0)
     custom_udf_count = Column(Integer, default=0)
+    # Phase 7 (V7) new function categories
+    analytic_function_count = Column(Integer, default=0)
+    financial_function_count = Column(Integer, default=0)
+    binary_function_count = Column(Integer, default=0)
+    encoding_function_count = Column(Integer, default=0)
+    encryption_function_count = Column(Integer, default=0)
     # Core intent classification
     core_intent = Column(String(64), nullable=True)
     intent_confidence = Column(Float, default=0.0)
@@ -1317,6 +1344,186 @@ class SessionCodeProfile(Base):
     __table_args__ = (
         Index("ix_codeprof_upload_session", "upload_id", "session_name", unique=True),
     )
+
+
+# ── Deep Parse Expansion Tables (V7) ──────────────────────────────────────
+
+
+class RepositoryMetadataRecord(Base):
+    """POWERMART root + REPOSITORY metadata from Informatica XML."""
+
+    __tablename__ = "repository_metadata"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    upload_id = Column(Integer, ForeignKey("uploads.id", ondelete="CASCADE"), nullable=False)
+    creation_date = Column(String(128), nullable=True)
+    repository_version = Column(String(64), nullable=True)
+    repository_name = Column(String(256), nullable=True)
+    version = Column(String(64), nullable=True)
+    codepage = Column(String(64), nullable=True)
+    database_type = Column(String(64), nullable=True)
+
+    __table_args__ = (Index("ix_repometa_upload", "upload_id"),)
+
+
+class FolderRecord(Base):
+    """Folder-level metadata from Informatica XML."""
+
+    __tablename__ = "folder_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    upload_id = Column(Integer, ForeignKey("uploads.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(512), nullable=False)
+    description = Column(Text, nullable=True)
+    owner = Column(String(256), nullable=True)
+    shared = Column(String(16), nullable=True)
+    permissions = Column(String(256), nullable=True)
+    session_count = Column(Integer, default=0)
+    mapping_count = Column(Integer, default=0)
+    workflow_count = Column(Integer, default=0)
+    shortcut_count = Column(Integer, default=0)
+
+    __table_args__ = (Index("ix_folder_upload", "upload_id"),)
+
+
+class MappingRecord(Base):
+    """Mapping-level metadata from Informatica XML."""
+
+    __tablename__ = "mapping_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    upload_id = Column(Integer, ForeignKey("uploads.id", ondelete="CASCADE"), nullable=False)
+    mapping_name = Column(String(512), nullable=False)
+    folder_name = Column(String(512), nullable=True)
+    is_valid = Column(String(16), nullable=True)
+    is_profile_mapping = Column(String(16), nullable=True)
+    description = Column(Text, nullable=True)
+    source_count = Column(Integer, default=0)
+    target_count = Column(Integer, default=0)
+    transform_count = Column(Integer, default=0)
+    connector_count = Column(Integer, default=0)
+    used_by_sessions_json = Column(Text, nullable=True)
+    target_load_order_json = Column(Text, nullable=True)
+    map_dependencies_json = Column(Text, nullable=True)
+    metadata_extensions_json = Column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_mapping_upload", "upload_id"),
+        Index("ix_mapping_name", "upload_id", "mapping_name"),
+    )
+
+
+class ShortcutRecord(Base):
+    """Cross-folder SHORTCUT references."""
+
+    __tablename__ = "shortcut_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    upload_id = Column(Integer, ForeignKey("uploads.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(512), nullable=False)
+    ref_object_name = Column(String(512), nullable=True)
+    object_type = Column(String(64), nullable=True)
+    source_folder = Column(String(512), nullable=True)
+    repository_name = Column(String(256), nullable=True)
+    reference_type = Column(String(64), nullable=True)
+
+    __table_args__ = (Index("ix_shortcut_upload", "upload_id"),)
+
+
+class MetadataExtensionRecord(Base):
+    """METADATAEXTENSION governance tags from Informatica XML."""
+
+    __tablename__ = "metadata_extension_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    upload_id = Column(Integer, ForeignKey("uploads.id", ondelete="CASCADE"), nullable=False)
+    parent_type = Column(String(64), nullable=False)  # FOLDER, MAPPING, TRANSFORMATION, SESSION, WORKFLOW
+    parent_name = Column(String(512), nullable=False)
+    extension_name = Column(String(256), nullable=False)
+    extension_value = Column(Text, nullable=True)
+    datatype = Column(String(64), nullable=True)
+    domain_name = Column(String(256), nullable=True)
+
+    __table_args__ = (
+        Index("ix_metaext_upload", "upload_id"),
+        Index("ix_metaext_parent", "upload_id", "parent_type"),
+    )
+
+
+class SourceDefinitionRecord(Base):
+    """Normalized SOURCE definitions with field metadata."""
+
+    __tablename__ = "source_definition_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    upload_id = Column(Integer, ForeignKey("uploads.id", ondelete="CASCADE"), nullable=False)
+    source_name = Column(String(512), nullable=False)
+    database_name = Column(String(512), nullable=True)
+    database_type = Column(String(64), nullable=True)
+    folder_name = Column(String(512), nullable=True)
+    field_count = Column(Integer, default=0)
+    fields_json = Column(Text, nullable=True)
+    flatfile_info_json = Column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_srcdef_upload", "upload_id"),
+        Index("ix_srcdef_name", "upload_id", "source_name"),
+    )
+
+
+class TargetDefinitionRecord(Base):
+    """Normalized TARGET definitions with field metadata and indexes."""
+
+    __tablename__ = "target_definition_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    upload_id = Column(Integer, ForeignKey("uploads.id", ondelete="CASCADE"), nullable=False)
+    target_name = Column(String(512), nullable=False)
+    database_name = Column(String(512), nullable=True)
+    database_type = Column(String(64), nullable=True)
+    folder_name = Column(String(512), nullable=True)
+    field_count = Column(Integer, default=0)
+    fields_json = Column(Text, nullable=True)
+    indexes_json = Column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_tgtdef_upload", "upload_id"),
+        Index("ix_tgtdef_name", "upload_id", "target_name"),
+    )
+
+
+class WorkflowTaskEdgeRecord(Base):
+    """WORKFLOWLINK task dependency edges with conditions."""
+
+    __tablename__ = "workflow_task_edges"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    upload_id = Column(Integer, ForeignKey("uploads.id", ondelete="CASCADE"), nullable=False)
+    workflow_name = Column(String(512), nullable=False)
+    from_task = Column(String(512), nullable=False)
+    to_task = Column(String(512), nullable=False)
+    condition = Column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_wftask_upload", "upload_id"),
+        Index("ix_wftask_workflow", "upload_id", "workflow_name"),
+    )
+
+
+class ConfigRecord(Base):
+    """Session CONFIG objects with their attributes."""
+
+    __tablename__ = "config_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    upload_id = Column(Integer, ForeignKey("uploads.id", ondelete="CASCADE"), nullable=False)
+    config_name = Column(String(512), nullable=False)
+    is_default = Column(String(16), nullable=True)
+    description = Column(Text, nullable=True)
+    attributes_json = Column(Text, nullable=True)
+    used_by_sessions_json = Column(Text, nullable=True)
+
+    __table_args__ = (Index("ix_config_upload", "upload_id"),)
 
 
 # ── Schema Migrations ─────────────────────────────────────────────────────
@@ -1396,6 +1603,67 @@ def _migrate_db() -> None:
                 with engine.begin() as conn:
                     conn.execute(sa_text(f"ALTER TABLE session_records ADD COLUMN {col_name} {col_type}"))
                     logger.info("Migrated: added %s column to session_records", col_name)
+
+        # Phase 7 (V7) expanded session columns
+        for col_name, col_type in [
+            ("session_attributes_json", "TEXT"),
+            ("folder_owner", "VARCHAR(256)"),
+            ("mapping_is_valid", "VARCHAR(16)"),
+            ("workflow_enabled", "VARCHAR(16)"),
+            ("pipeline_partitions_json", "TEXT"),
+            ("connection_references_json", "TEXT"),
+        ]:
+            if col_name not in sr_cols:
+                with engine.begin() as conn:
+                    conn.execute(sa_text(f"ALTER TABLE session_records ADD COLUMN {col_name} {col_type}"))
+                    logger.info("Migrated: added %s column to session_records", col_name)
+
+    # Phase 7 (V7): Migrate workflow_records for new columns
+    if "workflow_records" in insp.get_table_names():
+        wf_cols = {col["name"] for col in insp.get_columns("workflow_records")}
+        for col_name, col_type in [
+            ("is_enabled", "VARCHAR(16)"),
+            ("is_service", "VARCHAR(16)"),
+            ("suspend_on_error", "VARCHAR(16)"),
+            ("server_name", "VARCHAR(256)"),
+            ("description", "TEXT"),
+            ("schedule_info_json", "TEXT"),
+            ("workflow_variables_json", "TEXT"),
+            ("task_edges_count", "INTEGER DEFAULT 0"),
+            ("conditional_links_count", "INTEGER DEFAULT 0"),
+        ]:
+            if col_name not in wf_cols:
+                with engine.begin() as conn:
+                    conn.execute(sa_text(f"ALTER TABLE workflow_records ADD COLUMN {col_name} {col_type}"))
+                    logger.info("Migrated: added %s column to workflow_records", col_name)
+
+    # Phase 7 (V7): Migrate transform_records for new columns
+    if "transform_records" in insp.get_table_names():
+        tr_cols = {col["name"] for col in insp.get_columns("transform_records")}
+        for col_name, col_type in [
+            ("is_reusable", "VARCHAR(16)"),
+            ("component_version", "VARCHAR(64)"),
+            ("description", "TEXT"),
+        ]:
+            if col_name not in tr_cols:
+                with engine.begin() as conn:
+                    conn.execute(sa_text(f"ALTER TABLE transform_records ADD COLUMN {col_name} {col_type}"))
+                    logger.info("Migrated: added %s column to transform_records", col_name)
+
+    # Phase 7 (V7): Migrate session_code_profiles for new function category columns
+    if "session_code_profiles" in insp.get_table_names():
+        scp_cols = {col["name"] for col in insp.get_columns("session_code_profiles")}
+        for col_name, col_type in [
+            ("analytic_function_count", "INTEGER DEFAULT 0"),
+            ("financial_function_count", "INTEGER DEFAULT 0"),
+            ("binary_function_count", "INTEGER DEFAULT 0"),
+            ("encoding_function_count", "INTEGER DEFAULT 0"),
+            ("encryption_function_count", "INTEGER DEFAULT 0"),
+        ]:
+            if col_name not in scp_cols:
+                with engine.begin() as conn:
+                    conn.execute(sa_text(f"ALTER TABLE session_code_profiles ADD COLUMN {col_name} {col_type}"))
+                    logger.info("Migrated: added %s column to session_code_profiles", col_name)
 
 
 # ── Public API ────────────────────────────────────────────────────────────

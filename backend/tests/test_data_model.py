@@ -471,3 +471,284 @@ class TestViewEndpoints:
         data = gres.json()
         assert "vector_results" in data
         assert data["vector_results"] is not None
+
+
+# ── V7 Deep Parse Table Population Tests ──────────────────────────────────
+
+
+class TestDeepParsePopulation:
+    """Tests for populate_deep_parse_tables with the 8 new V7 tables."""
+
+    def _setup(self, client, small_infa_xml):
+        """Upload and parse via the API to populate all tables."""
+        response = client.post(
+            "/api/tier-map/analyze",
+            files=[("files", ("test.xml", small_infa_xml, "application/xml"))],
+        )
+        assert response.status_code == 200
+        return response.json()["upload_id"]
+
+    def test_repository_metadata_populated(self, client, small_infa_xml, test_db):
+        uid = self._setup(client, small_infa_xml)
+        from app.models.database import RepositoryMetadataRecord
+        db = test_db()
+        rows = db.query(RepositoryMetadataRecord).filter(RepositoryMetadataRecord.upload_id == uid).all()
+        assert len(rows) == 1
+        assert rows[0].repository_name == "REPO_DEV"
+        assert rows[0].codepage == "UTF-8"
+        assert rows[0].database_type == "Oracle"
+        db.close()
+
+    def test_folders_populated(self, client, small_infa_xml, test_db):
+        uid = self._setup(client, small_infa_xml)
+        from app.models.database import FolderRecord
+        db = test_db()
+        rows = db.query(FolderRecord).filter(FolderRecord.upload_id == uid).all()
+        # 3 folders: ETL_CUSTOMER, ETL_STAGING, ETL_REPORTING
+        assert len(rows) == 3
+        names = {r.name for r in rows}
+        assert "ETL_CUSTOMER" in names
+        assert "ETL_STAGING" in names
+        assert "ETL_REPORTING" in names
+        cust = next(r for r in rows if r.name == "ETL_CUSTOMER")
+        assert cust.owner == "admin"
+        assert cust.session_count == 3
+        db.close()
+
+    def test_shortcuts_populated(self, client, small_infa_xml, test_db):
+        uid = self._setup(client, small_infa_xml)
+        from app.models.database import ShortcutRecord
+        db = test_db()
+        rows = db.query(ShortcutRecord).filter(ShortcutRecord.upload_id == uid).all()
+        assert len(rows) >= 1
+        sc = next((r for r in rows if r.name == "SC_SHARED_LKP"), None)
+        assert sc is not None
+        assert sc.ref_object_name == "SHARED_LOOKUP"
+        assert sc.object_type == "SOURCE"
+        db.close()
+
+    def test_metadata_extensions_populated(self, client, small_infa_xml, test_db):
+        uid = self._setup(client, small_infa_xml)
+        from app.models.database import MetadataExtensionRecord
+        db = test_db()
+        rows = db.query(MetadataExtensionRecord).filter(MetadataExtensionRecord.upload_id == uid).all()
+        assert len(rows) >= 2  # At least folder + mapping extension
+        folder_exts = [r for r in rows if r.parent_type == "FOLDER"]
+        mapping_exts = [r for r in rows if r.parent_type == "MAPPING"]
+        assert len(folder_exts) >= 1
+        assert len(mapping_exts) >= 1
+        db.close()
+
+    def test_mappings_populated(self, client, small_infa_xml, test_db):
+        uid = self._setup(client, small_infa_xml)
+        from app.models.database import MappingRecord
+        db = test_db()
+        rows = db.query(MappingRecord).filter(MappingRecord.upload_id == uid).all()
+        # 5 mappings total across 3 folders
+        assert len(rows) >= 4
+        m_cust = next((r for r in rows if r.mapping_name == "m_LOAD_CUSTOMER_DIM"), None)
+        assert m_cust is not None
+        assert m_cust.is_valid == "YES"
+        assert m_cust.description == "Load customer dimension table"
+        db.close()
+
+    def test_source_definitions_populated(self, client, small_infa_xml, test_db):
+        uid = self._setup(client, small_infa_xml)
+        from app.models.database import SourceDefinitionRecord
+        db = test_db()
+        rows = db.query(SourceDefinitionRecord).filter(SourceDefinitionRecord.upload_id == uid).all()
+        assert len(rows) >= 5  # Multiple sources across folders
+        # Check FLAT_FEED has flatfile_info
+        flat = next((r for r in rows if r.source_name == "FLAT_FEED"), None)
+        assert flat is not None
+        if flat.flatfile_info_json:
+            import json
+            ff = json.loads(flat.flatfile_info_json)
+            assert ff.get("delimiters") == ","
+        db.close()
+
+    def test_target_definitions_populated(self, client, small_infa_xml, test_db):
+        uid = self._setup(client, small_infa_xml)
+        from app.models.database import TargetDefinitionRecord
+        db = test_db()
+        rows = db.query(TargetDefinitionRecord).filter(TargetDefinitionRecord.upload_id == uid).all()
+        assert len(rows) >= 3
+        # CUSTOMER_DIM should have indexes
+        cust = next((r for r in rows if r.target_name == "CUSTOMER_DIM"), None)
+        assert cust is not None
+        if cust.indexes_json:
+            import json
+            indexes = json.loads(cust.indexes_json)
+            assert len(indexes) >= 1
+        db.close()
+
+    def test_workflow_edges_populated(self, client, small_infa_xml, test_db):
+        uid = self._setup(client, small_infa_xml)
+        from app.models.database import WorkflowTaskEdgeRecord
+        db = test_db()
+        rows = db.query(WorkflowTaskEdgeRecord).filter(WorkflowTaskEdgeRecord.upload_id == uid).all()
+        assert len(rows) >= 3
+        # wf_CUSTOMER_ETL has Start → s_LOAD_CUSTOMER_DIM, then conditional edges
+        cust_edges = [r for r in rows if r.workflow_name == "wf_CUSTOMER_ETL"]
+        assert len(cust_edges) >= 3
+        conditional = [r for r in cust_edges if r.condition]
+        assert len(conditional) >= 1
+        db.close()
+
+    def test_configs_populated(self, client, small_infa_xml, test_db):
+        uid = self._setup(client, small_infa_xml)
+        from app.models.database import ConfigRecord
+        db = test_db()
+        rows = db.query(ConfigRecord).filter(ConfigRecord.upload_id == uid).all()
+        assert len(rows) >= 1
+        cfg = next((r for r in rows if r.config_name == "CFG_DEFAULT"), None)
+        assert cfg is not None
+        assert cfg.is_default == "YES"
+        if cfg.attributes_json:
+            import json
+            attrs = json.loads(cfg.attributes_json)
+            assert attrs.get("Commit Interval") == "10000"
+        db.close()
+
+    def test_deep_parse_idempotent(self, client, small_infa_xml, test_db):
+        """Running analyze twice should produce same row counts."""
+        uid = self._setup(client, small_infa_xml)
+        from app.models.database import FolderRecord, ShortcutRecord, MappingRecord
+        db = test_db()
+        count1_f = db.query(FolderRecord).filter(FolderRecord.upload_id == uid).count()
+        count1_s = db.query(ShortcutRecord).filter(ShortcutRecord.upload_id == uid).count()
+        count1_m = db.query(MappingRecord).filter(MappingRecord.upload_id == uid).count()
+        db.close()
+
+        # Re-analyze same file
+        uid2 = self._setup(client, small_infa_xml)
+        db2 = test_db()
+        count2_f = db2.query(FolderRecord).filter(FolderRecord.upload_id == uid2).count()
+        count2_s = db2.query(ShortcutRecord).filter(ShortcutRecord.upload_id == uid2).count()
+        count2_m = db2.query(MappingRecord).filter(MappingRecord.upload_id == uid2).count()
+        db2.close()
+
+        assert count1_f == count2_f
+        assert count1_s == count2_s
+        assert count1_m == count2_m
+
+    def test_expanded_session_record_columns(self, client, small_infa_xml, test_db):
+        """SessionRecord should have new V7 columns populated."""
+        uid = self._setup(client, small_infa_xml)
+        from app.models.database import SessionRecord
+        db = test_db()
+        rows = db.query(SessionRecord).filter(SessionRecord.upload_id == uid).all()
+        cust = next((r for r in rows if r.name == "s_LOAD_CUSTOMER_DIM"), None)
+        assert cust is not None
+        # folder_owner should be populated from folder metadata
+        assert cust.folder_owner == "admin"
+        db.close()
+
+    def test_expanded_workflow_record_columns(self, client, small_infa_xml, test_db):
+        """WorkflowRecord should have new V7 columns populated."""
+        uid = self._setup(client, small_infa_xml)
+        from app.models.database import WorkflowRecord
+        db = test_db()
+        rows = db.query(WorkflowRecord).filter(WorkflowRecord.upload_id == uid).all()
+        wf_cust = next((r for r in rows if r.workflow_name == "wf_CUSTOMER_ETL"), None)
+        assert wf_cust is not None
+        assert wf_cust.is_enabled == "YES"
+        assert wf_cust.server_name == "IS_PROD"
+        assert wf_cust.task_edges_count >= 3
+        assert wf_cust.conditional_links_count >= 1
+        db.close()
+
+
+# ── V7 API Endpoint Tests ─────────────────────────────────────────────────
+
+
+class TestDeepParseEndpoints:
+    """Tests for the 9 new V7 API endpoints."""
+
+    def _setup(self, client, small_infa_xml):
+        response = client.post(
+            "/api/tier-map/analyze",
+            files=[("files", ("test.xml", small_infa_xml, "application/xml"))],
+        )
+        assert response.status_code == 200
+        return response.json()["upload_id"]
+
+    def test_repository_metadata_endpoint(self, client, small_infa_xml):
+        uid = self._setup(client, small_infa_xml)
+        res = client.get(f"/api/views/repository-metadata?upload_id={uid}")
+        assert res.status_code == 200
+        data = res.json()
+        assert "records" in data
+        assert len(data["records"]) == 1
+        assert data["records"][0]["repository_name"] == "REPO_DEV"
+
+    def test_folders_endpoint(self, client, small_infa_xml):
+        uid = self._setup(client, small_infa_xml)
+        res = client.get(f"/api/views/folders?upload_id={uid}")
+        assert res.status_code == 200
+        data = res.json()
+        assert "records" in data
+        assert len(data["records"]) == 3
+
+    def test_mappings_endpoint(self, client, small_infa_xml):
+        uid = self._setup(client, small_infa_xml)
+        res = client.get(f"/api/views/mappings?upload_id={uid}")
+        assert res.status_code == 200
+        data = res.json()
+        assert "records" in data
+        assert len(data["records"]) >= 4
+
+    def test_mappings_filter_by_folder(self, client, small_infa_xml):
+        uid = self._setup(client, small_infa_xml)
+        res = client.get(f"/api/views/mappings?upload_id={uid}&folder_name=ETL_CUSTOMER")
+        assert res.status_code == 200
+        data = res.json()
+        assert all(r["folder_name"] == "ETL_CUSTOMER" for r in data["records"])
+
+    def test_shortcuts_endpoint(self, client, small_infa_xml):
+        uid = self._setup(client, small_infa_xml)
+        res = client.get(f"/api/views/shortcuts?upload_id={uid}")
+        assert res.status_code == 200
+        data = res.json()
+        assert "records" in data
+        assert len(data["records"]) >= 1
+
+    def test_metadata_extensions_endpoint(self, client, small_infa_xml):
+        uid = self._setup(client, small_infa_xml)
+        res = client.get(f"/api/views/metadata-extensions?upload_id={uid}")
+        assert res.status_code == 200
+        data = res.json()
+        assert "records" in data
+        assert len(data["records"]) >= 2
+
+    def test_source_definitions_endpoint(self, client, small_infa_xml):
+        uid = self._setup(client, small_infa_xml)
+        res = client.get(f"/api/views/source-definitions?upload_id={uid}")
+        assert res.status_code == 200
+        data = res.json()
+        assert "records" in data
+        assert len(data["records"]) >= 5
+
+    def test_target_definitions_endpoint(self, client, small_infa_xml):
+        uid = self._setup(client, small_infa_xml)
+        res = client.get(f"/api/views/target-definitions?upload_id={uid}")
+        assert res.status_code == 200
+        data = res.json()
+        assert "records" in data
+        assert len(data["records"]) >= 3
+
+    def test_workflow_edges_endpoint(self, client, small_infa_xml):
+        uid = self._setup(client, small_infa_xml)
+        res = client.get(f"/api/views/workflow-edges?upload_id={uid}")
+        assert res.status_code == 200
+        data = res.json()
+        assert "records" in data
+        assert len(data["records"]) >= 3
+
+    def test_configs_endpoint(self, client, small_infa_xml):
+        uid = self._setup(client, small_infa_xml)
+        res = client.get(f"/api/views/configs?upload_id={uid}")
+        assert res.status_code == 200
+        data = res.json()
+        assert "records" in data
+        assert len(data["records"]) >= 1

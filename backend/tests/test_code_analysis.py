@@ -732,6 +732,7 @@ class TestKnownFunctions:
         valid_categories = {
             "aggregate", "string", "date", "math", "conversion",
             "conditional", "lookup", "system",
+            "analytic", "financial", "binary", "encoding", "encryption",
         }
         for func, cat in _KNOWN_FUNCTIONS.items():
             assert cat in valid_categories, f"{func} has invalid category '{cat}'"
@@ -829,3 +830,46 @@ class TestSSEHeartbeat:
             assert '"complete"' in event
 
         asyncio.run(_test())
+
+
+# ── V7 Expanded Function Catalog Tests ─────────────────────────────────────
+
+
+class TestV7FunctionCatalog:
+    """Tests for Phase 5: expanded function categories."""
+
+    def test_analytic_functions_present(self):
+        """LAG, LEAD should be in the catalog as analytic."""
+        assert _KNOWN_FUNCTIONS.get("LAG") == "analytic"
+        assert _KNOWN_FUNCTIONS.get("LEAD") == "analytic"
+
+    def test_financial_functions_present(self):
+        """FV, NPER, PMT, PV, RATE should be financial."""
+        for fn in ["FV", "NPER", "PMT", "PV", "RATE"]:
+            assert _KNOWN_FUNCTIONS.get(fn) == "financial", f"{fn} missing or wrong category"
+
+    def test_binary_functions_present(self):
+        """BINARY_COMPARE, BINARY_CONCAT, BINARY_LENGTH, BINARY_SECTION should be binary."""
+        for fn in ["BINARY_COMPARE", "BINARY_CONCAT", "BINARY_LENGTH", "BINARY_SECTION"]:
+            assert _KNOWN_FUNCTIONS.get(fn) == "binary", f"{fn} missing or wrong category"
+
+    def test_encoding_functions_present(self):
+        """ENC_BASE64, DEC_BASE64, ENC_HEX, DEC_HEX should be encoding."""
+        for fn in ["ENC_BASE64", "DEC_BASE64", "ENC_HEX", "DEC_HEX"]:
+            assert _KNOWN_FUNCTIONS.get(fn) == "encoding", f"{fn} missing or wrong category"
+
+    def test_encryption_functions_present(self):
+        """AES_ENCRYPT, AES_DECRYPT should be encryption."""
+        assert _KNOWN_FUNCTIONS.get("AES_ENCRYPT") == "encryption"
+        assert _KNOWN_FUNCTIONS.get("AES_DECRYPT") == "encryption"
+
+    def test_analytic_function_extraction(self):
+        """Analytic functions should be extractable from expression text."""
+        expr = "LAG(AMOUNT, 1, 0) + LEAD(AMOUNT, 1, 0)"
+        funcs = _extract_functions_from_text(expr)
+        names = {f["function_name"] for f in funcs}
+        assert "LAG" in names
+        assert "LEAD" in names
+        for f in funcs:
+            if f["function_name"] in ("LAG", "LEAD"):
+                assert f["function_category"] == "analytic"

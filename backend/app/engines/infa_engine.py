@@ -389,6 +389,22 @@ _KNOWN_FUNCTIONS: Dict[str, str] = {
     'ERROR': 'system', 'ABORT': 'system', 'SETCOUNTVARIABLE': 'system',
     'SETVARIABLE': 'system', 'GETVAR': 'system',
     'MD5': 'system', 'CRC32': 'system', 'SHA256': 'system',
+    # Analytic (window functions)
+    'LAG': 'analytic', 'LEAD': 'analytic',
+    # Financial
+    'FV': 'financial', 'NPER': 'financial', 'PMT': 'financial',
+    'PV': 'financial', 'RATE': 'financial',
+    # Binary
+    'BINARY_COMPARE': 'binary', 'BINARY_CONCAT': 'binary',
+    'BINARY_LENGTH': 'binary', 'BINARY_SECTION': 'binary',
+    # Encoding
+    'ENC_BASE64': 'encoding', 'DEC_BASE64': 'encoding',
+    'ENC_HEX': 'encoding', 'DEC_HEX': 'encoding',
+    # Encryption
+    'AES_ENCRYPT': 'encryption', 'AES_DECRYPT': 'encryption',
+    # Additional missing functions in existing categories
+    'CHOOSE': 'conditional', 'INDEXOF': 'string', 'IN': 'conditional',
+    'CHRCODE': 'string', 'TIME_RANGE': 'date', 'CONVERT_BASE': 'conversion',
 }
 
 # SQL DML/DDL keywords for classification
@@ -766,6 +782,11 @@ def _enrich_session_code_analysis(sessions: Dict[str, Dict[str, Any]]) -> None:
             'conditional_function_count': func_categories.get('conditional', 0),
             'lookup_function_count': func_categories.get('lookup', 0),
             'custom_udf_count': func_categories.get('custom_udf', 0),
+            'analytic_function_count': func_categories.get('analytic', 0),
+            'financial_function_count': func_categories.get('financial', 0),
+            'binary_function_count': func_categories.get('binary', 0),
+            'encoding_function_count': func_categories.get('encoding', 0),
+            'encryption_function_count': func_categories.get('encryption', 0),
             'core_intent': intent,
             'intent_confidence': intent_confidence,
             'intent_details': intent_details,
@@ -790,12 +811,12 @@ def _parse_file(content: bytes, fname: str) -> Dict[str, Any]:
 
     # Try UTF-8 first, fall back to Latin-1
     try:
-        content_decoded = content
+        content_decoded = content  # noqa: F841
         root = _parse_xml(content)
     except Exception:
         try:
             text = content.decode('latin-1')
-            content_decoded = text.encode('utf-8')
+            content_decoded = text.encode('utf-8')  # noqa: F841
             root = _parse_xml(content_decoded)
             content = content_decoded
             logger.info("Re-encoded %s from Latin-1 to UTF-8", fname)
@@ -811,6 +832,19 @@ def _parse_file(content: bytes, fname: str) -> Dict[str, Any]:
 
     sessions: Dict[str, Dict[str, Any]] = {}
 
+    # ── Phase 1A: POWERMART root + REPOSITORY metadata ──────────────────
+    repo_meta: Dict[str, Any] = {}
+    root_tag = root.tag.upper() if hasattr(root, 'tag') and root.tag else ''
+    if root_tag == 'POWERMART':
+        repo_meta['creation_date'] = _attr(root, 'CREATION_DATE')
+        repo_meta['repository_version'] = _attr(root, 'REPOSITORY_VERSION')
+        for repo_el in _iter(root, 'REPOSITORY'):
+            repo_meta['repository_name'] = _attr(repo_el, 'NAME')
+            repo_meta['version'] = _attr(repo_el, 'VERSION')
+            repo_meta['codepage'] = _attr(repo_el, 'CODEPAGE')
+            repo_meta['database_type'] = _attr(repo_el, 'DATABASETYPE')
+            break  # only first REPOSITORY
+
     # For large files, use iterparse to process folders with memory cleanup.
     # Recovers partial data: if XML is truncated, keeps sessions from folders parsed before the error.
     if len(content) > _ITERPARSE_THRESHOLD:
@@ -820,7 +854,7 @@ def _parse_file(content: bytes, fname: str) -> Dict[str, Any]:
             for folder in _parse_xml_iterparse(content):
                 folder_count += 1
                 before = len(sessions)
-                _process_folder(folder, fname, sessions, deep=True)
+                _process_folder(folder, fname, sessions, deep=True, repo_meta=repo_meta)
                 after = len(sessions)
                 logger.info("  %s folder %d: +%d sessions (total %d)",
                             fname, folder_count, after - before, after)
@@ -847,11 +881,30 @@ def _parse_file(content: bytes, fname: str) -> Dict[str, Any]:
 
     for i, folder in enumerate(folders, 1):
         before = len(sessions)
-        _process_folder(folder, fname, sessions, deep=True)
+        _process_folder(folder, fname, sessions, deep=True, repo_meta=repo_meta)
         logger.info("  %s folder %d/%d: +%d sessions (total %d)",
                      fname, i, len(folders), len(sessions) - before, len(sessions))
 
     return sessions
+
+
+def _extract_metadata_extensions(element: Any) -> List[Dict[str, str]]:
+    """Extract METADATAEXTENSION children from any element.
+
+    Returns list of dicts with name, value, datatype, domain_name, max_length.
+    """
+    extensions: List[Dict[str, str]] = []
+    for mde in _iter(element, 'METADATAEXTENSION'):
+        ext_name = _attr(mde, 'NAME')
+        if ext_name:
+            extensions.append({
+                'name': ext_name,
+                'value': _attr(mde, 'VALUE'),
+                'datatype': _attr(mde, 'DATATYPE'),
+                'domain_name': _attr(mde, 'DOMAINNAME'),
+                'max_length': _attr(mde, 'MAXLENGTH'),
+            })
+    return extensions
 
 
 def _process_folder(
@@ -859,6 +912,7 @@ def _process_folder(
     fname: str,
     sessions: Dict[str, Dict[str, Any]],
     deep: bool = True,
+    repo_meta: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Process a single FOLDER element, extracting sessions into the sessions dict.
 
@@ -867,24 +921,121 @@ def _process_folder(
               SQL overrides, connectors). If False (fast mode), only extract essential
               data needed for tier diagram: sessions, sources, targets, lookups, workflows.
               Fast mode is ~3-5x faster for large files.
+        repo_meta: Optional POWERMART/REPOSITORY metadata dict from _parse_file.
     """
     folder_name = _attr(folder, 'NAME')
+
+    # ── Phase 1B: FOLDER expansion ──────────────────────────────────────
+    folder_meta: Dict[str, Any] = {
+        'name': folder_name,
+        'description': _attr(folder, 'DESCRIPTION'),
+        'shared': _attr(folder, 'SHARED'),
+        'owner': _attr(folder, 'OWNER'),
+        'permissions': _attr(folder, 'PERMISSIONS'),
+    }
+
+    # ── Phase 1C: SHORTCUT extraction ───────────────────────────────────
+    shortcuts: List[Dict[str, str]] = []
+    for sc in _iter(folder, 'SHORTCUT'):
+        sc_name = _attr(sc, 'NAME')
+        if sc_name:
+            shortcuts.append({
+                'name': sc_name,
+                'ref_object_name': _attr(sc, 'REFOBJECTNAME'),
+                'object_type': _attr(sc, 'OBJECTTYPE'),
+                'source_folder': _attr(sc, 'FOLDERNAME'),
+                'repository_name': _attr(sc, 'REPOSITORYNAME'),
+                'reference_type': _attr(sc, 'REFERENCETYPE'),
+            })
+
+    # ── Phase 1D: METADATAEXTENSION on folder ───────────────────────────
+    folder_meta['metadata_extensions'] = _extract_metadata_extensions(folder)
+
+    # ── Phase 1G: CONFIG element extraction ─────────────────────────────
+    config_map: Dict[str, Dict] = {}
+    for cfg_el in _iter(folder, 'CONFIG'):
+        cfg_name = _attr(cfg_el, 'NAME')
+        if cfg_name:
+            cfg_attrs: Dict[str, str] = {}
+            for cfg_attr in _iter(cfg_el, 'ATTRIBUTE'):
+                aname = _attr(cfg_attr, 'NAME')
+                aval = _attr(cfg_attr, 'VALUE')
+                if aname:
+                    cfg_attrs[aname] = aval
+            config_map[cfg_name] = {
+                'name': cfg_name,
+                'description': _attr(cfg_el, 'DESCRIPTION'),
+                'is_default': _attr(cfg_el, 'ISDEFAULT'),
+                'attributes': cfg_attrs,
+            }
 
     # ── Collect source/target name→table mappings for this folder ──────
     src_tables: Dict[str, str] = {}   # SOURCE element name (upper) → table name
     tgt_tables: Dict[str, str] = {}   # TARGET element name (upper) → table name
+
+    # Phase 1C: also add SHORTCUT references to src/tgt tables
+    for sc in shortcuts:
+        obj_type = sc.get('object_type', '').upper()
+        ref_name = sc.get('ref_object_name', '').strip().upper()
+        if ref_name:
+            if obj_type == 'SOURCE':
+                src_tables[ref_name] = ref_name
+            elif obj_type == 'TARGET':
+                tgt_tables[ref_name] = ref_name
+
+    # Source/target definitions with expanded metadata
+    source_definitions: List[Dict[str, Any]] = []
+    target_definitions: List[Dict[str, Any]] = []
 
     for src in _iter(folder, 'SOURCE'):
         n = _attr(src, 'NAME').strip().upper()
         db_tbl = _attr(src, 'DATABASENAME').strip().upper() or n
         if n:
             src_tables[n] = db_tbl or n
+            # Phase 1H: FLATFILE child extraction
+            flatfile_info: Optional[Dict[str, str]] = None
+            for ff in _iter(src, 'FLATFILE'):
+                flatfile_info = {
+                    'codepage': _attr(ff, 'CODEPAGE'),
+                    'delimiters': _attr(ff, 'DELIMITERS'),
+                    'row_delimiter': _attr(ff, 'ROWDELIMITER'),
+                    'escape_character': _attr(ff, 'ESCAPE_CHARACTER'),
+                    'quote_character': _attr(ff, 'QUOTE_CHARACTER'),
+                    'skip_rows': _attr(ff, 'SKIPROWS'),
+                    'line_sequential': _attr(ff, 'LINE_SEQUENTIAL'),
+                }
+                break
+            source_definitions.append({
+                'source_name': _attr(src, 'NAME'),
+                'database_name': _attr(src, 'DATABASENAME'),
+                'database_type': _attr(src, 'DBDTYPE') or _attr(src, 'DATABASETYPE'),
+                'folder_name': folder_name,
+                'flatfile_info': flatfile_info,
+            })
 
     for tgt in _iter(folder, 'TARGET'):
         n = _attr(tgt, 'NAME').strip().upper()
         db_tbl = _attr(tgt, 'DATABASENAME').strip().upper() or n
         if n:
             tgt_tables[n] = db_tbl or n
+            # Phase 1E: TARGETINDEX extraction
+            indexes: List[Dict[str, Any]] = []
+            for ti in _iter(tgt, 'TARGETINDEX'):
+                idx_fields = []
+                for tif in _iter(ti, 'TARGETINDEXFIELD'):
+                    idx_fields.append(_attr(tif, 'NAME'))
+                indexes.append({
+                    'name': _attr(ti, 'NAME'),
+                    'is_unique': _attr(ti, 'ISUNIQUE'),
+                    'fields': idx_fields,
+                })
+            target_definitions.append({
+                'target_name': _attr(tgt, 'NAME'),
+                'database_name': _attr(tgt, 'DATABASENAME'),
+                'database_type': _attr(tgt, 'DBDTYPE') or _attr(tgt, 'DATABASETYPE'),
+                'folder_name': folder_name,
+                'indexes': indexes,
+            })
 
     # ── Informatica alias deduplication ────────────────────────────────
     # When the same source table appears multiple times in a mapping,
@@ -950,6 +1101,39 @@ def _process_folder(
         mname = _attr(m_el, 'NAME')
         if not mname:
             continue
+
+        # Phase 2A: MAPPING extra attributes
+        m_is_valid = _attr(m_el, 'ISVALID')
+        m_is_profile = _attr(m_el, 'ISPROFILEMAPPING')
+        m_description = _attr(m_el, 'DESCRIPTION')
+
+        # Phase 1F: MAPDEPENDENCY extraction
+        map_dependencies: List[Dict[str, str]] = []
+        for mdep in _iter(m_el, 'MAPDEPENDENCY'):
+            dep_name = _attr(mdep, 'NAME')
+            if dep_name:
+                map_dependencies.append({
+                    'name': dep_name,
+                    'source_folder': _attr(mdep, 'SOURCEFOLDERNAME'),
+                    'source_object': _attr(mdep, 'SOURCEOBJECTNAME'),
+                    'target_folder': _attr(mdep, 'TARGETFOLDERNAME'),
+                    'target_object': _attr(mdep, 'TARGETOBJECTNAME'),
+                })
+
+        # Phase 1E: TARGETLOADORDER extraction
+        target_load_order: List[Dict[str, str]] = []
+        for tlo in _iter(m_el, 'TARGETLOADORDER'):
+            tlo_order = _attr(tlo, 'ORDER')
+            tlo_target = _attr(tlo, 'TARGETINSTANCE')
+            if tlo_order or tlo_target:
+                target_load_order.append({
+                    'order': tlo_order,
+                    'target_instance': tlo_target,
+                })
+
+        # Phase 1D: METADATAEXTENSION on mapping
+        m_metadata_ext = _extract_metadata_extensions(m_el)
+
         m_src: List[str] = []
         m_tgt: List[str] = []
         m_lkp: List[str] = []
@@ -1041,6 +1225,14 @@ def _process_folder(
             'tx_detail':            tx_detail,
             'tx_count':             sum(tx_detail.values()),
             'lookup_instance_names': lookup_instance_names,
+            # Phase 2A expanded
+            'is_valid':             m_is_valid,
+            'is_profile_mapping':   m_is_profile,
+            'description':          m_description,
+            # Phase 1E/1F
+            'target_load_order':    target_load_order,
+            'map_dependencies':     map_dependencies,
+            'metadata_extensions':  m_metadata_ext,
         }
 
     # ── Parse sessions ─────────────────────────────────────────────────
@@ -1050,6 +1242,14 @@ def _process_folder(
             continue
         mname = _attr(sess_el, 'MAPPINGNAME')
         m = mapping_data.get(mname, {})
+
+        # Phase 2D: extract SESSION ATTRIBUTE children
+        session_attributes: Dict[str, str] = {}
+        for attr_el in _iter(sess_el, 'ATTRIBUTE'):
+            aname = _attr(attr_el, 'NAME')
+            aval = _attr(attr_el, 'VALUE')
+            if aname and aval:
+                session_attributes[aname] = aval
 
         sources = list(m.get('sources', []))
         targets = list(m.get('targets', []))
@@ -1083,6 +1283,32 @@ def _process_folder(
                     if lval and len(lval) > 2 and lval not in lookups:
                         lookups.append(lval)
 
+        # Phase 2E/2F/2G: extract SESSTRANSFORMATIONINST extra attrs + CONNECTIONREFERENCE
+        pipeline_partitions: List[Dict[str, str]] = []
+        connection_references: List[Dict[str, str]] = []
+        for sti in _iter(sess_el, 'SESSTRANSFORMATIONINST'):
+            sti_pipeline = _attr(sti, 'PIPELINE')
+            sti_stage = _attr(sti, 'STAGE')
+            sti_repart = _attr(sti, 'ISREPARTITIONPOINT')
+            if sti_pipeline or sti_stage:
+                pipeline_partitions.append({
+                    'transform': _attr(sti, 'TRANSFORMATIONNAME'),
+                    'pipeline': sti_pipeline,
+                    'stage': sti_stage,
+                    'is_repartition_point': sti_repart,
+                })
+            # Phase 2G: CONNECTIONREFERENCE
+            for cr in _iter(sti, 'CONNECTIONREFERENCE'):
+                cr_name = _attr(cr, 'CNXREFNAME') or _attr(cr, 'CONNECTIONNAME')
+                if cr_name:
+                    connection_references.append({
+                        'cnx_ref_name': cr_name,
+                        'connection_type': _attr(cr, 'CONNECTIONTYPE'),
+                        'variable': _attr(cr, 'VARIABLE'),
+                        'connection_name': _attr(cr, 'CONNECTIONNAME'),
+                        'connection_subtype': _attr(cr, 'CONNECTIONSUBTYPE'),
+                    })
+
         sessions[sname] = {
             'file':     fname,
             'folder':   folder_name,
@@ -1094,6 +1320,24 @@ def _process_folder(
             'tx_detail':m.get('tx_detail', {}),
             'workflow': '',
             'step':     0,
+            # Phase 1+2 expanded metadata
+            '_repo_meta': repo_meta or {},
+            '_folder_meta': folder_meta,
+            '_shortcuts': shortcuts,
+            '_source_definitions': source_definitions,
+            '_target_definitions': target_definitions,
+            '_config_map': config_map,
+            '_mapping_meta': {
+                'is_valid': m.get('is_valid', ''),
+                'is_profile_mapping': m.get('is_profile_mapping', ''),
+                'description': m.get('description', ''),
+                'target_load_order': m.get('target_load_order', []),
+                'map_dependencies': m.get('map_dependencies', []),
+                'metadata_extensions': m.get('metadata_extensions', []),
+            },
+            'session_attributes': session_attributes,
+            'pipeline_partitions': pipeline_partitions,
+            'connection_references': connection_references,
         }
 
     # ── Parse workflow execution order ─────────────────────────────────
@@ -1132,10 +1376,42 @@ def _process_folder(
     for wf in _iter(folder, 'WORKFLOW'):
         wf_name = _attr(wf, 'NAME')
 
+        # Phase 2H: WORKFLOW extra attributes
+        wf_is_enabled = _attr(wf, 'ISENABLED')
+        wf_is_service = _attr(wf, 'ISSERVICE')
+        wf_suspend = _attr(wf, 'SUSPEND_ON_ERROR')
+        wf_server = _attr(wf, 'SERVERNAME')
+        wf_description = _attr(wf, 'DESCRIPTION')
+
+        # Phase 1I: WORKFLOWVARIABLE extraction
+        workflow_variables: List[Dict[str, str]] = []
+        for wfv in _iter(wf, 'WORKFLOWVARIABLE'):
+            wfv_name = _attr(wfv, 'NAME')
+            if wfv_name:
+                workflow_variables.append({
+                    'name': wfv_name,
+                    'datatype': _attr(wfv, 'DATATYPE'),
+                    'default_value': _attr(wfv, 'DEFAULTVALUE'),
+                    'is_null': _attr(wfv, 'ISNULL'),
+                    'is_persistent': _attr(wfv, 'ISPERSISTENT'),
+                    'user_defined': _attr(wfv, 'USERDEFINED'),
+                })
+
         task_names: List[str] = []
+        # Phase 2J: TASKINSTANCE extra attributes
+        task_instances: List[Dict[str, str]] = []
         for ti in _iter(wf, 'TASKINSTANCE'):
             tt = _attr(ti, 'TASKTYPE').lower()
             ref = _attr(ti, 'REFERENCETASKNAME')
+            ti_name = _attr(ti, 'TASKNAME')
+            task_instances.append({
+                'task_name': ti_name,
+                'task_type': tt,
+                'reference_task_name': ref,
+                'is_enabled': _attr(ti, 'ISENABLED'),
+                'fail_parent': _attr(ti, 'FAIL_PARENT_IF_INSTANCE_FAILS'),
+                'treat_input_links_as': _attr(ti, 'TREAT_INPUTLINKS_AS'),
+            })
             if not ref:
                 continue
             if tt in ('session', 'command', 'eventwaittask'):
@@ -1147,9 +1423,18 @@ def _process_folder(
         # Build topological order from WORKFLOWLINK edges
         succ: Dict[str, List[str]] = defaultdict(list)
         pred: Dict[str, int] = defaultdict(int)
+        # Phase 2K: WORKFLOWLINK CONDITION extraction
+        task_edges: List[Dict[str, str]] = []
         for wfl in _iter(wf, 'WORKFLOWLINK'):
             frm = _attr(wfl, 'FROMTASK')
             to  = _attr(wfl, 'TOTASK')
+            condition = _attr(wfl, 'CONDITION')
+            if frm and to:
+                task_edges.append({
+                    'from_task': frm,
+                    'to_task': to,
+                    'condition': condition,
+                })
             if not frm or not to or frm.upper() == 'START':
                 continue
             succ[frm].append(to)
@@ -1170,11 +1455,27 @@ def _process_folder(
             if t not in seen:
                 order.append(t)
 
+        # Count conditional links
+        conditional_links = sum(1 for e in task_edges if e.get('condition'))
+
         for step, tname in enumerate(order, start=1):
             if tname in sessions:
                 sessions[tname]['workflow'] = wf_name
                 if sessions[tname]['step'] == 0:
                     sessions[tname]['step'] = step
+                # Propagate workflow metadata to sessions
+                sessions[tname]['_workflow_meta'] = {
+                    'is_enabled': wf_is_enabled,
+                    'is_service': wf_is_service,
+                    'suspend_on_error': wf_suspend,
+                    'server_name': wf_server,
+                    'description': wf_description,
+                    'workflow_variables': workflow_variables,
+                    'task_edges': task_edges,
+                    'task_edges_count': len(task_edges),
+                    'conditional_links_count': conditional_links,
+                    'task_instances': task_instances,
+                }
 
     # ── Parse MAPPINGVARIABLE elements ────────────────────────────────
     # MAPPINGVARIABLEs store SCD/incremental state (e.g. $$LAST_LOAD_DATE).
@@ -1206,11 +1507,23 @@ def _process_folder(
     for sched in _iter(folder, 'SCHEDULER'):
         sched_name = _attr(sched, 'NAME')
         if sched_name:
+            # Phase 2I: SCHEDULEINFO child
+            schedule_info: Dict[str, str] = {}
+            for si in _iter(sched, 'SCHEDULEINFO'):
+                schedule_info = {
+                    'schedule_type': _attr(si, 'SCHEDULETYPE'),
+                    'start_date': _attr(si, 'STARTDATE'),
+                    'end_date': _attr(si, 'ENDDATE'),
+                    'repeat_interval': _attr(si, 'REPEATINTERVAL'),
+                    'frequency': _attr(si, 'FREQUENCY'),
+                }
+                break
             scheduler_map[sched_name] = {
                 'name': sched_name,
                 'scheduler_type': _attr(sched, 'SCHEDULERTYPE') or _attr(sched, 'TYPE'),
                 'run_options': _attr(sched, 'RUNOPTIONS'),
                 'repeat_interval': _attr(sched, 'REPEATINTERVAL'),
+                'schedule_info': schedule_info,
             }
 
     # ── Parse CONFIGREFERENCE (CONFIG) elements ───────────────────────
@@ -1228,14 +1541,24 @@ def _process_folder(
         if scheduler_name and scheduler_name in scheduler_map:
             sessions[sname]['scheduler'] = scheduler_map[scheduler_name]
 
-    # Propagate scheduler from workflow to sessions
+    # Propagate scheduler from workflow to sessions + attach to _workflow_meta
     for wf in _iter(folder, 'WORKFLOW'):
         wf_sched = _attr(wf, 'SCHEDULERREFERENCE') or _attr(wf, 'SCHEDULER')
         if wf_sched and wf_sched in scheduler_map:
             wf_name = _attr(wf, 'NAME')
+            sched_data = scheduler_map[wf_sched]
             for sname, sd in sessions.items():
-                if sd.get('workflow') == wf_name and 'scheduler' not in sd:
-                    sd['scheduler'] = scheduler_map[wf_sched]
+                if sd.get('workflow') == wf_name:
+                    if 'scheduler' not in sd:
+                        sd['scheduler'] = sched_data
+                    # Also attach schedule_info to _workflow_meta
+                    wm = sd.get('_workflow_meta')
+                    if wm and 'schedule_info' not in wm:
+                        wm['schedule_info'] = {
+                            'scheduler_name': sched_data.get('name', ''),
+                            'scheduler_type': sched_data.get('scheduler_type', ''),
+                            **sched_data.get('schedule_info', {}),
+                        }
 
     # ── Parse mapping detail for L5/L6 drill-down (ENHANCED) ─────────
     # Skipped in fast mode (deep=False) for ~3-5x speedup on large files.
@@ -1278,9 +1601,22 @@ def _process_folder(
         lookup_configs = []
         parameters_found: Set[str] = set()
 
+        transform_defs: List[Dict[str, Any]] = []
         for xf in _iter(m_el, 'TRANSFORMATION'):
             xf_name = _attr(xf, 'NAME')
             xf_type = _attr(xf, 'TYPE').lower()
+
+            # Phase 2B: TRANSFORMATION extra attributes
+            xf_reusable = _attr(xf, 'REUSABLE')
+            xf_version = _attr(xf, 'COMPONENTVERSION')
+            xf_desc = _attr(xf, 'DESCRIPTION')
+            transform_defs.append({
+                'name': xf_name,
+                'type': _attr(xf, 'TYPE'),
+                'is_reusable': xf_reusable,
+                'component_version': xf_version,
+                'description': xf_desc,
+            })
 
             # Extract TRANSFORMFIELD with expression classification
             for tf in _iter(xf, 'TRANSFORMFIELD'):
@@ -1312,6 +1648,13 @@ def _process_folder(
                     'expression': expr,
                     'porttype': _attr(tf, 'PORTTYPE'),
                     'expression_type': expr_type,
+                    # Phase 2C: extra TRANSFORMFIELD attrs
+                    'group': _attr(tf, 'GROUP'),
+                    'sort_direction': _attr(tf, 'SORTDIRECTION'),
+                    'is_sort_key': _attr(tf, 'ISSORTKEY'),
+                    'ref_field': _attr(tf, 'REF_FIELD'),
+                    'default_value': _attr(tf, 'DEFAULTVALUE'),
+                    'field_number': _attr(tf, 'FIELDNUMBER'),
                 })
 
             # Build TABLEATTRIBUTE dict once per transformation (O(n) instead of O(n²))
@@ -1323,6 +1666,15 @@ def _process_folder(
                     ta_dict[aname] = aval
                     for pm in _PARAM_RE.findall(aval):
                         parameters_found.add(pm)
+
+            # Phase 5C: scan Transaction Control and Update Strategy expressions
+            for aname, aval in ta_dict.items():
+                if 'transaction control' in aname and 'condition' in aname:
+                    # Transaction Control Condition — scan for functions
+                    pass  # captured below via fields/embedded_code
+                if 'update strategy expression' in aname:
+                    # Update Strategy Expression — scan for functions
+                    pass  # captured below via fields/embedded_code
 
             # Extract SQL overrides, join/filter/router/lookup conditions from cached dict
             for aname, aval in ta_dict.items():
@@ -1396,7 +1748,10 @@ def _process_folder(
             'instances': instances,
             'connectors': connectors,
             'fields': fields,
+            'mapping_name': mname,
         }
+        if transform_defs:
+            detail['transform_definitions'] = transform_defs
         if sql_overrides:
             detail['sql_overrides'] = sql_overrides
         if join_conditions:
@@ -1783,6 +2138,35 @@ def analyze(
             sess_entry['folder'] = sd['folder']
         if sd.get('mapping'):
             sess_entry['mapping'] = sd['mapping']
+        # Phase 1+2 expanded metadata
+        if sd.get('session_attributes'):
+            sess_entry['session_attributes'] = sd['session_attributes']
+        if sd.get('pipeline_partitions'):
+            sess_entry['pipeline_partitions'] = sd['pipeline_partitions']
+        if sd.get('connection_references'):
+            sess_entry['connection_references'] = sd['connection_references']
+        if sd.get('_repo_meta'):
+            sess_entry['_repo_meta'] = sd['_repo_meta']
+        if sd.get('_folder_meta'):
+            sess_entry['_folder_meta'] = sd['_folder_meta']
+        if sd.get('_shortcuts'):
+            sess_entry['_shortcuts'] = sd['_shortcuts']
+        if sd.get('_source_definitions'):
+            sess_entry['_source_definitions'] = sd['_source_definitions']
+        if sd.get('_target_definitions'):
+            sess_entry['_target_definitions'] = sd['_target_definitions']
+        if sd.get('_config_map'):
+            sess_entry['_config_map'] = sd['_config_map']
+        if sd.get('_mapping_meta'):
+            sess_entry['_mapping_meta'] = sd['_mapping_meta']
+        if sd.get('_workflow_meta'):
+            sess_entry['_workflow_meta'] = sd['_workflow_meta']
+        if sd.get('config_reference'):
+            sess_entry['config_reference'] = sd['config_reference']
+        if sd.get('scheduler'):
+            sess_entry['scheduler'] = sd['scheduler']
+        if sd.get('mapping_variables'):
+            sess_entry['mapping_variables'] = sd['mapping_variables']
         sessions_out.append(sess_entry)
 
     # ── Phase 6: build table nodes ─────────────────────────────────────────

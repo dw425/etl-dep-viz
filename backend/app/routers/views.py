@@ -49,6 +49,15 @@ from app.models.database import (
     ExpressionRecord,
     SQLOverrideRecord,
     ParameterRecord,
+    ConfigRecord,
+    FolderRecord,
+    MappingRecord,
+    MetadataExtensionRecord,
+    RepositoryMetadataRecord,
+    ShortcutRecord,
+    SourceDefinitionRecord,
+    TargetDefinitionRecord,
+    WorkflowTaskEdgeRecord,
     get_db,
 )
 
@@ -1234,4 +1243,215 @@ def get_function_usage(
             for r in rows
         ],
         "total": len(rows),
+    }
+
+
+# ── Deep Parse Expansion Endpoints (V7) ──────────────────────────────────
+
+
+@router.get("/repository-metadata", summary="Repository metadata")
+def get_repository_metadata(
+    upload_id: int = Query(...),
+    db: Session = Depends(get_db),
+):
+    _check_upload(db, upload_id)
+    rows = db.query(RepositoryMetadataRecord).filter(
+        RepositoryMetadataRecord.upload_id == upload_id
+    ).all()
+    return {
+        "records": [
+            {
+                "creation_date": r.creation_date, "repository_version": r.repository_version,
+                "repository_name": r.repository_name, "version": r.version,
+                "codepage": r.codepage, "database_type": r.database_type,
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get("/folders", summary="Folder metadata")
+def get_folders(
+    upload_id: int = Query(...),
+    db: Session = Depends(get_db),
+):
+    _check_upload(db, upload_id)
+    rows = db.query(FolderRecord).filter(FolderRecord.upload_id == upload_id).all()
+    return {
+        "records": [
+            {
+                "name": r.name, "description": r.description, "owner": r.owner,
+                "shared": r.shared, "permissions": r.permissions,
+                "session_count": r.session_count, "mapping_count": r.mapping_count,
+                "workflow_count": r.workflow_count, "shortcut_count": r.shortcut_count,
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get("/mappings", summary="Mapping metadata")
+def get_mappings(
+    upload_id: int = Query(...),
+    folder_name: str | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    _check_upload(db, upload_id)
+    q = db.query(MappingRecord).filter(MappingRecord.upload_id == upload_id)
+    if folder_name:
+        q = q.filter(MappingRecord.folder_name == folder_name)
+    rows = q.all()
+    return {
+        "records": [
+            {
+                "mapping_name": r.mapping_name, "folder_name": r.folder_name,
+                "is_valid": r.is_valid, "is_profile_mapping": r.is_profile_mapping,
+                "description": r.description, "source_count": r.source_count,
+                "target_count": r.target_count, "transform_count": r.transform_count,
+                "connector_count": r.connector_count,
+                "used_by_sessions": _json_load(r.used_by_sessions_json),
+                "target_load_order": _json_load(r.target_load_order_json),
+                "map_dependencies": _json_load(r.map_dependencies_json),
+                "metadata_extensions": _json_load(r.metadata_extensions_json),
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get("/shortcuts", summary="Cross-folder shortcuts")
+def get_shortcuts(
+    upload_id: int = Query(...),
+    object_type: str | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    _check_upload(db, upload_id)
+    q = db.query(ShortcutRecord).filter(ShortcutRecord.upload_id == upload_id)
+    if object_type:
+        q = q.filter(ShortcutRecord.object_type == object_type)
+    rows = q.all()
+    return {
+        "records": [
+            {
+                "name": r.name, "ref_object_name": r.ref_object_name,
+                "object_type": r.object_type, "source_folder": r.source_folder,
+                "repository_name": r.repository_name, "reference_type": r.reference_type,
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get("/metadata-extensions", summary="Metadata extension tags")
+def get_metadata_extensions(
+    upload_id: int = Query(...),
+    parent_type: str | None = Query(None),
+    parent_name: str | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    _check_upload(db, upload_id)
+    q = db.query(MetadataExtensionRecord).filter(MetadataExtensionRecord.upload_id == upload_id)
+    if parent_type:
+        q = q.filter(MetadataExtensionRecord.parent_type == parent_type)
+    if parent_name:
+        q = q.filter(MetadataExtensionRecord.parent_name == parent_name)
+    rows = q.all()
+    return {
+        "records": [
+            {
+                "parent_type": r.parent_type, "parent_name": r.parent_name,
+                "extension_name": r.extension_name, "extension_value": r.extension_value,
+                "datatype": r.datatype, "domain_name": r.domain_name,
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get("/source-definitions", summary="Source DDL definitions")
+def get_source_definitions(
+    upload_id: int = Query(...),
+    source_name: str | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    _check_upload(db, upload_id)
+    q = db.query(SourceDefinitionRecord).filter(SourceDefinitionRecord.upload_id == upload_id)
+    if source_name:
+        q = q.filter(SourceDefinitionRecord.source_name == source_name)
+    rows = q.all()
+    return {
+        "records": [
+            {
+                "source_name": r.source_name, "database_name": r.database_name,
+                "database_type": r.database_type, "folder_name": r.folder_name,
+                "field_count": r.field_count, "fields": _json_load(r.fields_json),
+                "flatfile_info": _json_load(r.flatfile_info_json),
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get("/target-definitions", summary="Target DDL definitions")
+def get_target_definitions(
+    upload_id: int = Query(...),
+    target_name: str | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    _check_upload(db, upload_id)
+    q = db.query(TargetDefinitionRecord).filter(TargetDefinitionRecord.upload_id == upload_id)
+    if target_name:
+        q = q.filter(TargetDefinitionRecord.target_name == target_name)
+    rows = q.all()
+    return {
+        "records": [
+            {
+                "target_name": r.target_name, "database_name": r.database_name,
+                "database_type": r.database_type, "folder_name": r.folder_name,
+                "field_count": r.field_count, "fields": _json_load(r.fields_json),
+                "indexes": _json_load(r.indexes_json),
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get("/workflow-edges", summary="Workflow task dependency edges")
+def get_workflow_edges(
+    upload_id: int = Query(...),
+    workflow_name: str | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    _check_upload(db, upload_id)
+    q = db.query(WorkflowTaskEdgeRecord).filter(WorkflowTaskEdgeRecord.upload_id == upload_id)
+    if workflow_name:
+        q = q.filter(WorkflowTaskEdgeRecord.workflow_name == workflow_name)
+    rows = q.all()
+    return {
+        "records": [
+            {
+                "workflow_name": r.workflow_name, "from_task": r.from_task,
+                "to_task": r.to_task, "condition": r.condition,
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get("/configs", summary="Session configuration objects")
+def get_configs(
+    upload_id: int = Query(...),
+    db: Session = Depends(get_db),
+):
+    _check_upload(db, upload_id)
+    rows = db.query(ConfigRecord).filter(ConfigRecord.upload_id == upload_id).all()
+    return {
+        "records": [
+            {
+                "config_name": r.config_name, "is_default": r.is_default,
+                "description": r.description, "attributes": _json_load(r.attributes_json),
+                "used_by_sessions": _json_load(r.used_by_sessions_json),
+            }
+            for r in rows
+        ],
     }

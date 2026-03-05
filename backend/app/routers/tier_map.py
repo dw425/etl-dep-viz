@@ -443,10 +443,12 @@ async def analyze_tier_map(
         db.refresh(upload)
 
         # Populate per-view materialized tables
-        from app.engines.data_populator import populate_core_tables, populate_view_tables, populate_code_analysis_tables
+        from app.engines.data_populator import populate_core_tables, populate_view_tables, populate_code_analysis_tables, populate_deep_parse_tables, populate_normalized_tables
         try:
             populate_core_tables(db, upload.id, result, result.get('connection_profiles'))
             populate_code_analysis_tables(db, upload.id, result)
+            populate_normalized_tables(db, upload.id, result)
+            populate_deep_parse_tables(db, upload.id, result)
             populate_view_tables(db, upload.id)
             db.commit()
         except Exception as exc:
@@ -539,10 +541,12 @@ async def analyze_constellation(
         db.refresh(upload)
 
         # Populate per-view materialized tables
-        from app.engines.data_populator import populate_core_tables, populate_view_tables, populate_constellation_tables, populate_code_analysis_tables
+        from app.engines.data_populator import populate_core_tables, populate_view_tables, populate_constellation_tables, populate_code_analysis_tables, populate_deep_parse_tables, populate_normalized_tables
         try:
             populate_core_tables(db, upload.id, tier_data, tier_data.get('connection_profiles'))
             populate_code_analysis_tables(db, upload.id, tier_data)
+            populate_normalized_tables(db, upload.id, tier_data)
+            populate_deep_parse_tables(db, upload.id, tier_data)
             populate_view_tables(db, upload.id)
             populate_constellation_tables(db, upload.id, constellation)
             db.commit()
@@ -717,10 +721,12 @@ async def analyze_constellation_stream(
             db.refresh(upload)
 
             # Populate per-view materialized tables
-            from app.engines.data_populator import populate_core_tables, populate_view_tables, populate_constellation_tables, populate_code_analysis_tables
+            from app.engines.data_populator import populate_core_tables, populate_view_tables, populate_constellation_tables, populate_code_analysis_tables, populate_deep_parse_tables, populate_normalized_tables
             try:
                 populate_core_tables(db, upload.id, tier_data, tier_data.get('connection_profiles'))
                 populate_code_analysis_tables(db, upload.id, tier_data)
+                populate_normalized_tables(db, upload.id, tier_data)
+                populate_deep_parse_tables(db, upload.id, tier_data)
                 populate_view_tables(db, upload.id)
                 populate_constellation_tables(db, upload.id, constellation)
                 db.commit()
