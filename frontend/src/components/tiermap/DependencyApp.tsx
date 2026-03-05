@@ -77,7 +77,6 @@ import ErrorBoundary from '../shared/ErrorBoundary';
 const ComplexityOverlay = lazy(() => import('./ComplexityOverlay'));
 const HeatMapView = lazy(() => import('./HeatMapView'));
 const ConcentrationView = lazy(() => import('./ConcentrationView'));
-const LayerContainer = lazy(() => import('../../navigation/LayerContainer'));
 const TableExplorer = lazy(() => import('./TableExplorer'));
 const DuplicatePipelines = lazy(() => import('./DuplicatePipelines'));
 const ChunkingStrategy = lazy(() => import('./ChunkingStrategy'));
@@ -96,7 +95,7 @@ const ExportHTMLModal = lazy(() => import('./ExportHTMLModal'));
 type ViewId = 'tier' | 'constellation' | 'explorer' | 'conflicts' | 'order' | 'matrix'
   | 'tables' | 'duplicates' | 'chunking'
   | 'complexity' | 'heatmap' | 'concentration'
-  | 'layers' | 'profile' | 'flowwalker' | 'chat' | 'admin'
+  | 'profile' | 'flowwalker' | 'chat' | 'admin'
   | 'decisiontree' | 'algorithmlab';
 
 // Group determines tab section: core, harmonize, vector, nav
@@ -114,7 +113,6 @@ const VIEWS: { id: ViewId; label: string; icon: string; group?: 'core' | 'vector
   { id: 'heatmap', label: 'Heat Map', icon: '\u2593', group: 'vector' },
   { id: 'concentration', label: 'Gravity', icon: '\u2295', group: 'vector' },
   { id: 'algorithmlab', label: 'Algorithm Lab', icon: '\u2697', group: 'vector' },
-  { id: 'layers', label: 'Layers', icon: '\u25CF', group: 'nav' },
   { id: 'flowwalker', label: 'Flow', icon: '\u21C4', group: 'nav' },
   { id: 'decisiontree', label: 'Decision Tree', icon: '\uD83C\uDF32', group: 'nav' },
   { id: 'chat', label: 'AI Chat', icon: '\uD83D\uDCAC', group: 'nav' },
@@ -758,7 +756,7 @@ export function DependencyApp() {
               padding: 32, textAlign: 'center',
             }}>
               <div style={{ fontSize: 24, fontWeight: 800, color: T.text, marginBottom: 4 }}>
-                Welcome to Lakehouse Optimizer
+                Welcome to Pipeline Analyzer
               </div>
               <div style={{ fontSize: 11, color: T.textMuted, marginBottom: 16 }}>Powered by Blueprint</div>
               <div style={{ fontSize: 13, color: T.textMuted, lineHeight: 2, marginBottom: 24, textAlign: 'left' }}>
@@ -787,7 +785,7 @@ export function DependencyApp() {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <div style={{ fontSize: 28, fontWeight: 800, color: T.text, letterSpacing: '-0.02em' }}>
-            Lakehouse Optimizer
+            Pipeline Analyzer
           </div>
           <div style={{ display: 'flex', gap: 6 }}>
             <button
@@ -1079,7 +1077,7 @@ export function DependencyApp() {
               <polygon points="16,14 20,22 12,22" fill="#4361EE" opacity="0.3"/>
             </svg>
             <div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: T.text, letterSpacing: '-0.02em' }}>Lakehouse Optimizer</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: T.text, letterSpacing: '-0.02em' }}>Pipeline Analyzer</div>
               <div style={{ fontSize: 10, color: T.textMuted, fontWeight: 400 }}>Powered by Blueprint</div>
             </div>
           </div>
@@ -1349,15 +1347,6 @@ export function DependencyApp() {
               )}
 
               {/* ── Layer / navigation views ── */}
-              {view === 'layers' && tierData && (
-                <ErrorBoundary>
-                  <NavigationProvider initialTierData={tierData} initialVectorResults={vectorResults} onVectorResults={setVectorResults}>
-                    <div style={{ overflow: 'auto', height: '100%' }}>
-                      <LayerContainer />
-                    </div>
-                  </NavigationProvider>
-                </ErrorBoundary>
-              )}
 
               {/* Flow Walker */}
               {view === 'flowwalker' && tierData && (

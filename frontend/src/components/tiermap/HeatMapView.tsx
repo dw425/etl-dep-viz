@@ -36,6 +36,7 @@
 import { useMemo, useRef, useEffect, useState, useCallback } from 'react';
 import type { TierMapResult } from '../../types/tiermap';
 import type { VectorResults, ComplexityResult, DimensionScore } from '../../types/vectors';
+import SessionSearchBar from '../shared/SessionSearchBar';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -123,6 +124,7 @@ export default function HeatMapView({ complexity, tierData, vectorResults, onSes
   const [minHeat, setMinHeat] = useState(0);
   const [bucketFilter, setBucketFilter] = useState<Set<string>>(new Set(['Simple', 'Medium', 'Complex', 'Very Complex']));
   const [criticalOnly, setCriticalOnly] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
   const [hoveredSession, setHoveredSession] = useState<SessionHeatData | null>(null);
   const [hoverPos, setHoverPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [selectedSession, setSelectedSession] = useState<SessionHeatData | null>(null);
@@ -254,12 +256,13 @@ export default function HeatMapView({ complexity, tierData, vectorResults, onSes
 
   const filteredSessions = useMemo(() => {
     return sessionHeatData.filter(s => {
+      if (searchTerm && !s.name.toLowerCase().includes(searchTerm) && !s.sessionId.toLowerCase().includes(searchTerm)) return false;
       if (s.compositeHeat * 100 < minHeat) return false;
       if (!bucketFilter.has(s.bucket)) return false;
       if (criticalOnly && !s.critical) return false;
       return true;
     });
-  }, [sessionHeatData, minHeat, bucketFilter, criticalOnly]);
+  }, [sessionHeatData, minHeat, bucketFilter, criticalOnly, searchTerm]);
 
   // ── Group + sort sessions ────────────────────────────────────────────────
 
@@ -535,6 +538,14 @@ export default function HeatMapView({ complexity, tierData, vectorResults, onSes
             ))}
           </div>
         </div>
+
+        {/* Session Search */}
+        <SessionSearchBar
+          placeholder="Search sessions..."
+          onSearch={setSearchTerm}
+          matchCount={searchTerm ? filteredSessions.length : undefined}
+          totalCount={sessionHeatData.length}
+        />
 
         {/* Min Heat Threshold */}
         <div>

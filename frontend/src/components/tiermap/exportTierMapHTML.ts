@@ -108,7 +108,7 @@ export function buildTierMapHTML(data: TierMapResult, constellation?: Constellat
 
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Lakehouse Optimizer — Session Dependency Diagram</title>
+<title>Pipeline Analyzer — Session Dependency Diagram</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>*{margin:0;padding:0;box-sizing:border-box}body{overflow:hidden;background:#1a2332}#root{width:100vw;height:100vh}::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#4a5a6e;border-radius:3px}::-webkit-scrollbar-thumb:hover{background:#5a6a7a}</style>
@@ -1864,7 +1864,7 @@ const App = function App() {
     <div style={{width:"100%",height:"100vh",background:C.bg,color:C.text,fontFamily:"'Inter',-apple-system,sans-serif",display:"flex",flexDirection:"column",overflow:"hidden"}}>
       <div style={{padding:"10px 20px",borderBottom:"1px solid #3a4a5e",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,background:"rgba(26,35,50,0.9)",backdropFilter:"blur(12px)"}}>
         <div style={{display:"flex",alignItems:"center",gap:14}}>
-          <span style={{fontSize:15,fontWeight:800,letterSpacing:"-0.02em"}}>Lakehouse Optimizer</span>
+          <span style={{fontSize:15,fontWeight:800,letterSpacing:"-0.02em"}}>Pipeline Analyzer</span>
           <span style={{fontSize:12,color:"#8899aa"}}>Session Dependency Diagram</span>
           <div style={{display:"flex",gap:2,marginLeft:8,flexWrap:"wrap"}}>
             {views.map(v=>(<button key={v.id} onClick={()=>setView(v.id)} style={{padding:"5px 12px",borderRadius:6,border:"none",cursor:"pointer",fontSize:11,fontWeight:600,background:view===v.id?"rgba(59,130,246,0.2)":"transparent",color:view===v.id?"#60A5FA":"#8899aa",transition:"all 0.15s"}}>{v.icon} {v.label}</button>))}

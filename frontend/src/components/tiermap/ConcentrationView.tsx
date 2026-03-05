@@ -64,8 +64,8 @@ export default function ConcentrationView({ concentration, onSessionSelect }: Pr
       <div className="flex items-center gap-4 px-4 py-3 bg-gray-800 rounded-lg border border-gray-700">
         <SumStat label="Groups" value={gravityGroups.length} />
         <SumStat label="Independent" value={independentSessions.length} />
-        <SumStat label="Optimal K" value={concentration.optimal_k} />
-        <SumStat label="Silhouette" value={concentration.silhouette.toFixed(3)} />
+        <SumStat label="Optimal K" value={concentration?.optimal_k ?? 0} />
+        <SumStat label="Silhouette" value={(concentration?.silhouette ?? 0).toFixed(3)} />
       </div>
 
       <SessionSearchBar placeholder="Search sessions..." onSearch={setSearchTerm} matchCount={searchTerm ? filteredGroups.length : undefined} />
@@ -137,21 +137,21 @@ function GroupProfile({ group, colorIdx, onSessionSelect }: { group: GravityGrou
             <div className="text-[10px] text-gray-500">Sessions</div>
           </div>
           <div className="text-center">
-            <div className="text-lg font-bold text-gray-200">{group.cohesion.toFixed(3)}</div>
+            <div className="text-lg font-bold text-gray-200">{(group.cohesion ?? 0).toFixed(3)}</div>
             <div className="text-[10px] text-gray-500">Cohesion</div>
           </div>
           <div className="text-center">
-            <div className="text-lg font-bold text-gray-200">{group.coupling.toFixed(3)}</div>
+            <div className="text-lg font-bold text-gray-200">{(group.coupling ?? 0).toFixed(3)}</div>
             <div className="text-[10px] text-gray-500">Coupling</div>
           </div>
         </div>
       </div>
 
-      {group.core_tables.length > 0 && (
+      {(group.core_tables ?? []).length > 0 && (
         <div className="bg-gray-800 rounded-lg border border-gray-700 p-3">
           <div className="text-xs text-gray-500 mb-2">Core Tables</div>
           <div className="flex flex-wrap gap-1">
-            {group.core_tables.map(t => (
+            {(group.core_tables ?? []).map(t => (
               <span key={t} className="px-2 py-0.5 bg-blue-500/10 text-blue-400 rounded text-xs">{t}</span>
             ))}
           </div>
@@ -197,7 +197,7 @@ function IndependentList({ sessions, onSessionSelect }: { sessions: IndependentS
               {s.independence_type}
             </span>
             <span className="text-xs text-gray-300 flex-1">{s.session_id}</span>
-            <span className="text-xs text-gray-500">{Math.round(s.confidence * 100)}%</span>
+            <span className="text-xs text-gray-500">{Math.round((s.confidence ?? 0) * 100)}%</span>
           </button>
         ))}
       </div>

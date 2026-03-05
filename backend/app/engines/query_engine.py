@@ -303,7 +303,7 @@ class HybridSearchEngine:
 class RAGChatEngine:
     """Full RAG pipeline: question -> search -> prompt -> LLM -> response."""
 
-    SYSTEM_PROMPT = """You are an expert ETL migration analyst embedded in the Lakehouse Optimizer tool. You help users understand their Informatica PowerCenter and NiFi data flows.
+    SYSTEM_PROMPT = """You are an expert ETL migration analyst embedded in the Pipeline Analyzer tool. You help users understand their Informatica PowerCenter and NiFi data flows.
 
 You have access to detailed parsed data about the user's ETL environment. When answering questions:
 

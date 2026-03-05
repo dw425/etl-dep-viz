@@ -52,6 +52,30 @@ export default function ComplexityOverlay({ complexity, selectedSessionId, onSes
 
   const scores = complexity?.scores ?? [];
 
+  // Compute bucket distribution and aggregate stats from scores (backend only returns scores array)
+  const bucketDistribution = useMemo(() => {
+    const dist: Record<string, number> = {};
+    for (const s of scores) {
+      dist[s.bucket] = (dist[s.bucket] || 0) + 1;
+    }
+    return dist;
+  }, [scores]);
+
+  const aggregateStats = useMemo(() => {
+    if (scores.length === 0) return { mean_score: 0, median_score: 0, std_dev: 0 };
+    const vals = scores.map(s => s.overall_score);
+    const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+    const sorted = [...vals].sort((a, b) => a - b);
+    const median = sorted.length % 2 === 0
+      ? (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2
+      : sorted[Math.floor(sorted.length / 2)];
+    const variance = vals.reduce((sum, v) => sum + (v - mean) ** 2, 0) / vals.length;
+    return { mean_score: mean, median_score: median, std_dev: Math.sqrt(variance) };
+  }, [scores]);
+
+  const totalHoursLow = useMemo(() => scores.reduce((s, x) => s + (x.hours_estimate_low || 0), 0), [scores]);
+  const totalHoursHigh = useMemo(() => scores.reduce((s, x) => s + (x.hours_estimate_high || 0), 0), [scores]);
+
   const sorted = useMemo(() => {
     let arr = [...scores];
     if (searchTerm) {
@@ -75,7 +99,7 @@ export default function ComplexityOverlay({ complexity, selectedSessionId, onSes
       <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
         <h3 className="text-sm font-medium text-gray-300 mb-3">Complexity Distribution</h3>
         <div className="flex gap-1 rounded overflow-hidden">
-          {Object.entries(complexity.bucket_distribution).map(([bucket, count]) => {
+          {Object.entries(bucketDistribution).map(([bucket, count]) => {
             const pct = (count / totalSessions) * 100;
             if (pct === 0) return null;
             return (
@@ -98,12 +122,12 @@ export default function ComplexityOverlay({ complexity, selectedSessionId, onSes
 
       {/* Aggregate Stats */}
       <div className="grid grid-cols-4 gap-2">
-        <StatCard label="Mean" value={complexity.aggregate_stats.mean_score} />
-        <StatCard label="Median" value={complexity.aggregate_stats.median_score} />
-        <StatCard label="Std Dev" value={complexity.aggregate_stats.std_dev} />
+        <StatCard label="Mean" value={aggregateStats.mean_score} />
+        <StatCard label="Median" value={aggregateStats.median_score} />
+        <StatCard label="Std Dev" value={aggregateStats.std_dev} />
         <StatCard
           label="Est. Hours"
-          value={`${Math.round(complexity.total_hours_low)}–${Math.round(complexity.total_hours_high)}`}
+          value={`${Math.round(totalHoursLow)}–${Math.round(totalHoursHigh)}`}
         />
       </div>
 

@@ -543,7 +543,7 @@ export default function DecisionTreeView({ tierData, vectorResults, uploadId }: 
   const containerRef = useRef<HTMLDivElement>(null);
   const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
 
-  const sessions = useMemo(() => tierData.sessions || [], [tierData]);
+  const sessions = useMemo(() => tierData?.sessions || [], [tierData]);
   const filteredSessions = useMemo(() => {
     let list = sessions;
     const term = searchTerm.toLowerCase();
@@ -1216,7 +1216,7 @@ export default function DecisionTreeView({ tierData, vectorResults, uploadId }: 
               {[
                 { label: 'Fields', value: selectedNode.fieldCount },
                 { label: 'Expressions', value: selectedNode.expressionCount },
-                { label: 'Children', value: selectedNode.children.length },
+                { label: 'Children', value: selectedNode.children?.length ?? 0 },
                 { label: 'Exec Order', value: selectedNode.executionOrder },
               ].map(stat => (
                 <div key={stat.label} style={{
@@ -1324,12 +1324,12 @@ export default function DecisionTreeView({ tierData, vectorResults, uploadId }: 
             )}
 
             {/* Children list */}
-            {selectedNode.children.length > 0 && (
+            {(selectedNode.children?.length ?? 0) > 0 && (
               <div style={{ marginBottom: 12 }}>
                 <div style={{ fontSize: 10, fontWeight: 700, color: THEME.muted, textTransform: 'uppercase', marginBottom: 6 }}>
-                  Downstream ({selectedNode.children.length})
+                  Downstream ({selectedNode.children?.length ?? 0})
                 </div>
-                {selectedNode.children.map((child, i) => (
+                {(selectedNode.children ?? []).map((child, i) => (
                   <div
                     key={i}
                     onClick={() => setSelectedNode(child)}

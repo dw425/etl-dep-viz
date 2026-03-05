@@ -9,3 +9,5 @@ env:
     value: "true"
   - name: EDV_CORS_ORIGINS
     value: '["*"]'
+  - name: DATABRICKS_HOST
+    value: "https://adb-1866518241053589.9.azuredatabricks.net"

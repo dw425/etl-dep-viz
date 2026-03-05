@@ -107,7 +107,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Lakehouse Optimizer",
+    title="Pipeline Analyzer",
     description=(
         "Visualize ETL session dependencies, write conflicts, and execution ordering.\n\n"
         "Upload Informatica PowerCenter XML or Apache NiFi flow definitions to analyze\n"

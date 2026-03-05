@@ -172,7 +172,7 @@ async def domain_cluster(
     Returns:
         Dict with sessions, sub_clusters, connections, complexity_scores.
     """
-    if upload_id and not tier_data:
+    if upload_id and (not tier_data or not tier_data.get("sessions")):
         tier_data, vector_results = _load_from_upload(upload_id, db)
     tier_data = tier_data or {}
     vector_results = vector_results or {}
@@ -265,7 +265,7 @@ async def workflow_neighborhood(
     Returns:
         Dict with sessions, connections (internal only), cascade_data, scc_groups.
     """
-    if upload_id and not tier_data:
+    if upload_id and (not tier_data or not tier_data.get("sessions")):
         tier_data, vector_results = _load_from_upload(upload_id, db)
     tier_data = tier_data or {}
     vector_results = vector_results or {}
@@ -344,7 +344,7 @@ async def session_blueprint(
     Returns:
         Dict with session, complexity, criticality, upstream/downstream connections.
     """
-    if upload_id and not tier_data:
+    if upload_id and (not tier_data or not tier_data.get("sessions")):
         tier_data, vector_results = _load_from_upload(upload_id, db)
     tier_data = tier_data or {}
     vector_results = vector_results or {}
@@ -520,7 +520,7 @@ async def flow_walker(
         Dict with session, upstream list, downstream list, mapping_detail,
         tables_touched, complexity, wave_info, scc, and counts.
     """
-    if upload_id and not tier_data:
+    if upload_id and (not tier_data or not tier_data.get("sessions")):
         tier_data, vector_results = _load_from_upload(upload_id, db)
     tier_data = tier_data or {}
     vector_results = vector_results or {}

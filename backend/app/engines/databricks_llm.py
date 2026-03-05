@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import urllib.error
 import urllib.request
 
 from app.engines.databricks_auth import get_databricks_token
@@ -49,9 +50,19 @@ class DatabricksLLM:
             resp = urllib.request.urlopen(req, timeout=30)
             result = json.loads(resp.read())
             return result["choices"][0]["message"]["content"]
+        except urllib.error.HTTPError as exc:
+            logger.error("Databricks LLM call failed: %s (url=%s, model=%s)", exc, url, self.model)
+            if exc.code == 404:
+                raise RuntimeError(
+                    f"Databricks LLM call failed: HTTP Error 404: Not Found. "
+                    f"Check your serving endpoint configuration. "
+                    f"Model '{self.model}' may not exist at {host}. "
+                    f"Set EDV_DATABRICKS_LLM_MODEL env var to an available endpoint."
+                ) from exc
+            raise RuntimeError(f"Databricks LLM call failed: {exc}") from exc
         except Exception as exc:
             logger.error("Databricks LLM call failed: %s", exc)
-            raise
+            raise RuntimeError(f"Databricks LLM call failed: {exc}") from exc
 
     async def generate(self, system_prompt: str, messages: list[dict], max_tokens: int = 2048) -> str:
         """Call the Databricks Foundation Model endpoint asynchronously.

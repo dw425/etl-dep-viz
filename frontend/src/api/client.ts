@@ -713,7 +713,9 @@ export async function getFlowData(
   const res = await fetch(`${BASE}/layers/flow/${sessionId}${params}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...userHeaders() },
-    body: uploadId ? '{}' : JSON.stringify(tierData),
+    body: uploadId
+      ? JSON.stringify({ tier_data: null, vector_results: null })
+      : JSON.stringify({ tier_data: tierData, vector_results: null }),
   });
   if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.json();
