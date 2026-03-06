@@ -556,25 +556,30 @@ async def flow_walker(
         elif frm.startswith("T") and to.startswith("S"):
             reads_from.setdefault(frm, []).append(to)
 
-    # ── Recursive upstream walker ──
+    # ── Build session → tables-read and session → tables-written indexes ──
+    session_reads: dict[str, list[str]] = {}   # session_id → [table_ids it reads from]
+    session_writes: dict[str, list[str]] = {}  # session_id → [table_ids it writes to]
+    for c in connections:
+        frm, to = c.get("from", ""), c.get("to", "")
+        if frm.startswith("S") and to.startswith("T"):
+            session_writes.setdefault(frm, []).append(to)
+        elif frm.startswith("T") and to.startswith("S"):
+            session_reads.setdefault(to, []).append(frm)
+
+    # ── Iterative upstream walker (BFS) ──
     # For session `sid`: find every table it reads, then find every session that
-    # writes to that table — those are the upstream producers.  Recurse into each.
-    # `visited` prevents infinite loops in cyclic graphs.
-    def _upstream(sid: str, visited: set[str] | None = None) -> list[dict]:
-        if visited is None:
-            visited = set()
-        if sid in visited:
-            return []
-        visited.add(sid)
+    # writes to that table — those are the upstream producers.
+    # Uses BFS with pre-built indexes for O(V+E) instead of O(V*E).
+    def _upstream(start_sid: str) -> list[dict]:
+        visited: set[str] = {start_sid}
+        queue = [start_sid]
         result = []
-        s = session_map.get(sid)
-        if not s:
-            return []
-        for c in connections:
-            if c.get("to") == sid and c.get("from", "").startswith("T"):
-                table_id = c["from"]
+        while queue:
+            sid = queue.pop(0)
+            for table_id in session_reads.get(sid, []):
                 for writer_sid in writes_to.get(table_id, []):
-                    if writer_sid != sid and writer_sid not in visited:
+                    if writer_sid not in visited:
+                        visited.add(writer_sid)
                         ws = session_map.get(writer_sid)
                         if ws:
                             result.append({
@@ -583,27 +588,22 @@ async def flow_walker(
                                 "tier": ws.get("tier"),
                                 "via_table": table_map.get(table_id, {}).get("name", table_id),
                             })
-                            result.extend(_upstream(writer_sid, visited))
+                            queue.append(writer_sid)
         return result
 
-    # ── Recursive downstream walker ──
+    # ── Iterative downstream walker (BFS) ──
     # Mirror of _upstream: for each table this session writes to, find every
     # session that reads from it — those are the downstream consumers.
-    def _downstream(sid: str, visited: set[str] | None = None) -> list[dict]:
-        if visited is None:
-            visited = set()
-        if sid in visited:
-            return []
-        visited.add(sid)
+    def _downstream(start_sid: str) -> list[dict]:
+        visited: set[str] = {start_sid}
+        queue = [start_sid]
         result = []
-        s = session_map.get(sid)
-        if not s:
-            return []
-        for c in connections:
-            if c.get("from") == sid and c.get("to", "").startswith("T"):
-                table_id = c["to"]
+        while queue:
+            sid = queue.pop(0)
+            for table_id in session_writes.get(sid, []):
                 for reader_sid in reads_from.get(table_id, []):
-                    if reader_sid != sid and reader_sid not in visited:
+                    if reader_sid not in visited:
+                        visited.add(reader_sid)
                         rs = session_map.get(reader_sid)
                         if rs:
                             result.append({
@@ -612,23 +612,22 @@ async def flow_walker(
                                 "tier": rs.get("tier"),
                                 "via_table": table_map.get(table_id, {}).get("name", table_id),
                             })
-                            result.extend(_downstream(reader_sid, visited))
+                            queue.append(reader_sid)
         return result
 
     upstream = _upstream(session_id)
     downstream = _downstream(session_id)
 
-    # ── Collect all tables read or written by this session ──
+    # ── Collect all tables read or written by this session (using pre-built indexes) ──
     tables_touched = []
-    for c in connections:
-        if c.get("from") == session_id and c.get("to", "").startswith("T"):
-            t = table_map.get(c["to"])
-            if t:
-                tables_touched.append({**t, "relation": "writes"})
-        elif c.get("to") == session_id and c.get("from", "").startswith("T"):
-            t = table_map.get(c["from"])
-            if t:
-                tables_touched.append({**t, "relation": "reads"})
+    for table_id in session_writes.get(session_id, []):
+        t = table_map.get(table_id)
+        if t:
+            tables_touched.append({**t, "relation": "writes"})
+    for table_id in session_reads.get(session_id, []):
+        t = table_map.get(table_id)
+        if t:
+            tables_touched.append({**t, "relation": "reads"})
 
     # Look up this session's V11 complexity score (used for effort estimation)
     v11 = vector_results.get("v11_complexity", {})

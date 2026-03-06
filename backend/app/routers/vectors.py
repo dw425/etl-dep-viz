@@ -227,12 +227,19 @@ async def analyze_vectors_stream(
             await queue.put({"phase": "error", "message": str(exc)})
 
     async def _event_generator():
-        """Drain the queue and yield SSE lines; stop on terminal phase."""
+        """Drain the queue and yield SSE lines; stop on terminal phase.
+
+        Sends heartbeat comments every 15s to keep Databricks reverse proxy alive.
+        """
         while True:
-            event = await queue.get()
-            yield f"data: {json.dumps(event)}\n\n"
-            if event.get("phase") in ("complete", "error"):
-                break
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=15)
+                yield f"data: {json.dumps(event)}\n\n"
+                if event.get("phase") in ("complete", "error"):
+                    break
+            except asyncio.TimeoutError:
+                # Send SSE comment as keepalive
+                yield ": heartbeat\n\n"
 
     asyncio.ensure_future(_process())
     return StreamingResponse(
@@ -240,6 +247,123 @@ async def analyze_vectors_stream(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ── Background Job Endpoints (for proxies with hard connection timeouts) ──
+
+import threading
+
+from app.config import settings as _settings
+
+_bg_jobs: dict[int, dict] = {}  # upload_id -> {state, phase, percent, result, error, start_time}
+_bg_lock = threading.Lock()
+
+
+def _cleanup_stale_jobs() -> int:
+    """Remove jobs older than bg_job_ttl_seconds. Returns count removed."""
+    now = time.time()
+    ttl = _settings.bg_job_ttl_seconds
+    with _bg_lock:
+        stale = [k for k, v in _bg_jobs.items()
+                 if v.get("state") != "running" and (now - v.get("start_time", 0)) > ttl]
+        for k in stale:
+            del _bg_jobs[k]
+    return len(stale)
+
+
+@router.post("/analyze-background")
+async def analyze_vectors_background(
+    upload_id: int = Query(...),
+    db: Session = Depends(get_db),
+):
+    """Start vector analysis in background thread. Poll /analyze-status for progress."""
+    # Opportunistic cleanup of stale jobs
+    _cleanup_stale_jobs()
+
+    with _bg_lock:
+        existing = _bg_jobs.get(upload_id)
+        if existing and existing.get("state") == "running":
+            return {"status": "already_running", "upload_id": upload_id}
+        _bg_jobs[upload_id] = {
+            "state": "running", "phase": "starting", "percent": 0,
+            "start_time": time.time(),
+        }
+
+    tier_data = _resolve_tier_data(None, upload_id, db)
+
+    def _run():
+        from app.models.database import SessionLocal
+        try:
+            orch = VectorOrchestrator()
+            with _bg_lock:
+                _bg_jobs[upload_id].update(phase="phase1", percent=5)
+            p1 = orch.run_phase1(tier_data)
+            with _bg_lock:
+                _bg_jobs[upload_id].update(phase="phase1_complete", percent=33)
+
+            with _bg_lock:
+                _bg_jobs[upload_id].update(phase="phase2", percent=35)
+            p2 = orch.run_phase2(tier_data, p1)
+            with _bg_lock:
+                _bg_jobs[upload_id].update(phase="phase2_complete", percent=66)
+
+            with _bg_lock:
+                _bg_jobs[upload_id].update(phase="phase3", percent=70)
+            p3 = orch.run_phase3(tier_data, p2)
+            with _bg_lock:
+                _bg_jobs[upload_id].update(phase="phase3_complete", percent=95)
+
+            # Persist
+            sdb = SessionLocal()
+            try:
+                upload = sdb.query(Upload).filter(Upload.id == upload_id).first()
+                if upload:
+                    upload.set_vector_results(p3)
+                    sdb.commit()
+                    from app.engines.data_populator import populate_vector_tables
+                    try:
+                        populate_vector_tables(sdb, upload_id, p3)
+                        sdb.commit()
+                    except Exception as exc:
+                        sdb.rollback()
+                        logger.warning("Failed to populate vector tables: %s", exc)
+            finally:
+                sdb.close()
+
+            with _bg_lock:
+                _bg_jobs[upload_id].update(state="complete", phase="complete", percent=100, result=p3)
+        except Exception as exc:
+            logger.exception("Background vector analysis failed for upload_id=%d", upload_id)
+            with _bg_lock:
+                _bg_jobs[upload_id].update(state="error", phase="error", error=str(exc))
+
+    threading.Thread(target=_run, daemon=True, name=f"vec-bg-{upload_id}").start()
+    return {"status": "started", "upload_id": upload_id}
+
+
+@router.get("/analyze-status")
+async def analyze_vectors_status(upload_id: int = Query(...)):
+    """Poll for background vector analysis progress."""
+    with _bg_lock:
+        job = _bg_jobs.get(upload_id)
+        if not job:
+            return {"state": "not_found", "upload_id": upload_id}
+        resp = {k: v for k, v in job.items() if k != "result"}
+        resp["has_result"] = "result" in job
+    return resp
+
+
+@router.get("/analyze-result")
+async def analyze_vectors_result(upload_id: int = Query(...)):
+    """Fetch completed background vector analysis results."""
+    with _bg_lock:
+        job = _bg_jobs.get(upload_id)
+        if not job or job.get("state") != "complete":
+            raise HTTPException(404, "No completed results")
+        result = job.get("result", {})
+        # Clean up after retrieval
+        del _bg_jobs[upload_id]
+    return result
 
 
 # ── Single-Vector Convenience Endpoints ───────────────────────────────────

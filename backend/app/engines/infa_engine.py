@@ -800,6 +800,43 @@ def _enrich_session_code_analysis(sessions: Dict[str, Dict[str, Any]]) -> None:
 
 # ── Per-file parsing ───────────────────────────────────────────────────────────
 
+def _extract_repo_meta_lightweight(content: bytes) -> Dict[str, Any]:
+    """Extract POWERMART/REPOSITORY metadata from first ~8KB without full DOM parse."""
+    repo_meta: Dict[str, Any] = {}
+    try:
+        # Only parse the first 8KB to get root attributes and REPOSITORY element
+        header = content[:8192]
+        # Ensure we have a closing tag so the partial XML is well-formed enough
+        if b'<POWERMART' in header:
+            # Extract attributes from POWERMART tag
+            import re
+            pm_match = re.search(rb'<POWERMART\s([^>]+)>', header)
+            if pm_match:
+                attrs_str = pm_match.group(1).decode('utf-8', errors='replace')
+                for attr_match in re.finditer(r'(\w+)\s*=\s*"([^"]*)"', attrs_str):
+                    key, val = attr_match.group(1), attr_match.group(2)
+                    if key == 'CREATION_DATE':
+                        repo_meta['creation_date'] = val
+                    elif key == 'REPOSITORY_VERSION':
+                        repo_meta['repository_version'] = val
+            repo_match = re.search(rb'<REPOSITORY\s([^>]*?)/?>', header)
+            if repo_match:
+                attrs_str = repo_match.group(1).decode('utf-8', errors='replace')
+                for attr_match in re.finditer(r'(\w+)\s*=\s*"([^"]*)"', attrs_str):
+                    key, val = attr_match.group(1), attr_match.group(2)
+                    if key == 'NAME':
+                        repo_meta['repository_name'] = val
+                    elif key == 'VERSION':
+                        repo_meta['version'] = val
+                    elif key == 'CODEPAGE':
+                        repo_meta['codepage'] = val
+                    elif key == 'DATABASETYPE':
+                        repo_meta['database_type'] = val
+    except Exception as exc:
+        logger.debug("Lightweight repo meta extraction failed: %s", exc)
+    return repo_meta
+
+
 def _parse_file(content: bytes, fname: str) -> Dict[str, Any]:
     """Return raw session data extracted from one XML file.
 
@@ -809,6 +846,41 @@ def _parse_file(content: bytes, fname: str) -> Dict[str, Any]:
     if not content or not content.strip():
         return {'_error': 'Empty file content', '_file': fname}
 
+    # Log file size for performance tracking
+    size_mb = len(content) / (1024 * 1024)
+    if size_mb > 10:
+        logger.info("Parsing large file %s (%.1fMB)", fname, size_mb)
+
+    # For large files, skip full DOM parse — use lightweight metadata + iterparse
+    if len(content) > _ITERPARSE_THRESHOLD:
+        repo_meta = _extract_repo_meta_lightweight(content)
+        sessions: Dict[str, Dict[str, Any]] = {}
+        logger.info("Using iterparse for large file %s (%.1fMB) — skipping full DOM", fname, size_mb)
+        folder_count = 0
+        try:
+            for folder in _parse_xml_iterparse(content):
+                folder_count += 1
+                before = len(sessions)
+                _process_folder(folder, fname, sessions, deep=True, repo_meta=repo_meta)
+                after = len(sessions)
+                logger.info("  %s folder %d: +%d sessions (total %d)",
+                            fname, folder_count, after - before, after)
+                # Force garbage collection after each large folder
+                import gc
+                gc.collect()
+            if sessions:
+                logger.info("Iterparse complete for %s: %d sessions from %d folders", fname, len(sessions), folder_count)
+                return sessions
+            logger.info("Iterparse yielded 0 sessions for %s, falling back to full parse", fname)
+        except Exception as exc:
+            if sessions:
+                logger.warning("Iterparse partial success for %s: %d sessions recovered before error: %s",
+                               fname, len(sessions), exc)
+                return sessions
+            logger.warning("Iterparse failed for %s with no sessions recovered, falling back to full parse: %s",
+                           fname, exc)
+
+    # Standard path: full DOM parse (for small files or iterparse fallback)
     # Try UTF-8 first, fall back to Latin-1
     try:
         content_decoded = content  # noqa: F841
@@ -825,12 +897,7 @@ def _parse_file(content: bytes, fname: str) -> Dict[str, Any]:
                 return {'_error': f'XML syntax error: {exc}', '_file': fname}
             return {'_error': str(exc), '_file': fname}
 
-    # Log file size for performance tracking
-    size_mb = len(content) / (1024 * 1024)
-    if size_mb > 10:
-        logger.info("Parsing large file %s (%.1fMB)", fname, size_mb)
-
-    sessions: Dict[str, Dict[str, Any]] = {}
+    sessions = {}
 
     # ── Phase 1A: POWERMART root + REPOSITORY metadata ──────────────────
     repo_meta: Dict[str, Any] = {}
@@ -844,33 +911,6 @@ def _parse_file(content: bytes, fname: str) -> Dict[str, Any]:
             repo_meta['codepage'] = _attr(repo_el, 'CODEPAGE')
             repo_meta['database_type'] = _attr(repo_el, 'DATABASETYPE')
             break  # only first REPOSITORY
-
-    # For large files, use iterparse to process folders with memory cleanup.
-    # Recovers partial data: if XML is truncated, keeps sessions from folders parsed before the error.
-    if len(content) > _ITERPARSE_THRESHOLD:
-        logger.info("Using iterparse for large file %s (%.1fMB)", fname, size_mb)
-        folder_count = 0
-        try:
-            for folder in _parse_xml_iterparse(content):
-                folder_count += 1
-                before = len(sessions)
-                _process_folder(folder, fname, sessions, deep=True, repo_meta=repo_meta)
-                after = len(sessions)
-                logger.info("  %s folder %d: +%d sessions (total %d)",
-                            fname, folder_count, after - before, after)
-            if sessions:
-                return sessions
-            # iterparse yielded no folders or no sessions — fall through to standard parse
-            logger.info("Iterparse yielded 0 sessions for %s, falling back to full parse", fname)
-        except Exception as exc:
-            # Salvage whatever sessions were extracted before the error
-            if sessions:
-                logger.warning("Iterparse partial success for %s: %d sessions recovered before error: %s",
-                               fname, len(sessions), exc)
-                return sessions
-            logger.warning("Iterparse failed for %s with no sessions recovered, falling back to full parse: %s",
-                           fname, exc)
-            # Fall through to standard parse
 
     folders = list(_iter(root, 'FOLDER'))
     if not folders:
@@ -2012,20 +2052,23 @@ def analyze(
     if _NX:
         G = _nx.DiGraph()
         G.add_nodes_from(session_names)
-        # RAW edges: writer → reader (reader reads a table written by writer)
+        # Build all DAG edges in a single pass: writer→reader + writer→lookup_user
+        edges = []
         for table, writers in all_targets.items():
-            readers = [r for r in all_sources.get(table, []) if r not in writers]
-            for w in writers:
-                for r in readers:
-                    if w != r:
-                        G.add_edge(w, r)
-        # Lookup-staleness edges: writer → lookup_user (lookup on a written table)
-        for table, writers in all_targets.items():
-            users = [u for u in all_lookups.get(table, []) if u not in writers]
-            for w in writers:
-                for u in users:
-                    if w != u:
-                        G.add_edge(w, u)
+            writer_set = set(writers)
+            # RAW edges: writer → reader (reader reads a table written by writer)
+            for r in all_sources.get(table, []):
+                if r not in writer_set:
+                    for w in writers:
+                        if w != r:
+                            edges.append((w, r))
+            # Lookup-staleness edges: writer → lookup_user (lookup on a written table)
+            for u in all_lookups.get(table, []):
+                if u not in writer_set:
+                    for w in writers:
+                        if w != u:
+                            edges.append((w, u))
+        G.add_edges_from(edges)
         # Remove cycles efficiently: collapse each SCC into one representative node.
         # The old approach (find_cycle in a loop) was O(V+E) per cycle and hung on 14K+ sessions.
         edges_before = G.number_of_edges()

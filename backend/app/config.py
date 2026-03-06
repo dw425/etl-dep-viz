@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     vector_timeout_seconds: int = 1800              # Hard timeout for the vector orchestrator (30 min)
     parse_timeout_seconds: int = 1800               # Hard timeout for XML/JSON parse (30 min)
     max_sessions_for_phase3: int = 15000            # Session count threshold for enabling Phase 3 vectors
+    parse_concurrency: int = 2                      # Max concurrent parse operations (asyncio Semaphore)
+    bg_job_ttl_seconds: int = 3600                  # How long to keep completed background job results (1 hr)
+    bg_job_poll_interval_ms: int = 2000             # Suggested client polling interval for bg jobs
+    populate_batch_size: int = 500                  # Batch size for bulk DB inserts in data_populator
 
     # ── Databricks App Deployment ────────────────────────────────────────
     lakebase_instance: str = ""                   # Lakebase instance name (empty = SQLite mode)

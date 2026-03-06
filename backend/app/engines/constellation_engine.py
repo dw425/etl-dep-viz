@@ -423,26 +423,40 @@ def _cluster_table_gravity(
             unassigned.append(sid)
 
     # Step 5: Handle unassigned — find cluster with most table overlap
+    # Pre-cache cluster table fingerprints to avoid O(N²) recomputation
+    cluster_fps: dict[str, set[str]] = {}
+    for anchor, sids in clusters.items():
+        cfp: set[str] = set()
+        for s in sids:
+            cfp.update(fingerprints.get(s, frozenset()))
+        cluster_fps[anchor] = cfp
+
     for sid in unassigned:
         fp = fingerprints.get(sid, frozenset())
         best_cluster: str | None = None
         best_overlap = 0
-        for anchor, sids in clusters.items():
-            cluster_tables: set[str] = set()
-            for s in sids:
-                cluster_tables.update(fingerprints.get(s, frozenset()))
-            overlap = len(fp & cluster_tables)
+        for anchor in clusters:
+            overlap = len(fp & cluster_fps[anchor])
             if overlap > best_overlap:
                 best_overlap = overlap
                 best_cluster = anchor
         if best_cluster:
             clusters[best_cluster].add(sid)
+            cluster_fps[best_cluster].update(fp)  # Keep cache current
         else:
             clusters['__other__'].add(sid)
 
     # Step 6: Merge tiny clusters (< 3 sessions) into nearest large cluster
     small_keys = [k for k, v in clusters.items() if len(v) < 3 and k != '__other__']
     large_keys = [k for k, v in clusters.items() if len(v) >= 3]
+    # Pre-cache large cluster fingerprints
+    large_fps: dict[str, set[str]] = {}
+    for lk in large_keys:
+        lfp: set[str] = set()
+        for sid in clusters[lk]:
+            lfp.update(fingerprints.get(sid, frozenset()))
+        large_fps[lk] = lfp
+
     for sk in small_keys:
         small_fp: set[str] = set()
         for sid in clusters[sk]:
@@ -450,15 +464,13 @@ def _cluster_table_gravity(
         best_target: str | None = None
         best_overlap = 0
         for lk in large_keys:
-            large_fp: set[str] = set()
-            for sid in clusters[lk]:
-                large_fp.update(fingerprints.get(sid, frozenset()))
-            overlap = len(small_fp & large_fp)
+            overlap = len(small_fp & large_fps[lk])
             if overlap > best_overlap:
                 best_overlap = overlap
                 best_target = lk
         if best_target:
             clusters[best_target].update(clusters[sk])
+            large_fps[best_target].update(small_fp)  # Keep cache current
             del clusters[sk]
         # If no overlap found, keep as its own cluster
 
@@ -699,18 +711,22 @@ def _find_cross_chunk_edges(
         for sid in comm:
             node_chunk[sid] = chunk_id
 
+    # Build reverse index: session name/full_name → chunk_id (O(N) instead of O(N³))
+    name_to_chunk: dict[str, str] = {}
+    for sid, s in session_map.items():
+        if sid in node_chunk:
+            name_to_chunk[s.get('name', '')] = node_chunk[sid]
+            full = s.get('full', '')
+            if full:
+                name_to_chunk[full] = node_chunk[sid]
+
     table_chunk: dict[str, str] = {}
     for t in tables:
-        writers = t.get('writers', [])
-        if writers:
-            for w in writers:
-                for sid, s in session_map.items():
-                    if s.get('name') == w or s.get('full') == w:
-                        if sid in node_chunk:
-                            table_chunk[t['id']] = node_chunk[sid]
-                            break
-                if t['id'] in table_chunk:
-                    break
+        for w in t.get('writers', []):
+            chunk = name_to_chunk.get(w)
+            if chunk:
+                table_chunk[t['id']] = chunk
+                break
 
     cross: dict[tuple[str, str], int] = defaultdict(int)
     for conn in connections:

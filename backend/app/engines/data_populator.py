@@ -96,15 +96,39 @@ logger = logging.getLogger(__name__)
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
+def _timed(func):
+    """Decorator that logs wall-clock duration for populate/reconstruct functions."""
+    import functools
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        t0 = time.perf_counter()
+        result = func(*args, **kwargs)
+        elapsed = (time.perf_counter() - t0) * 1000
+        logger.info("%s completed in %.0fms", func.__name__, elapsed)
+        return result
+    return wrapper
+
+
 def _delete_for_upload(db: Session, model, upload_id: int) -> None:
     """Delete all rows for a given upload_id from a model table."""
     db.query(model).filter(model.upload_id == upload_id).delete(synchronize_session=False)
 
 
-def _bulk_save(db: Session, objects: list) -> None:
-    """Bulk insert a list of ORM objects."""
-    if objects:
+def _bulk_save(db: Session, objects: list, batch_size: int = 500) -> None:
+    """Bulk insert a list of ORM objects in batches to limit memory pressure.
+
+    For small lists (< batch_size), inserts in one call.  For larger lists,
+    chunks into batches and flushes after each to free ORM identity map memory.
+    """
+    if not objects:
+        return
+    if len(objects) <= batch_size:
         db.bulk_save_objects(objects)
+        return
+    for i in range(0, len(objects), batch_size):
+        db.bulk_save_objects(objects[i:i + batch_size])
+        db.flush()
 
 
 def _json_dumps(obj) -> str | None:
@@ -116,6 +140,7 @@ def _json_dumps(obj) -> str | None:
 
 # ── 1. Core Table Population ─────────────────────────────────────────────────
 
+@_timed
 def populate_core_tables(
     db: Session,
     upload_id: int,
@@ -247,6 +272,7 @@ def _classify_expression(expr: str) -> tuple[str, int, int]:
     return 'passthrough', 0, 0
 
 
+@_timed
 def populate_normalized_tables(
     db: Session,
     upload_id: int,
@@ -447,6 +473,7 @@ def populate_normalized_tables(
 # ── 1c. Code Analysis Table Population ────────────────────────────────────────
 
 
+@_timed
 def populate_code_analysis_tables(
     db: Session,
     upload_id: int,
@@ -553,6 +580,7 @@ def populate_code_analysis_tables(
 # ── 1d. Deep Parse Expansion Population (V7) ──────────────────────────────────
 
 
+@_timed
 def populate_deep_parse_tables(
     db: Session,
     upload_id: int,
@@ -816,6 +844,7 @@ def populate_deep_parse_tables(
 
 # ── 2. Per-View Table Population ─────────────────────────────────────────────
 
+@_timed
 def populate_view_tables(db: Session, upload_id: int) -> None:
     """Derive and populate all 10 core-view materialized tables from foundation tables.
 
@@ -829,6 +858,8 @@ def populate_view_tables(db: Session, upload_id: int) -> None:
     sessions = db.query(SessionRecord).filter(SessionRecord.upload_id == upload_id).all()
     tables = db.query(TableRecord).filter(TableRecord.upload_id == upload_id).all()
     connections = db.query(ConnectionRecord).filter(ConnectionRecord.upload_id == upload_id).all()
+    logger.info("populate_view_tables: loaded %d sessions, %d tables, %d connections",
+                len(sessions), len(tables), len(connections))
 
     # Build lookup maps
     session_map = {s.session_id: s for s in sessions}
@@ -842,15 +873,22 @@ def populate_view_tables(db: Session, upload_id: int) -> None:
         conn_by_from[c.from_id].append(c)
         conn_by_to[c.to_id].append(c)
 
-    _populate_tier_layout(db, upload_id, sessions, tables)
-    _populate_galaxy_nodes(db, upload_id, sessions, tables, connections)
-    _populate_explorer_detail(db, upload_id, sessions, connections, session_map, table_map, conn_by_from, conn_by_to)
-    _populate_write_conflicts(db, upload_id, tables, connections, session_map)
-    _populate_read_chains(db, upload_id, tables, connections, session_map)
-    _populate_exec_order(db, upload_id, sessions, connections, conn_by_from)
-    _populate_matrix_cells(db, upload_id, sessions, tables, connections, session_map, table_map)
-    _populate_table_profiles(db, upload_id, tables, connections, session_map)
-    _populate_duplicate_groups(db, upload_id, sessions)
+    view_steps = [
+        ("tier_layout", lambda: _populate_tier_layout(db, upload_id, sessions, tables)),
+        ("galaxy_nodes", lambda: _populate_galaxy_nodes(db, upload_id, sessions, tables, connections)),
+        ("explorer_detail", lambda: _populate_explorer_detail(db, upload_id, sessions, connections, session_map, table_map, conn_by_from, conn_by_to)),
+        ("write_conflicts", lambda: _populate_write_conflicts(db, upload_id, tables, connections, session_map)),
+        ("read_chains", lambda: _populate_read_chains(db, upload_id, tables, connections, session_map)),
+        ("exec_order", lambda: _populate_exec_order(db, upload_id, sessions, connections, conn_by_from)),
+        ("matrix_cells", lambda: _populate_matrix_cells(db, upload_id, sessions, tables, connections, session_map, table_map)),
+        ("table_profiles", lambda: _populate_table_profiles(db, upload_id, tables, connections, session_map)),
+        ("duplicate_groups", lambda: _populate_duplicate_groups(db, upload_id, sessions)),
+    ]
+    for i, (name, fn) in enumerate(view_steps, 1):
+        t0 = time.perf_counter()
+        fn()
+        elapsed = (time.perf_counter() - t0) * 1000
+        logger.info("populate_view_tables: [%d/%d] %s done (%.0fms)", i, len(view_steps), name, elapsed)
 
     db.flush()
     logger.info("populate_view_tables: done")
@@ -1206,6 +1244,7 @@ def _populate_duplicate_groups(db: Session, upload_id: int, sessions: list) -> N
 
 # ── 3. Constellation Table Population ────────────────────────────────────────
 
+@_timed
 def populate_constellation_tables(
     db: Session,
     upload_id: int,
@@ -1280,6 +1319,7 @@ def populate_constellation_tables(
 
 # ── 4. Vector Table Population ───────────────────────────────────────────────
 
+@_timed
 def populate_vector_tables(
     db: Session,
     upload_id: int,
@@ -1763,6 +1803,7 @@ def invalidate_tier_cache(upload_id: int) -> None:
         _tier_cache.pop(upload_id, None)
 
 
+@_timed
 def reconstruct_tier_data(db: Session, upload_id: int) -> dict | None:
     """Reconstruct full tier_data dict from normalized DB tables.
 
@@ -1844,6 +1885,7 @@ def reconstruct_tier_data(db: Session, upload_id: int) -> dict | None:
 
 # ── 6. Reconstruct constellation from materialized tables ─────────────────
 
+@_timed
 def reconstruct_constellation(db: Session, upload_id: int) -> dict | None:
     """Rebuild constellation dict from vw_constellation_* tables.
 
@@ -1928,6 +1970,7 @@ def reconstruct_constellation(db: Session, upload_id: int) -> dict | None:
 
 # ── 7. Reconstruct vector_results from materialized tables ────────────────
 
+@_timed
 def reconstruct_vector_results(db: Session, upload_id: int) -> dict | None:
     """Rebuild vector_results dict from vw_* vector tables.
 

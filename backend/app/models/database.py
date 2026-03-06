@@ -57,6 +57,13 @@ class Project(Base):
 
     uploads = relationship("Upload", back_populates="project", cascade="all, delete-orphan")
 
+    __table_args__ = (
+        Index("ix_project_user", "user_id"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<Project id={self.id} name={self.name!r}>"
+
 
 class Upload(Base):
     """Persisted parse result -- stores tier data, constellation clusters, and
@@ -82,6 +89,15 @@ class Upload(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     project = relationship("Project", back_populates="uploads")
+
+    __table_args__ = (
+        Index("ix_upload_project", "project_id"),
+        Index("ix_upload_user", "user_id"),
+        Index("ix_upload_created", "created_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<Upload id={self.id} filename={self.filename!r} sessions={self.session_count}>"
 
     def set_tier_data(self, data: dict) -> None:
         """Serialize and store the tier data dict as a JSON blob."""
@@ -243,6 +259,9 @@ class UserProfile(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     last_active = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
+    def __repr__(self) -> str:
+        return f"<UserProfile id={self.id} name={self.display_name!r}>"
+
 
 class ActivityLog(Base):
     """Timestamped activity log for auditing user actions.
@@ -258,6 +277,15 @@ class ActivityLog(Base):
     target_filename = Column(String(512), nullable=True)
     details_json = Column(Text, nullable=True)   # Arbitrary JSON payload for action context
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        Index("ix_activity_user", "user_id"),
+        Index("ix_activity_created", "created_at"),
+        Index("ix_activity_action", "action"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ActivityLog id={self.id} action={self.action!r} user={self.user_id}>"
 
     def set_details(self, data: dict) -> None:
         """Serialize action-specific details into the JSON column."""
@@ -324,9 +352,13 @@ class SessionRecord(Base):
 
     __table_args__ = (
         Index("ix_session_upload", "upload_id"),
+        Index("ix_session_upload_sid", "upload_id", "session_id"),
         Index("ix_session_tier", "upload_id", "tier"),
         Index("ix_session_name", "upload_id", "full_name"),
     )
+
+    def __repr__(self) -> str:
+        return f"<SessionRecord id={self.id} sid={self.session_id} name={self.name!r}>"
 
 
 class TableRecord(Base):
@@ -419,7 +451,10 @@ class VwTierLayout(Base):
     x_band = Column(Float, nullable=True)  # tier-based x position
     node_type = Column(String(16), nullable=False)  # 'session' or 'table'
 
-    __table_args__ = (Index("ix_vwtier_upload", "upload_id"),)
+    __table_args__ = (
+        Index("ix_vwtier_upload", "upload_id"),
+        Index("ix_vwtier_upload_type", "upload_id", "node_type"),
+    )
 
 
 class VwGalaxyNodes(Base):
@@ -540,7 +575,11 @@ class VwMatrixCells(Base):
     table_name = Column(String(512), nullable=False)
     conn_type = Column(String(32), nullable=False)
 
-    __table_args__ = (Index("ix_vwmatrix_upload", "upload_id"),)
+    __table_args__ = (
+        Index("ix_vwmatrix_upload", "upload_id"),
+        Index("ix_vwmatrix_session", "upload_id", "session_id"),
+        Index("ix_vwmatrix_table", "upload_id", "table_id"),
+    )
 
 
 class VwTableProfiles(Base):
@@ -641,7 +680,10 @@ class VwConstellationPoints(Base):
     is_critical = Column(Integer, default=0)
     name = Column(String(512), nullable=True)
 
-    __table_args__ = (Index("ix_vwpoint_upload", "upload_id"),)
+    __table_args__ = (
+        Index("ix_vwpoint_upload", "upload_id"),
+        Index("ix_vwpoint_chunk", "upload_id", "chunk_id"),
+    )
 
 
 class VwConstellationEdges(Base):
@@ -721,6 +763,7 @@ class VwComplexityScores(Base):
 
     __table_args__ = (
         Index("ix_vwcomplexity_upload", "upload_id"),
+        Index("ix_vwcomplexity_session", "upload_id", "session_id"),
         Index("ix_vwcomplexity_bucket", "upload_id", "bucket"),
     )
 
@@ -766,7 +809,11 @@ class VwUmapCoords(Base):
     y = Column(Float, nullable=False)
     cluster_id = Column(Integer, nullable=True)
 
-    __table_args__ = (Index("ix_vwumap_upload", "upload_id"),)
+    __table_args__ = (
+        Index("ix_vwumap_upload", "upload_id"),
+        Index("ix_vwumap_session", "upload_id", "session_id"),
+        Index("ix_vwumap_scale", "upload_id", "scale"),
+    )
 
 
 class VwCommunities(Base):
@@ -785,7 +832,10 @@ class VwCommunities(Base):
     meso_id = Column(Integer, nullable=True)
     micro_id = Column(Integer, nullable=True)
 
-    __table_args__ = (Index("ix_vwcomm_upload", "upload_id"),)
+    __table_args__ = (
+        Index("ix_vwcomm_upload", "upload_id"),
+        Index("ix_vwcomm_session", "upload_id", "session_id"),
+    )
 
 
 class VwWaveFunction(Base):
@@ -809,7 +859,10 @@ class VwWaveFunction(Base):
     amplification_factor = Column(Float, default=0.0)
     criticality_tier = Column(String(16), nullable=True)
 
-    __table_args__ = (Index("ix_vwwavefn_upload", "upload_id"),)
+    __table_args__ = (
+        Index("ix_vwwavefn_upload", "upload_id"),
+        Index("ix_vwwavefn_session", "upload_id", "session_id"),
+    )
 
 
 class VwConcentrationGroups(Base):
@@ -852,7 +905,11 @@ class VwConcentrationMembers(Base):
     independence_type = Column(String(32), nullable=True)
     confidence = Column(Float, default=0.0)
 
-    __table_args__ = (Index("ix_vwconcmem_upload", "upload_id"),)
+    __table_args__ = (
+        Index("ix_vwconcmem_upload", "upload_id"),
+        Index("ix_vwconcmem_session", "upload_id", "session_id"),
+        Index("ix_vwconcmem_group", "upload_id", "group_id"),
+    )
 
 
 class VwEnsemble(Base):
@@ -873,7 +930,10 @@ class VwEnsemble(Base):
     per_vector_json = Column(Text, nullable=True)
     is_contested = Column(Integer, default=0)
 
-    __table_args__ = (Index("ix_vwensemble_upload", "upload_id"),)
+    __table_args__ = (
+        Index("ix_vwensemble_upload", "upload_id"),
+        Index("ix_vwensemble_session", "upload_id", "session_id"),
+    )
 
 
 class VwHierarchicalLineage(Base):
@@ -894,7 +954,10 @@ class VwHierarchicalLineage(Base):
     merge_distance = Column(Float, default=0.0)
     session_count = Column(Integer, default=1)
 
-    __table_args__ = (Index("ix_vwhier_upload", "upload_id"),)
+    __table_args__ = (
+        Index("ix_vwhier_upload", "upload_id"),
+        Index("ix_vwhier_session", "upload_id", "session_id"),
+    )
 
 
 class VwAffinityPropagation(Base):
@@ -916,7 +979,10 @@ class VwAffinityPropagation(Base):
     availability = Column(Float, default=0.0)
     preference = Column(Float, default=0.0)
 
-    __table_args__ = (Index("ix_vwaffinity_upload", "upload_id"),)
+    __table_args__ = (
+        Index("ix_vwaffinity_upload", "upload_id"),
+        Index("ix_vwaffinity_session", "upload_id", "session_id"),
+    )
 
 
 class VwSpectralClustering(Base):
@@ -935,7 +1001,10 @@ class VwSpectralClustering(Base):
     eigenvalue = Column(Float, default=0.0)
     eigen_gap = Column(Float, default=0.0)
 
-    __table_args__ = (Index("ix_vwspectral_upload", "upload_id"),)
+    __table_args__ = (
+        Index("ix_vwspectral_upload", "upload_id"),
+        Index("ix_vwspectral_session", "upload_id", "session_id"),
+    )
 
 
 class VwHdbscanDensity(Base):
@@ -955,7 +1024,10 @@ class VwHdbscanDensity(Base):
     outlier_score = Column(Float, default=0.0)
     persistence = Column(Float, default=0.0)
 
-    __table_args__ = (Index("ix_vwhdbscan_upload", "upload_id"),)
+    __table_args__ = (
+        Index("ix_vwhdbscan_upload", "upload_id"),
+        Index("ix_vwhdbscan_session", "upload_id", "session_id"),
+    )
 
 
 class VwExpressionComplexity(Base):
@@ -974,7 +1046,10 @@ class VwExpressionComplexity(Base):
     score = Column(Integer, default=0)
     bucket = Column(String(16), nullable=True)
 
-    __table_args__ = (Index("ix_vwexprcomp_upload", "upload_id"),)
+    __table_args__ = (
+        Index("ix_vwexprcomp_upload", "upload_id"),
+        Index("ix_vwexprcomp_session", "upload_id", "session_id"),
+    )
 
 
 class VwDataFlow(Base):
@@ -991,7 +1066,10 @@ class VwDataFlow(Base):
     funnel_ratio = Column(Float, default=0.0)
     bottleneck_transform = Column(String(256), nullable=True)
 
-    __table_args__ = (Index("ix_vwdataflow_upload", "upload_id"),)
+    __table_args__ = (
+        Index("ix_vwdataflow_upload", "upload_id"),
+        Index("ix_vwdataflow_session", "upload_id", "session_id"),
+    )
 
 
 class VwSchemaDrift(Base):
@@ -1009,7 +1087,10 @@ class VwSchemaDrift(Base):
     removed_fields = Column(Integer, default=0)
     type_changes = Column(Integer, default=0)
 
-    __table_args__ = (Index("ix_vwschemadrift_upload", "upload_id"),)
+    __table_args__ = (
+        Index("ix_vwschemadrift_upload", "upload_id"),
+        Index("ix_vwschemadrift_session", "upload_id", "session_id"),
+    )
 
 
 class VwTransformCentrality(Base):
@@ -1026,7 +1107,10 @@ class VwTransformCentrality(Base):
     chokepoint_transform = Column(String(256), nullable=True)
     avg_degree = Column(Float, default=0.0)
 
-    __table_args__ = (Index("ix_vwtranscentr_upload", "upload_id"),)
+    __table_args__ = (
+        Index("ix_vwtranscentr_upload", "upload_id"),
+        Index("ix_vwtranscentr_session", "upload_id", "session_id"),
+    )
 
 
 class VwTableGravity(Base):
@@ -1045,7 +1129,10 @@ class VwTableGravity(Base):
     gravity_score = Column(Float, default=0.0)
     is_hub = Column(Integer, default=0)
 
-    __table_args__ = (Index("ix_vwtablegrav_upload", "upload_id"),)
+    __table_args__ = (
+        Index("ix_vwtablegrav_upload", "upload_id"),
+        Index("ix_vwtablegrav_session", "upload_id", "session_id"),
+    )
 
 
 class DocumentEmbedding(Base):

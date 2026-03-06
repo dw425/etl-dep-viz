@@ -35,9 +35,9 @@ _MAX_UNCOMPRESSED_TOTAL = 10 * 1024 * 1024 * 1024  # 10GB total uncompressed
 _SPOOL_THRESHOLD = 50 * 1024 * 1024                 # 50MB before spilling to disk
 _ZIP_STREAM_CHUNK = 4 * 1024 * 1024                  # 4MB streaming chunk
 
-# Concurrency control: max 2 simultaneous parses to prevent server overload
-_PARSE_SEMAPHORE = asyncio.Semaphore(2)
-_PARSE_TIMEOUT_CAP = 14400  # hard limit 4 hours
+# Concurrency control: limit simultaneous parses to prevent server overload
+_PARSE_SEMAPHORE = asyncio.Semaphore(settings.parse_concurrency)
+_PARSE_TIMEOUT_CAP = 28800  # hard limit 8 hours
 
 router = APIRouter()
 
@@ -436,7 +436,7 @@ async def analyze_tier_map(
         total_size_mb = sum(len(r) for r in raw) / (1024 * 1024)
         scaled_timeout = min(
             _PARSE_TIMEOUT_CAP,
-            max(settings.parse_timeout_seconds, int(300 * len(raw) + 60 * (total_size_mb / 100))),
+            max(settings.parse_timeout_seconds, int(600 * len(raw) + 120 * (total_size_mb / 100))),
         )
 
         try:
@@ -529,7 +529,7 @@ async def analyze_constellation(
         total_size_mb = sum(len(r) for r in raw) / (1024 * 1024)
         scaled_timeout = min(
             _PARSE_TIMEOUT_CAP,
-            max(settings.parse_timeout_seconds, int(300 * len(raw) + 60 * (total_size_mb / 100))),
+            max(settings.parse_timeout_seconds, int(600 * len(raw) + 120 * (total_size_mb / 100))),
         )
 
         try:
@@ -629,7 +629,6 @@ async def analyze_constellation_stream(
             # Mutable single-element lists allow mutation from inside the sync progress_fn closure
             sessions_so_far = [0]
             files_parsed = [0]
-            file_statuses: list[dict] = []
 
             def progress_fn(current: int, total_files: int, filename: str, cumulative_sessions: int = 0) -> None:
                 """Called by the engine after each file is parsed; maps to SSE percent 5–95."""
@@ -676,7 +675,7 @@ async def analyze_constellation_stream(
             total_size_mb = sum(len(r) for r in raw) / (1024 * 1024)
             scaled_timeout = min(
                 _PARSE_TIMEOUT_CAP,
-                max(settings.parse_timeout_seconds, int(300 * total + 60 * (total_size_mb / 100))),
+                max(settings.parse_timeout_seconds, int(600 * total + 120 * (total_size_mb / 100))),
             )
             logger.info("step=timeout_calc base=%ds files=%d size_mb=%.0f scaled=%ds",
                         settings.parse_timeout_seconds, total, total_size_mb, scaled_timeout)
@@ -942,7 +941,7 @@ async def analyze_from_path(
             platform = _detect_platform(raw)
             scaled_timeout = min(
                 _PARSE_TIMEOUT_CAP,
-                max(settings.parse_timeout_seconds, int(300 * total + 60 * (total_size_mb / 100))),
+                max(settings.parse_timeout_seconds, int(600 * total + 120 * (total_size_mb / 100))),
             )
             try:
                 tier_data = await asyncio.wait_for(

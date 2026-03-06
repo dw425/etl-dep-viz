@@ -314,7 +314,7 @@ export async function recluster(
  */
 export async function getAlgorithms(): Promise<Record<string, { name: string; desc: string }>> {
   const res = await fetch(`${BASE}/tier-map/algorithms`);
-  if (!res.ok) throw new Error(res.statusText);
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   const data = await res.json();
   return data.algorithms;
 }
@@ -350,7 +350,7 @@ export interface UploadSummary {
  */
 export async function listUploads(limit = 20): Promise<UploadSummary[]> {
   const res = await fetch(`${BASE}/tier-map/uploads?limit=${limit}`, { headers: userHeaders() });
-  if (!res.ok) throw new Error(res.statusText);
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.json();
 }
 
@@ -372,7 +372,7 @@ export async function getUpload(uploadId: number): Promise<{
   created_at: string | null;
 }> {
   const res = await fetch(`${BASE}/tier-map/uploads/${uploadId}`);
-  if (!res.ok) throw new Error(res.statusText);
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.json();
 }
 
@@ -383,7 +383,7 @@ export async function getUpload(uploadId: number): Promise<{
  */
 export async function deleteUpload(uploadId: number): Promise<void> {
   const res = await fetch(`${BASE}/tier-map/uploads/${uploadId}`, { method: 'DELETE' });
-  if (!res.ok) throw new Error(res.statusText);
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
 }
 
 // ── Vector Analysis ──────────────────────────────────────────────────────
@@ -424,7 +424,7 @@ export async function analyzeVectors(
 export async function getCachedVectors(uploadId: number): Promise<VectorResults | null> {
   const res = await fetch(`${BASE}/vectors/results/${uploadId}`);
   if (res.status === 404) return null;
-  if (!res.ok) throw new Error(res.statusText);
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.json();
 }
 
@@ -449,41 +449,52 @@ export interface VectorStreamEvent {
  * @endpoint POST /api/vectors/analyze-stream (SSE)
  */
 export function analyzeVectorsStream(
-  tierData: TierMapResult,
+  _tierData: TierMapResult,
   uploadId: number | undefined,
   onEvent: (event: VectorStreamEvent) => void,
 ): AbortController {
   const ctrl = new AbortController();
-  const params = new URLSearchParams();
-  if (uploadId) params.set('upload_id', String(uploadId));
+  if (!uploadId) {
+    onEvent({ phase: 'error', message: 'upload_id required for vector analysis' });
+    return ctrl;
+  }
 
-  fetch(`${BASE}/vectors/analyze-stream?${params}`, {
+  // Start background job, then poll for progress
+  fetch(`${BASE}/vectors/analyze-background?upload_id=${uploadId}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(tierData),
+    headers: userHeaders(),
     signal: ctrl.signal,
   }).then(async res => {
     if (!res.ok) {
       onEvent({ phase: 'error', message: (await res.json()).detail || res.statusText });
       return;
     }
-    const reader = res.body!.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n\n');
-      buffer = lines.pop() || '';
-      for (const line of lines) {
-        const trimmed = line.replace(/^data:\s*/, '').trim();
-        if (!trimmed) continue;
-        try {
-          onEvent(JSON.parse(trimmed));
-        } catch { /* skip malformed */ }
+    // Poll for status (interval matches backend bg_job_poll_interval_ms default)
+    const POLL_MS = 2000;
+    const poll = setInterval(async () => {
+      if (ctrl.signal.aborted) { clearInterval(poll); return; }
+      try {
+        const statusRes = await fetch(`${BASE}/vectors/analyze-status?upload_id=${uploadId}`, { headers: userHeaders() });
+        if (!statusRes.ok) {
+          if (statusRes.status === 404) { clearInterval(poll); onEvent({ phase: 'error', message: 'Analysis job not found' }); }
+          return;
+        }
+        const status = await statusRes.json();
+        onEvent({ phase: status.phase || 'running', percent: status.percent, message: `${status.phase} (${status.percent}%)` });
+        if (status.state === 'complete') {
+          clearInterval(poll);
+          const resultRes = await fetch(`${BASE}/vectors/analyze-result?upload_id=${uploadId}`, { headers: userHeaders() });
+          if (!resultRes.ok) { onEvent({ phase: 'error', message: 'Failed to fetch results' }); return; }
+          const result = await resultRes.json();
+          onEvent({ phase: 'complete', percent: 100, result });
+        } else if (status.state === 'error') {
+          clearInterval(poll);
+          onEvent({ phase: 'error', message: status.error || 'Analysis failed' });
+        }
+      } catch (err) {
+        // Network error during poll — keep trying
       }
-    }
+    }, POLL_MS);
   }).catch(err => {
     if (err.name !== 'AbortError') onEvent({ phase: 'error', message: err.message });
   });
@@ -648,7 +659,7 @@ export async function createActiveTag(data: {
  */
 export async function getActiveTags(objectId: string): Promise<ActiveTag[]> {
   const res = await fetch(`${BASE}/active-tags/${objectId}`);
-  if (!res.ok) throw new Error(res.statusText);
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.json();
 }
 
@@ -659,7 +670,7 @@ export async function getActiveTags(objectId: string): Promise<ActiveTag[]> {
  */
 export async function deleteActiveTag(tagId: string): Promise<void> {
   const res = await fetch(`${BASE}/active-tags/${tagId}`, { method: 'DELETE' });
-  if (!res.ok) throw new Error(res.statusText);
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
 }
 
 /**
@@ -674,7 +685,7 @@ export async function listAllActiveTags(params?: { object_type?: string; tag_typ
   if (params?.tag_type) qs.set('tag_type', params.tag_type);
   const q = qs.toString();
   const res = await fetch(`${BASE}/active-tags${q ? '?' + q : ''}`);
-  if (!res.ok) throw new Error(res.statusText);
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.json();
 }
 
@@ -693,7 +704,7 @@ export async function upsertUser(displayName?: string): Promise<Record<string, u
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ user_id: getUserId(), display_name: displayName || '' }),
   });
-  if (!res.ok) throw new Error(res.statusText);
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.json();
 }
 
@@ -705,7 +716,7 @@ export async function upsertUser(displayName?: string): Promise<Record<string, u
 export async function getUser(): Promise<Record<string, unknown>> {
   const res = await fetch(`${BASE}/users/${getUserId()}`);
   if (res.status === 404) return { user_id: getUserId(), display_name: '', upload_count: 0, total_sessions: 0 };
-  if (!res.ok) throw new Error(res.statusText);
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.json();
 }
 
@@ -717,7 +728,7 @@ export async function getUser(): Promise<Record<string, unknown>> {
  */
 export async function getUserUploads(limit = 50): Promise<UploadSummary[]> {
   const res = await fetch(`${BASE}/users/${getUserId()}/uploads?limit=${limit}`);
-  if (!res.ok) throw new Error(res.statusText);
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.json();
 }
 
@@ -729,7 +740,7 @@ export async function getUserUploads(limit = 50): Promise<UploadSummary[]> {
  */
 export async function getUserActivity(limit = 50): Promise<Record<string, unknown>[]> {
   const res = await fetch(`${BASE}/users/${getUserId()}/activity?limit=${limit}`);
-  if (!res.ok) throw new Error(res.statusText);
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.json();
 }
 
@@ -780,7 +791,7 @@ export async function getHealthLogs(limit = 50, level?: string): Promise<LogEntr
   const params = new URLSearchParams({ limit: String(limit) });
   if (level) params.set('level', level);
   const res = await fetch(`${BASE}/health/logs?${params}`);
-  if (!res.ok) throw new Error(res.statusText);
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.json();
 }
 
@@ -1023,7 +1034,7 @@ export async function updateTagColor(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ color }),
   });
-  if (!res.ok) throw new Error(res.statusText);
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
 }
 
 // ── Batch Tag Operations ──────────────────────────────────────────────────
@@ -1065,7 +1076,7 @@ export async function exportExcel(
     headers: { 'Content-Type': 'application/json', ...userHeaders() },
     body: JSON.stringify(tierData),
   });
-  if (!res.ok) throw new Error(res.statusText);
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.blob();
 }
 
@@ -1081,7 +1092,7 @@ export async function exportLineageDot(tierData: TierMapResult): Promise<string>
     headers: { 'Content-Type': 'application/json', ...userHeaders() },
     body: JSON.stringify(tierData),
   });
-  if (!res.ok) throw new Error(res.statusText);
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.text();
 }
 
@@ -1097,7 +1108,7 @@ export async function exportLineageMermaid(tierData: TierMapResult): Promise<str
     headers: { 'Content-Type': 'application/json', ...userHeaders() },
     body: JSON.stringify(tierData),
   });
-  if (!res.ok) throw new Error(res.statusText);
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.text();
 }
 
@@ -1116,7 +1127,7 @@ export async function exportJiraCsv(tierData: TierMapResult, uploadId?: number):
     headers: { 'Content-Type': 'application/json', ...userHeaders() },
     body: JSON.stringify(tierData),
   });
-  if (!res.ok) throw new Error(res.statusText);
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.text();
 }
 
@@ -1132,7 +1143,7 @@ export async function exportDatabricks(tierData: TierMapResult): Promise<string>
     headers: { 'Content-Type': 'application/json', ...userHeaders() },
     body: JSON.stringify(tierData),
   });
-  if (!res.ok) throw new Error(res.statusText);
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.text();
 }
 
@@ -1152,7 +1163,7 @@ export async function exportSnapshot(tierData: TierMapResult, uploadId?: number)
     headers: { 'Content-Type': 'application/json', ...userHeaders() },
     body: JSON.stringify(tierData),
   });
-  if (!res.ok) throw new Error(res.statusText);
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.blob();
 }
 
@@ -1297,7 +1308,7 @@ export async function chatSearch(
  */
 export async function chatIndexStatus(uploadId: number): Promise<{ indexed: boolean; document_count: number }> {
   const res = await fetch(`${BASE}/chat/${uploadId}/status`);
-  if (!res.ok) throw new Error(res.statusText);
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.json();
 }
 
@@ -1417,7 +1428,7 @@ export interface HealthStatus {
  */
 export async function getHealth(): Promise<HealthStatus> {
   const res = await fetch(`${BASE}/health`);
-  if (!res.ok) throw new Error(res.statusText);
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.json();
 }
 
@@ -1438,7 +1449,7 @@ export async function getErrorAggregation(params?: {
   if (params?.source) qs.set('source', params.source);
   if (params?.severity) qs.set('severity', params.severity);
   const res = await fetch(`${BASE}/health/errors?${qs}`);
-  if (!res.ok) throw new Error(res.statusText);
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.json();
 }
 
@@ -1481,9 +1492,10 @@ export async function getPaginatedSessions(
  * @param params - Additional query parameters specific to the view
  * @returns View-specific data payload
  */
-async function fetchView(view: string, uploadId: number, params?: Record<string, string>): Promise<any> {
+async function fetchView(view: string, uploadId: number, params?: Record<string, string>): Promise<Record<string, unknown>> {
   const qs = new URLSearchParams({ upload_id: String(uploadId), ...params });
-  const res = await fetch(`${BASE}/views/${view}?${qs}`);
+  const url = `${BASE}/views/${view}?${qs}`;
+  const res = await dedupFetch(url, undefined, `view:${view}:${uploadId}`);
   if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.json();
 }
@@ -1557,7 +1569,7 @@ export interface ProjectSummary {
 export async function listProjects(userId?: string): Promise<ProjectSummary[]> {
   const params = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
   const res = await fetch(`${BASE}/projects${params}`);
-  if (!res.ok) throw new Error(`listProjects failed: ${res.status}`);
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.json();
 }
 
@@ -1574,7 +1586,7 @@ export async function createProject(name: string, description?: string): Promise
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, description, user_id: getUserId() }),
   });
-  if (!res.ok) throw new Error(`createProject failed: ${res.status}`);
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.json();
 }
 
@@ -1586,7 +1598,7 @@ export async function createProject(name: string, description?: string): Promise
  */
 export async function getProject(projectId: number): Promise<ProjectSummary & { uploads: Array<{ id: number; filename: string; platform: string; session_count: number; created_at: string | null }> }> {
   const res = await fetch(`${BASE}/projects/${projectId}`);
-  if (!res.ok) throw new Error(`getProject failed: ${res.status}`);
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.json();
 }
 
@@ -1603,7 +1615,7 @@ export async function updateProject(projectId: number, data: { name?: string; de
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
-  if (!res.ok) throw new Error(`updateProject failed: ${res.status}`);
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.json();
 }
 
@@ -1614,7 +1626,7 @@ export async function updateProject(projectId: number, data: { name?: string; de
  */
 export async function deleteProject(projectId: number): Promise<void> {
   const res = await fetch(`${BASE}/projects/${projectId}`, { method: 'DELETE' });
-  if (!res.ok) throw new Error(`deleteProject failed: ${res.status}`);
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
 }
 
 

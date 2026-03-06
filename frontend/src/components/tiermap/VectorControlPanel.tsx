@@ -3,8 +3,9 @@
  * Controls resolution, algorithm comparison, and "Run All Vectors" button.
  */
 
-import React, { useCallback, useState } from 'react';
-import { analyzeVectors } from '../../api/client';
+import React, { useCallback, useMemo, useState } from 'react';
+import { analyzeVectorsStream } from '../../api/client';
+import type { VectorStreamEvent } from '../../api/client';
 import type { TierMapResult } from '../../types/tiermap';
 import type { VectorResults } from '../../types/vectors';
 
@@ -36,26 +37,32 @@ export default function VectorControlPanel({ tierData, vectorResults, onVectorRe
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState('');
 
-  const handleRun = useCallback(async () => {
+  const handleRun = useCallback(() => {
     setLoading(true);
     setProgress(`Running Phase ${phase} analysis...`);
-    try {
-      const results = await analyzeVectors(tierData, phase, uploadId ?? undefined);
-      onVectorResults(results);
-      const vecCount = Object.keys(results).filter(k => k.startsWith('v')).length;
-      const msg = `Phase ${phase} complete: ${vecCount} vectors in ${results.total_time ?? '?'}s`;
-      setProgress(msg);
-      onToast?.(msg, 'success');
-    } catch (err) {
-      const errMsg = `Vector analysis error: ${err instanceof Error ? err.message : 'Unknown error'}`;
-      setProgress(errMsg);
-      onToast?.(errMsg, 'error');
-    } finally {
-      setLoading(false);
-    }
+    analyzeVectorsStream(tierData, uploadId ?? undefined, (event: VectorStreamEvent) => {
+      if (event.phase === 'complete' && event.result) {
+        onVectorResults(event.result);
+        const vecCount = Object.keys(event.result).filter(k => k.startsWith('v')).length;
+        const msg = `Phase ${phase} complete: ${vecCount} vectors`;
+        setProgress(msg);
+        onToast?.(msg, 'success');
+        setLoading(false);
+      } else if (event.phase === 'error') {
+        const errMsg = `Vector analysis error: ${event.message}`;
+        setProgress(errMsg);
+        onToast?.(errMsg, 'error');
+        setLoading(false);
+      } else {
+        setProgress(event.message || `Running ${event.phase}...`);
+      }
+    });
   }, [tierData, phase, onVectorResults, uploadId, onToast]);
 
-  const availableVectors = vectorResults ? Object.keys(vectorResults).filter(k => k.startsWith('v')) : [];
+  const availableVectors = useMemo(
+    () => vectorResults ? Object.keys(vectorResults).filter(k => k.startsWith('v')) : [],
+    [vectorResults],
+  );
 
   return (
     <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 space-y-4">

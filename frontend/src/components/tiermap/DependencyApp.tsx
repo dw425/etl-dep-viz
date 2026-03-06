@@ -41,7 +41,7 @@ import type { VectorResults, DrillFilter } from '../../types/vectors';
 import {
   analyzeConstellationStream,
   analyzeFromPath,
-  analyzeVectors,
+  analyzeVectorsStream,
   recluster,
   listUploads,
   getUpload,
@@ -123,6 +123,11 @@ const VIEWS: { id: ViewId; label: string; icon: string; group?: 'core' | 'vector
 
 function VectorFallback({ label, phase = 1, onRun, onRunDirect }: { label: string; phase?: number; onRun: () => void; onRunDirect?: () => void }) {
   const [running, setRunning] = useState(false);
+  const handleRun = useCallback(() => {
+    if (!onRunDirect) return;
+    setRunning(true);
+    onRunDirect();
+  }, [onRunDirect]);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 16 }}>
       <div style={{ fontSize: 36, opacity: 0.3 }}>&#x25A3;</div>
@@ -137,7 +142,7 @@ function VectorFallback({ label, phase = 1, onRun, onRunDirect }: { label: strin
       <div style={{ display: 'flex', gap: 8 }}>
         {onRunDirect && !running && (
           <button
-            onClick={() => { setRunning(true); onRunDirect(); }}
+            onClick={handleRun}
             style={{
               padding: '8px 20px', borderRadius: 6, border: '1px solid #10B981',
               background: '#10B981', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer',
@@ -730,7 +735,7 @@ export function DependencyApp() {
   // ── Scoped data for constellation chunk + drill filter ─────────────────────
   // When clusters are selected, filter to those clusters' sessions.
   // When drill filter is active, further filter to matching sessions.
-  const scopedTierData = (() => {
+  const scopedTierData = useMemo(() => {
     let data = tierData;
     if (!data) return data;
 
@@ -765,9 +770,22 @@ export function DependencyApp() {
     }
 
     return data;
-  })();
+  }, [tierData, hasChunkSelection, selectedChunks, drillMatchingIds]);
 
   const stats = tierData?.stats;
+
+  // ── Direct vector run callback for VectorFallback "Run Now" buttons ────────
+  const handleRunVectorDirect = useCallback(() => {
+    if (!tierData) return;
+    analyzeVectorsStream(tierData, uploadId ?? undefined, (ev) => {
+      if (ev.phase === 'complete' && ev.result) {
+        setVectorResults(prev => ({ ...prev, ...ev.result! }));
+        addToast('Vector analysis complete', 'success');
+      } else if (ev.phase === 'error') {
+        addToast(ev.message || 'Vector analysis error', 'error');
+      }
+    });
+  }, [tierData, uploadId, addToast]);
 
   // ── Theme token map — all JSX uses T.* so switching themes is a one-liner ──
   const T = isDark ? {
@@ -1432,17 +1450,17 @@ export function DependencyApp() {
               {view === 'complexity' && (
                 vectorResults?.v11_complexity ? (
                   <ErrorBoundary><div style={{ overflow: 'auto', height: '100%' }}><ComplexityOverlay complexity={vectorResults.v11_complexity} /></div></ErrorBoundary>
-                ) : <VectorFallback label="Complexity" onRun={() => navigateView('chunking')} onRunDirect={tierData ? () => analyzeVectors(tierData, 1, uploadId ?? undefined).then(r => { setVectorResults(prev => ({ ...prev, ...r })); addToast(`Vector analysis complete: ${Object.keys(r).filter(k => k.startsWith('v')).length} vectors`, 'success'); }).catch(e => addToast(e.message)) : undefined} />
+                ) : <ErrorBoundary><VectorFallback label="Complexity" onRun={() => navigateView('chunking')} onRunDirect={tierData ? handleRunVectorDirect : undefined} /></ErrorBoundary>
               )}
               {view === 'heatmap' && (
                 vectorResults?.v11_complexity && tierData ? (
                   <ErrorBoundary><div style={{ overflow: 'hidden', height: '100%' }}><HeatMapView complexity={vectorResults.v11_complexity} tierData={tierData} vectorResults={vectorResults} onSessionSelect={(sid) => { navigateView('flowwalker'); }} /></div></ErrorBoundary>
-                ) : <VectorFallback label="Heat Map" onRun={() => navigateView('chunking')} onRunDirect={tierData ? () => analyzeVectors(tierData, 1, uploadId ?? undefined).then(r => { setVectorResults(prev => ({ ...prev, ...r })); addToast(`Vector analysis complete: ${Object.keys(r).filter(k => k.startsWith('v')).length} vectors`, 'success'); }).catch(e => addToast(e.message)) : undefined} />
+                ) : <ErrorBoundary><VectorFallback label="Heat Map" onRun={() => navigateView('chunking')} onRunDirect={tierData ? handleRunVectorDirect : undefined} /></ErrorBoundary>
               )}
               {view === 'concentration' && (
                 vectorResults?.v10_concentration ? (
                   <ErrorBoundary><div style={{ overflow: 'auto', height: '100%' }}><ConcentrationView concentration={vectorResults.v10_concentration} /></div></ErrorBoundary>
-                ) : <VectorFallback label="Gravity" phase={2} onRun={() => setRightPanel('vectors')} onRunDirect={tierData ? () => analyzeVectors(tierData, 2, uploadId ?? undefined).then(r => { setVectorResults(prev => ({ ...prev, ...r })); addToast(`Vector analysis complete: ${Object.keys(r).filter(k => k.startsWith('v')).length} vectors`, 'success'); }).catch(e => addToast(e.message)) : undefined} />
+                ) : <ErrorBoundary><VectorFallback label="Gravity" phase={2} onRun={() => setRightPanel('vectors')} onRunDirect={tierData ? handleRunVectorDirect : undefined} /></ErrorBoundary>
               )}
 
               {/* Algorithm Lab */}

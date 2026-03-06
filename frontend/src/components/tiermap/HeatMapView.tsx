@@ -188,14 +188,15 @@ export default function HeatMapView({ complexity, tierData, vectorResults, onSes
     }
 
     // Build source/target/lookup per session
+    const tableById = new Map(tierData.tables.map(t => [t.id, t]));
     const sessionSources = new Map<string, string[]>();
     const sessionTargets = new Map<string, string[]>();
     const sessionLookups = new Map<string, string[]>();
     for (const conn of tierData.connections) {
       const fromSess = sessionById.get(conn.from);
-      const toTable = tierData.tables.find(t => t.id === conn.to);
+      const toTable = tableById.get(conn.to);
       const toSess = sessionById.get(conn.to);
-      const fromTable = tierData.tables.find(t => t.id === conn.from);
+      const fromTable = tableById.get(conn.from);
 
       if (fromSess && toTable) {
         if (conn.type === 'write_conflict' || conn.type === 'write_clean') {

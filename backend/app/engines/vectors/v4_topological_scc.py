@@ -146,6 +146,8 @@ class TopologicalSCCVector:
 
         # Map condensation nodes → SCC group IDs
         # nx.condensation assigns its own mapping; remap to our scc_groups
+        # Build reverse index: session_id → index (O(1) lookup instead of O(n) .index())
+        sid_to_idx = {sid: i for i, sid in enumerate(session_ids)}
         cond_to_scc: dict[int, int] = {}
         scc_node_map: dict[int, int] = {}
         for cond_node in condensation.nodes():
@@ -153,7 +155,7 @@ class TopologicalSCCVector:
             # Find matching SCC group
             member_set = set(members)
             for gid, sg in enumerate(scc_groups):
-                sg_indices = {session_ids.index(sid) for sid in sg.session_ids}
+                sg_indices = {sid_to_idx[sid] for sid in sg.session_ids if sid in sid_to_idx}
                 if sg_indices == member_set:
                     cond_to_scc[cond_node] = gid
                     break

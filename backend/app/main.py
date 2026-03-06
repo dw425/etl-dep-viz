@@ -276,11 +276,17 @@ _ROUTE_TIMEOUTS: list[tuple[str, int]] = [
     ("/api/health", 5),
     ("/api/views/", 30),
     ("/api/layers/", 30),
-    ("/api/exports/", 30),
+    ("/api/exports/", 60),
     ("/api/lineage/", 30),
+    ("/api/vectors/config", 10),
+    ("/api/vectors/analyze-status", 10),
+    ("/api/vectors/analyze-result", 30),
     ("/api/vectors/", 120),
     ("/api/chat/", 300),
     ("/api/tier-map/upload", 300),
+    ("/api/tier-map/uploads", 30),
+    ("/api/projects/", 30),
+    ("/api/compare/", 60),
 ]
 _DEFAULT_TIMEOUT = 60
 
@@ -292,6 +298,10 @@ _TIMEOUT_EXEMPT = frozenset({
     "/api/tier-map/constellation-stream",
     "/api/chat/index",
     "/api/vectors/analyze-stream",
+    "/api/vectors/analyze-background",
+    "/api/vectors/analyze-selective",
+    "/api/vectors/analyze-incremental",
+    "/api/admin/migrate-sqlite",
 })
 
 
@@ -818,6 +828,27 @@ async def migrate_sqlite(file: UploadFile):
 async def migrate_status():
     """Check migration progress."""
     return _migrate_status
+
+
+@app.patch("/api/admin/uploads/{upload_id}")
+async def admin_update_upload(upload_id: int, body: dict):
+    """Admin endpoint to update upload fields (e.g. project_id)."""
+    from fastapi import Depends, HTTPException
+    from app.models.database import SessionLocal, Upload
+
+    db = SessionLocal()
+    try:
+        upload = db.query(Upload).filter(Upload.id == upload_id).first()
+        if not upload:
+            raise HTTPException(status_code=404, detail="Upload not found")
+        allowed = {"project_id", "filename"}
+        for key, val in body.items():
+            if key in allowed:
+                setattr(upload, key, val)
+        db.commit()
+        return {"id": upload.id, "project_id": upload.project_id, "filename": upload.filename}
+    finally:
+        db.close()
 
 
 # ── Static File Serving (Production) ──────────────────────────────────────

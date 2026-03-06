@@ -9,10 +9,11 @@
  *  - Custom: Select from multiple algorithm options
  */
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import type { TierMapResult, ConstellationResult, AlgorithmKey } from '../../types/tiermap';
 import type { VectorResults } from '../../types/vectors';
-import { analyzeVectors, chatIndexUpload, chatIndexStatus } from '../../api/client';
+import { analyzeVectorsStream, chatIndexBackground, chatIndexStatus } from '../../api/client';
+import type { VectorStreamEvent } from '../../api/client';
 
 interface Props {
   tierData: TierMapResult;
@@ -84,31 +85,63 @@ export default function ChunkingStrategy({ tierData, constellation, vectorResult
     }
   }, [selected, onRecluster]);
 
-  const handleRunVectors = useCallback(async () => {
+  const handleRunVectors = useCallback(() => {
     if (!tierData || vectorLoading) return;
     setVectorLoading(true);
-    setVectorPhase('Running Phase 1 (Core)...');
-    try {
-      const result = await analyzeVectors(tierData, 1, uploadId ?? undefined);
-      onVectorResults?.(result);
-      setVectorPhase('Phase 1 complete');
-    } catch (e: any) {
-      setVectorPhase(`Error: ${e.message}`);
-    } finally {
-      setVectorLoading(false);
-    }
+    setVectorPhase('Starting vector analysis...');
+    analyzeVectorsStream(tierData, uploadId ?? undefined, (event: VectorStreamEvent) => {
+      if (event.phase === 'complete' && event.result) {
+        onVectorResults?.(event.result);
+        setVectorPhase('Phase 1 complete');
+        setVectorLoading(false);
+      } else if (event.phase === 'error') {
+        setVectorPhase(`Error: ${event.message}`);
+        setVectorLoading(false);
+      } else {
+        setVectorPhase(event.message || `Running ${event.phase}...`);
+      }
+    });
   }, [tierData, uploadId, onVectorResults, vectorLoading]);
+
+  const indexPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Clean up polling interval on unmount
+  useEffect(() => {
+    return () => {
+      if (indexPollRef.current) clearInterval(indexPollRef.current);
+    };
+  }, []);
 
   const handleBuildIndex = useCallback(async () => {
     if (!uploadId || indexLoading) return;
     setIndexLoading(true);
+    // Clear any existing poll
+    if (indexPollRef.current) { clearInterval(indexPollRef.current); indexPollRef.current = null; }
     try {
-      await chatIndexUpload(uploadId);
-      const status = await chatIndexStatus(uploadId);
-      setIndexStatus(status);
-    } catch (e: any) {
+      await chatIndexBackground(uploadId);
+      // Poll for completion with 5-minute timeout
+      let elapsed = 0;
+      const poll = setInterval(async () => {
+        elapsed += 5000;
+        if (elapsed > 300_000) { // 5-minute hard timeout
+          clearInterval(poll);
+          indexPollRef.current = null;
+          setIndexLoading(false);
+          return;
+        }
+        try {
+          const status = await chatIndexStatus(uploadId);
+          if (status?.indexed) {
+            clearInterval(poll);
+            indexPollRef.current = null;
+            setIndexStatus(status);
+            setIndexLoading(false);
+          }
+        } catch { /* keep polling */ }
+      }, 5000);
+      indexPollRef.current = poll;
+    } catch (e: unknown) {
       setIndexStatus(null);
-    } finally {
       setIndexLoading(false);
     }
   }, [uploadId, indexLoading]);
