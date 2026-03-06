@@ -1880,11 +1880,15 @@ def _populate_table_gravity(db: Session, upload_id: int, data: dict) -> None:
     _delete_for_upload(db, VwTableGravity, upload_id)
     rows = []
     for item in data.get('assignments', data.get('tables', [])):
+        # session_id column is String(64) — truncate and strip CR/LF from
+        # corrupted table names that may contain embedded newlines
+        sid = str(item.get('session_id', item.get('table_name', '')))
+        sid = sid.replace('\r', '').replace('\n', '_')[:64]
         rows.append(VwTableGravity(
             upload_id=upload_id,
-            session_id=str(item.get('session_id', item.get('table_name', ''))),
+            session_id=sid,
             cluster_id=item.get('cluster_id', 0),
-            table_name=item.get('table_name', ''),
+            table_name=item.get('table_name', '').replace('\r', '').replace('\n', '_'),
             reader_count=item.get('reader_count', 0),
             writer_count=item.get('writer_count', 0),
             lookup_count=item.get('lookup_count', 0),
