@@ -1173,6 +1173,54 @@ export async function mergeUploads(uploadIds: number[]): Promise<Record<string, 
   return res.json();
 }
 
+// ── Compare Uploads API ───────────────────────────────────────────────────
+
+export interface CompareResult {
+  upload_a_info: { id: number; filename: string; platform: string; session_count: number; created_at: string | null };
+  upload_b_info: { id: number; filename: string; platform: string; session_count: number; created_at: string | null };
+  matched: Array<{
+    full_name: string;
+    upload_a: SessionDetail;
+    upload_b: SessionDetail;
+    changes: Record<string, { old: unknown; new: unknown } | { added: string[]; removed: string[] }>;
+    has_changes: boolean;
+  }>;
+  added: SessionDetail[];
+  removed: SessionDetail[];
+  table_diff: {
+    added: Array<Record<string, unknown>>;
+    removed: Array<Record<string, unknown>>;
+    modified: Array<{ name: string; upload_a: Record<string, unknown>; upload_b: Record<string, unknown>; changes: Record<string, { old: unknown; new: unknown }> }>;
+  };
+  stats: {
+    total_a: number; total_b: number;
+    matched_count: number; changed_count: number; unchanged_count: number;
+    added_count: number; removed_count: number;
+    tables_added: number; tables_removed: number; tables_modified: number;
+    connections_added: number; connections_removed: number;
+  };
+}
+
+export interface SessionDetail {
+  session_id: string; name: string; full_name: string;
+  tier: number; step: number; workflow: string;
+  folder_path: string; mapping_name: string;
+  transforms: number; ext_reads: number; lookup_count: number; critical: boolean;
+  sources: string[]; targets: string[]; lookups: string[];
+  total_loc: number; total_functions_used: number; distinct_functions_used: number;
+  has_embedded_sql: boolean; has_embedded_java: boolean; has_stored_procedure: boolean;
+  core_intent: string | null;
+  expression_count: number; field_mapping_count: number;
+}
+
+export async function compareUploads(uploadA: number, uploadB: number): Promise<CompareResult> {
+  const res = await dedupFetch(`${BASE}/compare?upload_a=${uploadA}&upload_b=${uploadB}`, {
+    headers: userHeaders(),
+  }, 'compare');
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  return res.json();
+}
+
 // ── AI Chat API ───────────────────────────────────────────────────────────
 // Requires the upload to be indexed first (chatIndexUpload); then supports
 // conversational Q&A (chatQuery) and semantic search (chatSearch) over the ETL graph.

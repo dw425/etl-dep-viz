@@ -88,6 +88,7 @@ const AIChat = lazy(() => import('../chat/AIChat'));
 const AdminConsole = lazy(() => import('./AdminConsole'));
 const DecisionTreeView = lazy(() => import('./DecisionTreeView'));
 const AlgorithmLab = lazy(() => import('./AlgorithmLab'));
+const CompareView = lazy(() => import('./CompareView'));
 const ExportHTMLModal = lazy(() => import('./ExportHTMLModal'));
 
 // ── View registry ─────────────────────────────────────────────────────────────
@@ -97,7 +98,7 @@ type ViewId = 'tier' | 'constellation' | 'explorer' | 'conflicts' | 'order' | 'm
   | 'tables' | 'duplicates' | 'chunking'
   | 'complexity' | 'heatmap' | 'concentration'
   | 'profile' | 'flowwalker' | 'chat' | 'admin'
-  | 'decisiontree' | 'algorithmlab';
+  | 'decisiontree' | 'algorithmlab' | 'compare';
 
 // Group determines tab section: core, harmonize, vector, nav
 const VIEWS: { id: ViewId; label: string; icon: string; group?: 'core' | 'vector' | 'nav' | 'harmonize' }[] = [
@@ -117,6 +118,7 @@ const VIEWS: { id: ViewId; label: string; icon: string; group?: 'core' | 'vector
   { id: 'flowwalker', label: 'Flow', icon: '\u21C4', group: 'nav' },
   { id: 'decisiontree', label: 'Decision Tree', icon: '\uD83C\uDF32', group: 'nav' },
   { id: 'chat', label: 'AI Chat', icon: '\uD83D\uDCAC', group: 'nav' },
+  { id: 'compare', label: 'Compare', icon: '\u21C4', group: 'nav' },
 ];
 
 function VectorFallback({ label, phase = 1, onRun, onRunDirect }: { label: string; phase?: number; onRun: () => void; onRunDirect?: () => void }) {
@@ -1359,7 +1361,7 @@ export function DependencyApp() {
                   wrapped in Suspense. Edge-to-edge views use padding=0. ── */}
         <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, color: '#8899aa' }}>Loading view...</div>}>
-            <div style={{ flex: 1, overflow: 'hidden', padding: (['tier', 'matrix', 'constellation', 'tables', 'duplicates', 'heatmap', 'umap', 'decisiontree', 'flowwalker', 'algorithmlab'].includes(view)) ? 0 : 20 }}>
+            <div style={{ flex: 1, overflow: 'hidden', padding: (['tier', 'matrix', 'constellation', 'tables', 'duplicates', 'heatmap', 'umap', 'decisiontree', 'flowwalker', 'algorithmlab', 'compare'].includes(view)) ? 0 : 20 }}>
               {/* ── Core views ── */}
               {view === 'tier' && scopedTierData && (
                 <ErrorBoundary><TierDiagram data={scopedTierData} chunks={constellation?.chunks} /></ErrorBoundary>
@@ -1495,6 +1497,15 @@ export function DependencyApp() {
               {view === 'admin' && (
                 <ErrorBoundary>
                   <AdminConsole onToast={addToast} onLoadUpload={handleLoadUpload} />
+                </ErrorBoundary>
+              )}
+
+              {/* Compare Uploads */}
+              {view === 'compare' && (
+                <ErrorBoundary>
+                  <div style={{ overflow: 'hidden', height: '100%' }}>
+                    <CompareView currentUploadId={uploadId} onToast={addToast} />
+                  </div>
                 </ErrorBoundary>
               )}
             </div>

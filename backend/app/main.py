@@ -662,6 +662,7 @@ from app.routers.exports import router as exports_router
 from app.routers.chat import router as chat_router
 from app.routers.views import router as views_router
 from app.routers.projects import router as projects_router
+from app.routers.compare import router as compare_router
 
 app.include_router(tier_map_router, prefix="/api")
 app.include_router(vectors_router, prefix="/api")
@@ -673,6 +674,7 @@ app.include_router(exports_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
 app.include_router(views_router, prefix="/api")
 app.include_router(projects_router, prefix="/api")
+app.include_router(compare_router, prefix="/api")
 
 # ── SQLite → PostgreSQL Migration Endpoint ─────────────────────────────────
 
