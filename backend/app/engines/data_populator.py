@@ -1628,74 +1628,179 @@ def _populate_ensemble(db: Session, upload_id: int, data: dict) -> None:
             session_id=str(item.get('session_id', item.get('id', ''))),
             consensus_cluster=item.get('consensus_cluster', item.get('cluster')),
             consensus_score=item.get('consensus_score', item.get('score', 0)),
-            per_vector_json=_json_dumps(item.get('per_vector', item.get('vectors'))),
+            per_vector_json=_json_dumps(item.get('per_vector', item.get('per_vector_assignments', item.get('vectors')))),
             is_contested=1 if item.get('is_contested') else 0,
         ))
     _bulk_save(db, rows)
 
 
 def _populate_hierarchical(db: Session, upload_id: int, data: dict) -> None:
-    """Populate vw_hierarchical_lineage from V2 output."""
+    """Populate vw_hierarchical_lineage from V2 output.
+
+    V2 output format (14K scale): {domains: [{domain_id, label, session_ids, core_tables, ...}]}
+    Legacy format: {assignments: [{session_id, cluster_id, level, ...}]}
+    """
     _delete_for_upload(db, VwHierarchicalLineage, upload_id)
     rows = []
-    for item in data.get('assignments', data.get('clusters', data.get('sessions', []))):
-        rows.append(VwHierarchicalLineage(
-            upload_id=upload_id,
-            session_id=str(item.get('session_id', item.get('id', ''))),
-            cluster_id=item.get('cluster_id', item.get('cluster')),
-            level=item.get('level', 0),
-            parent_cluster=item.get('parent_cluster'),
-            merge_distance=item.get('merge_distance', 0),
-            session_count=item.get('session_count', 1),
-        ))
+
+    # New format: domains list with session_ids
+    domains = data.get('domains', [])
+    if domains:
+        for dom in domains:
+            domain_id = dom.get('domain_id', 0)
+            for sid in dom.get('session_ids', []):
+                rows.append(VwHierarchicalLineage(
+                    upload_id=upload_id,
+                    session_id=str(sid),
+                    cluster_id=domain_id,
+                    level=0,
+                    parent_cluster=None,
+                    merge_distance=0,
+                    session_count=len(dom.get('session_ids', [])),
+                ))
+    else:
+        # Legacy format: flat assignment list
+        for item in data.get('assignments', data.get('sessions', [])):
+            rows.append(VwHierarchicalLineage(
+                upload_id=upload_id,
+                session_id=str(item.get('session_id', item.get('id', ''))),
+                cluster_id=item.get('cluster_id', item.get('cluster')),
+                level=item.get('level', 0),
+                parent_cluster=item.get('parent_cluster'),
+                merge_distance=item.get('merge_distance', 0),
+                session_count=item.get('session_count', 1),
+            ))
     _bulk_save(db, rows)
 
 
 def _populate_affinity(db: Session, upload_id: int, data: dict) -> None:
-    """Populate vw_affinity_propagation from V5 output."""
+    """Populate vw_affinity_propagation from V5 output.
+
+    V5 output format (14K scale): {clusters: {cluster_id_str: [session_id, ...]}, exemplars: [str]}
+    Legacy format: {assignments: [{session_id, exemplar_id, cluster_id, ...}]}
+    """
     _delete_for_upload(db, VwAffinityPropagation, upload_id)
     rows = []
-    for item in data.get('assignments', data.get('clusters', data.get('sessions', []))):
-        rows.append(VwAffinityPropagation(
-            upload_id=upload_id,
-            session_id=str(item.get('session_id', item.get('id', ''))),
-            exemplar_id=str(item.get('exemplar_id', item.get('exemplar', ''))),
-            cluster_id=item.get('cluster_id', item.get('cluster')),
-            responsibility=item.get('responsibility', 0),
-            availability=item.get('availability', 0),
-            preference=item.get('preference', 0),
-        ))
+
+    assignments = data.get('assignments')
+    clusters_dict = data.get('clusters')
+    exemplars_list = data.get('exemplars', [])
+    exemplar_set = set(exemplars_list) if exemplars_list else set()
+
+    if assignments and isinstance(assignments, list):
+        # Legacy format: flat assignment list
+        for item in assignments:
+            rows.append(VwAffinityPropagation(
+                upload_id=upload_id,
+                session_id=str(item.get('session_id', item.get('id', ''))),
+                exemplar_id=str(item.get('exemplar_id', item.get('exemplar', ''))),
+                cluster_id=item.get('cluster_id', item.get('cluster')),
+                responsibility=item.get('responsibility', 0),
+                availability=item.get('availability', 0),
+                preference=item.get('preference', 0),
+            ))
+    elif clusters_dict and isinstance(clusters_dict, dict):
+        # New format: {cluster_id: [session_ids]}
+        for cluster_id, session_ids in clusters_dict.items():
+            if not isinstance(session_ids, list):
+                continue
+            for sid in session_ids:
+                rows.append(VwAffinityPropagation(
+                    upload_id=upload_id,
+                    session_id=str(sid),
+                    exemplar_id=str(cluster_id),
+                    cluster_id=int(cluster_id) if cluster_id.isdigit() else hash(cluster_id) % 100000,
+                    responsibility=0,
+                    availability=0,
+                    preference=1 if str(sid) in exemplar_set else 0,
+                ))
     _bulk_save(db, rows)
 
 
 def _populate_spectral(db: Session, upload_id: int, data: dict) -> None:
-    """Populate vw_spectral_clustering from V6 output."""
+    """Populate vw_spectral_clustering from V6 output.
+
+    V6 output format (14K scale): {clusters: {cluster_id_str: [session_id, ...]}, embedding_2d: [...]}
+    Legacy format: {assignments: [{session_id, cluster_id, eigenvalue, ...}]}
+    """
     _delete_for_upload(db, VwSpectralClustering, upload_id)
     rows = []
-    for item in data.get('assignments', data.get('clusters', data.get('sessions', []))):
-        rows.append(VwSpectralClustering(
-            upload_id=upload_id,
-            session_id=str(item.get('session_id', item.get('id', ''))),
-            cluster_id=item.get('cluster_id', item.get('cluster')),
-            eigenvalue=item.get('eigenvalue', 0),
-            eigen_gap=item.get('eigen_gap', 0),
-        ))
+
+    assignments = data.get('assignments')
+    clusters_dict = data.get('clusters')
+
+    if assignments and isinstance(assignments, list):
+        for item in assignments:
+            rows.append(VwSpectralClustering(
+                upload_id=upload_id,
+                session_id=str(item.get('session_id', item.get('id', ''))),
+                cluster_id=item.get('cluster_id', item.get('cluster')),
+                eigenvalue=item.get('eigenvalue', 0),
+                eigen_gap=item.get('eigen_gap', 0),
+            ))
+    elif clusters_dict and isinstance(clusters_dict, dict):
+        for cluster_id, session_ids in clusters_dict.items():
+            if not isinstance(session_ids, list):
+                continue
+            cid = int(cluster_id) if cluster_id.isdigit() else hash(cluster_id) % 100000
+            for sid in session_ids:
+                rows.append(VwSpectralClustering(
+                    upload_id=upload_id,
+                    session_id=str(sid),
+                    cluster_id=cid,
+                    eigenvalue=0,
+                    eigen_gap=0,
+                ))
     _bulk_save(db, rows)
 
 
 def _populate_hdbscan(db: Session, upload_id: int, data: dict) -> None:
-    """Populate vw_hdbscan_density from V7 output."""
+    """Populate vw_hdbscan_density from V7 output.
+
+    V7 output format (14K scale): {clusters: {cluster_id_str: [session_id, ...]}, noise_sessions: [str]}
+    Legacy format: {assignments: [{session_id, cluster_id, probability, ...}]}
+    """
     _delete_for_upload(db, VwHdbscanDensity, upload_id)
     rows = []
-    for item in data.get('assignments', data.get('clusters', data.get('sessions', []))):
-        rows.append(VwHdbscanDensity(
-            upload_id=upload_id,
-            session_id=str(item.get('session_id', item.get('id', ''))),
-            cluster_id=item.get('cluster_id', item.get('cluster')),
-            probability=item.get('probability', 0),
-            outlier_score=item.get('outlier_score', 0),
-            persistence=item.get('persistence', 0),
-        ))
+
+    assignments = data.get('assignments')
+    clusters_dict = data.get('clusters')
+    noise_set = set(data.get('noise_sessions', []))
+
+    if assignments and isinstance(assignments, list):
+        for item in assignments:
+            rows.append(VwHdbscanDensity(
+                upload_id=upload_id,
+                session_id=str(item.get('session_id', item.get('id', ''))),
+                cluster_id=item.get('cluster_id', item.get('cluster')),
+                probability=item.get('probability', 0),
+                outlier_score=item.get('outlier_score', 0),
+                persistence=item.get('persistence', 0),
+            ))
+    elif clusters_dict and isinstance(clusters_dict, dict):
+        for cluster_id, session_ids in clusters_dict.items():
+            if not isinstance(session_ids, list):
+                continue
+            cid = int(cluster_id) if cluster_id.isdigit() else hash(cluster_id) % 100000
+            for sid in session_ids:
+                rows.append(VwHdbscanDensity(
+                    upload_id=upload_id,
+                    session_id=str(sid),
+                    cluster_id=cid,
+                    probability=1.0,
+                    outlier_score=0,
+                    persistence=0,
+                ))
+        # Add noise sessions as cluster -1
+        for sid in noise_set:
+            rows.append(VwHdbscanDensity(
+                upload_id=upload_id,
+                session_id=str(sid),
+                cluster_id=-1,
+                probability=0,
+                outlier_score=1.0,
+                persistence=0,
+            ))
     _bulk_save(db, rows)
 
 
