@@ -179,7 +179,6 @@ def get_cached_vectors(upload_id: int, db: Session = Depends(get_db)):
     return StreamingResponse(
         _stream(),
         media_type="application/json",
-        headers={"Content-Length": str(len(raw_json))},
     )
 
 
@@ -323,7 +322,7 @@ async def analyze_vectors_background(
             logger.info("upload_id=%d: Phase 1 (Core) starting", upload_id)
             t0 = time.monotonic()
             with _bg_lock:
-                _bg_jobs[upload_id].update(phase="phase1", percent=5, phase_timings=phase_timings)
+                _bg_jobs[upload_id].update(phase="phase1", percent=5, phase_timings=dict(phase_timings))
             p1 = orch.run_phase1(tier_data)
             phase_timings["phase1"] = round(time.monotonic() - t0, 2)
             logger.info("upload_id=%d: Phase 1 complete in %.1fs", upload_id, phase_timings["phase1"])
