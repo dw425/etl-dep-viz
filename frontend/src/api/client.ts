@@ -438,6 +438,10 @@ export interface VectorStreamEvent {
   message?: string;
   /** Final combined results, present only when phase is 'complete'. */
   result?: VectorResults;
+  /** Per-phase timing data (e.g. {phase1: 12.3, phase2: 45.6}). */
+  phase_timings?: Record<string, number>;
+  /** Detailed error info when phase is 'error'. */
+  error_detail?: { message: string; failed_phase: string; phase_timings: Record<string, number> };
 }
 
 /**
@@ -480,16 +484,33 @@ export function analyzeVectorsStream(
           return;
         }
         const status = await statusRes.json();
-        onEvent({ phase: status.phase || 'running', percent: status.percent, message: `${status.phase} (${status.percent}%)` });
+        onEvent({
+          phase: status.phase || 'running',
+          percent: status.percent,
+          message: `${status.phase} (${status.percent}%)`,
+          phase_timings: status.phase_timings,
+        });
         if (status.state === 'complete') {
           clearInterval(poll);
-          const resultRes = await fetch(`${BASE}/vectors/analyze-result?upload_id=${uploadId}`, { headers: userHeaders() });
-          if (!resultRes.ok) { onEvent({ phase: 'error', message: 'Failed to fetch results' }); return; }
-          const result = await resultRes.json();
-          onEvent({ phase: 'complete', percent: 100, result });
+          // Load full results from DB via StreamingResponse — NOT from the in-memory job dict
+          try {
+            const result = await getCachedVectors(uploadId);
+            if (result) {
+              onEvent({ phase: 'complete', percent: 100, result, phase_timings: status.summary?.phase_timings });
+            } else {
+              onEvent({ phase: 'error', message: 'Results saved but could not be loaded from DB' });
+            }
+          } catch (loadErr) {
+            onEvent({ phase: 'error', message: `Failed to load results: ${loadErr instanceof Error ? loadErr.message : loadErr}` });
+          }
         } else if (status.state === 'error') {
           clearInterval(poll);
-          onEvent({ phase: 'error', message: status.error || 'Analysis failed' });
+          onEvent({
+            phase: 'error',
+            message: status.error || 'Analysis failed',
+            error_detail: status.error_detail,
+            phase_timings: status.phase_timings,
+          });
         }
       } catch (err) {
         // Network error during poll — keep trying

@@ -16,6 +16,7 @@ import hashlib
 import json
 import logging
 import time
+import traceback
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
@@ -146,14 +147,18 @@ async def analyze_vectors(
 
 @router.get("/results/{upload_id}")
 def get_cached_vectors(upload_id: int, db: Session = Depends(get_db)):
-    """Retrieve cached vector results for an upload.
+    """Retrieve cached vector results for an upload via StreamingResponse.
+
+    Returns the raw JSON string directly from the DB column, avoiding
+    a JSON deserialize→re-serialize round-trip that is the bottleneck
+    for large datasets (~50MB for 14K sessions).
 
     Args:
         upload_id: DB primary key of the upload whose vectors to retrieve.
         db: SQLAlchemy session (injected).
 
     Returns:
-        Full vector results dict (all phases that have been computed).
+        StreamingResponse with application/json content type.
 
     Raises:
         HTTPException(404): Upload not found or no vector results cached.
@@ -161,10 +166,21 @@ def get_cached_vectors(upload_id: int, db: Session = Depends(get_db)):
     upload = db.query(Upload).filter(Upload.id == upload_id).first()
     if not upload:
         raise HTTPException(404, "Upload not found")
-    results = upload.get_vector_results()
-    if not results:
+    raw_json = upload.vector_results_json
+    if not raw_json:
         raise HTTPException(404, "No vector results cached for this upload")
-    return results
+
+    def _stream():
+        # Yield in 64KB chunks to avoid loading the full string into a single response buffer
+        chunk_size = 65536
+        for i in range(0, len(raw_json), chunk_size):
+            yield raw_json[i:i + chunk_size]
+
+    return StreamingResponse(
+        _stream(),
+        media_type="application/json",
+        headers={"Content-Length": str(len(raw_json))},
+    )
 
 
 # ── SSE Streaming Analysis ────────────────────────────────────────────────
@@ -293,27 +309,52 @@ async def analyze_vectors_background(
 
     def _run():
         from app.models.database import SessionLocal
+        phase_timings: dict[str, float] = {}
+        current_phase = "init"
+        job_start = time.monotonic()
+        session_count = len(tier_data.get("sessions", []))
+        logger.info("Vector BG job started: upload_id=%d, sessions=%d", upload_id, session_count)
+
         try:
             orch = VectorOrchestrator()
+
+            # ── Phase 1 ──
+            current_phase = "phase1"
+            logger.info("upload_id=%d: Phase 1 (Core) starting", upload_id)
+            t0 = time.monotonic()
             with _bg_lock:
-                _bg_jobs[upload_id].update(phase="phase1", percent=5)
+                _bg_jobs[upload_id].update(phase="phase1", percent=5, phase_timings=phase_timings)
             p1 = orch.run_phase1(tier_data)
+            phase_timings["phase1"] = round(time.monotonic() - t0, 2)
+            logger.info("upload_id=%d: Phase 1 complete in %.1fs", upload_id, phase_timings["phase1"])
             with _bg_lock:
-                _bg_jobs[upload_id].update(phase="phase1_complete", percent=33)
+                _bg_jobs[upload_id].update(phase="phase1_complete", percent=33, phase_timings=dict(phase_timings))
 
+            # ── Phase 2 ──
+            current_phase = "phase2"
+            logger.info("upload_id=%d: Phase 2 (Advanced) starting", upload_id)
+            t0 = time.monotonic()
             with _bg_lock:
-                _bg_jobs[upload_id].update(phase="phase2", percent=35)
+                _bg_jobs[upload_id].update(phase="phase2", percent=35, phase_timings=dict(phase_timings))
             p2 = orch.run_phase2(tier_data, p1)
+            phase_timings["phase2"] = round(time.monotonic() - t0, 2)
+            logger.info("upload_id=%d: Phase 2 complete in %.1fs", upload_id, phase_timings["phase2"])
             with _bg_lock:
-                _bg_jobs[upload_id].update(phase="phase2_complete", percent=66)
+                _bg_jobs[upload_id].update(phase="phase2_complete", percent=66, phase_timings=dict(phase_timings))
 
+            # ── Phase 3 ──
+            current_phase = "phase3"
+            logger.info("upload_id=%d: Phase 3 (Ensemble) starting", upload_id)
+            t0 = time.monotonic()
             with _bg_lock:
-                _bg_jobs[upload_id].update(phase="phase3", percent=70)
+                _bg_jobs[upload_id].update(phase="phase3", percent=70, phase_timings=dict(phase_timings))
             p3 = orch.run_phase3(tier_data, p2)
-            with _bg_lock:
-                _bg_jobs[upload_id].update(phase="phase3_complete", percent=95)
+            phase_timings["phase3"] = round(time.monotonic() - t0, 2)
+            logger.info("upload_id=%d: Phase 3 complete in %.1fs", upload_id, phase_timings["phase3"])
 
-            # Persist
+            # ── Persist to DB ──
+            current_phase = "persist"
+            t0 = time.monotonic()
             sdb = SessionLocal()
             try:
                 upload = sdb.query(Upload).filter(Upload.id == upload_id).first()
@@ -329,13 +370,47 @@ async def analyze_vectors_background(
                         logger.warning("Failed to populate vector tables: %s", exc)
             finally:
                 sdb.close()
+            phase_timings["persist"] = round(time.monotonic() - t0, 2)
 
+            total_time = round(time.monotonic() - job_start, 2)
+            phase_timings["total"] = total_time
+            vector_keys = sorted(k for k in p3 if k.startswith("v") and not k.startswith("_"))
+            logger.info(
+                "upload_id=%d: Vector analysis complete in %.1fs — %d vectors, %d sessions",
+                upload_id, total_time, len(vector_keys), session_count,
+            )
+
+            # Store lightweight summary only — NOT the full 50MB result
             with _bg_lock:
-                _bg_jobs[upload_id].update(state="complete", phase="complete", percent=100, result=p3)
+                _bg_jobs[upload_id].update(
+                    state="complete", phase="complete", percent=100,
+                    phase_timings=dict(phase_timings),
+                    summary={
+                        "vector_keys": vector_keys,
+                        "session_count": session_count,
+                        "total_time": total_time,
+                        "phase_timings": dict(phase_timings),
+                    },
+                )
         except Exception as exc:
-            logger.exception("Background vector analysis failed for upload_id=%d", upload_id)
+            total_time = round(time.monotonic() - job_start, 2)
+            phase_timings["total"] = total_time
+            tb = traceback.format_exc()
+            logger.exception(
+                "Background vector analysis failed for upload_id=%d in phase=%s after %.1fs",
+                upload_id, current_phase, total_time,
+            )
             with _bg_lock:
-                _bg_jobs[upload_id].update(state="error", phase="error", error=str(exc))
+                _bg_jobs[upload_id].update(
+                    state="error", phase="error", error=str(exc),
+                    phase_timings=dict(phase_timings),
+                    error_detail={
+                        "message": str(exc),
+                        "failed_phase": current_phase,
+                        "phase_timings": dict(phase_timings),
+                        "traceback": tb[-2000:],  # last 2000 chars
+                    },
+                )
 
     threading.Thread(target=_run, daemon=True, name=f"vec-bg-{upload_id}").start()
     return {"status": "started", "upload_id": upload_id}
@@ -348,22 +423,36 @@ async def analyze_vectors_status(upload_id: int = Query(...)):
         job = _bg_jobs.get(upload_id)
         if not job:
             return {"state": "not_found", "upload_id": upload_id}
-        resp = {k: v for k, v in job.items() if k != "result"}
-        resp["has_result"] = "result" in job
+        resp: dict[str, Any] = {
+            "state": job.get("state"),
+            "phase": job.get("phase"),
+            "percent": job.get("percent"),
+            "upload_id": upload_id,
+            "phase_timings": job.get("phase_timings", {}),
+        }
+        if job.get("state") == "complete":
+            resp["summary"] = job.get("summary", {})
+        elif job.get("state") == "error":
+            resp["error"] = job.get("error")
+            resp["error_detail"] = job.get("error_detail", {})
     return resp
 
 
 @router.get("/analyze-result")
 async def analyze_vectors_result(upload_id: int = Query(...)):
-    """Fetch completed background vector analysis results."""
+    """Fetch completed background vector analysis summary.
+
+    Full results are no longer returned here (too large for proxy timeouts).
+    Use GET /vectors/results/{upload_id} to stream full results from DB.
+    """
     with _bg_lock:
         job = _bg_jobs.get(upload_id)
         if not job or job.get("state") != "complete":
             raise HTTPException(404, "No completed results")
-        result = job.get("result", {})
+        summary = job.get("summary", {})
         # Clean up after retrieval
         del _bg_jobs[upload_id]
-    return result
+    return {"status": "complete", "upload_id": upload_id, "summary": summary}
 
 
 # ── Single-Vector Convenience Endpoints ───────────────────────────────────

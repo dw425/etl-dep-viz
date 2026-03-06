@@ -36,25 +36,39 @@ export default function VectorControlPanel({ tierData, vectorResults, onVectorRe
   const [phase, setPhase] = useState<1 | 2 | 3>(1);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState('');
+  const [phaseTimings, setPhaseTimings] = useState<Record<string, number> | null>(null);
+  const [errorDetail, setErrorDetail] = useState<{ message: string; failed_phase: string; phase_timings: Record<string, number> } | null>(null);
 
   const handleRun = useCallback(() => {
     setLoading(true);
+    setErrorDetail(null);
+    setPhaseTimings(null);
     setProgress(`Running Phase ${phase} analysis...`);
     analyzeVectorsStream(tierData, uploadId ?? undefined, (event: VectorStreamEvent) => {
+      if (event.phase_timings) setPhaseTimings(event.phase_timings);
       if (event.phase === 'complete' && event.result) {
         onVectorResults(event.result);
         const vecCount = Object.keys(event.result).filter(k => k.startsWith('v')).length;
-        const msg = `Phase ${phase} complete: ${vecCount} vectors`;
+        const totalTime = event.phase_timings?.total;
+        const msg = `Phase ${phase} complete: ${vecCount} vectors` + (totalTime ? ` in ${totalTime}s` : '');
         setProgress(msg);
         onToast?.(msg, 'success');
         setLoading(false);
       } else if (event.phase === 'error') {
-        const errMsg = `Vector analysis error: ${event.message}`;
+        if (event.error_detail) setErrorDetail(event.error_detail);
+        const detail = event.error_detail;
+        const errMsg = detail
+          ? `Failed in ${detail.failed_phase}: ${detail.message}`
+          : `Vector analysis error: ${event.message}`;
         setProgress(errMsg);
         onToast?.(errMsg, 'error');
         setLoading(false);
       } else {
-        setProgress(event.message || `Running ${event.phase}...`);
+        // Show phase timing in progress text
+        const timingStr = event.phase_timings
+          ? Object.entries(event.phase_timings).map(([k, v]) => `${k}: ${v}s`).join(', ')
+          : '';
+        setProgress((event.message || `Running ${event.phase}...`) + (timingStr ? ` [${timingStr}]` : ''));
       }
     });
   }, [tierData, phase, onVectorResults, uploadId, onToast]);
@@ -122,6 +136,33 @@ export default function VectorControlPanel({ tierData, vectorResults, onVectorRe
 
       {progress && (
         <div className="text-xs text-gray-500 text-center">{progress}</div>
+      )}
+
+      {/* Error detail */}
+      {errorDetail && (
+        <div className="text-xs bg-red-900/20 border border-red-800/30 rounded p-2 space-y-1">
+          <div className="text-red-400 font-medium">Failed in: {errorDetail.failed_phase}</div>
+          <div className="text-red-300/80 break-words">{errorDetail.message}</div>
+          {Object.keys(errorDetail.phase_timings).length > 0 && (
+            <div className="text-gray-500">
+              Completed: {Object.entries(errorDetail.phase_timings)
+                .filter(([k]) => k !== 'total')
+                .map(([k, v]) => `${k}: ${v}s`).join(', ')}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Live phase timings during analysis */}
+      {loading && phaseTimings && Object.keys(phaseTimings).length > 0 && (
+        <div className="space-y-0.5">
+          {Object.entries(phaseTimings).map(([k, v]) => (
+            <div key={k} className="flex justify-between text-[10px]">
+              <span className="text-gray-500">{k}</span>
+              <span className="text-green-400/70">{v}s</span>
+            </div>
+          ))}
+        </div>
       )}
 
       {/* Loaded Vectors Status */}

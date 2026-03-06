@@ -280,11 +280,11 @@ _ROUTE_TIMEOUTS: list[tuple[str, int]] = [
     ("/api/lineage/", 30),
     ("/api/vectors/config", 10),
     ("/api/vectors/analyze-status", 10),
-    ("/api/vectors/analyze-result", 30),
+    ("/api/vectors/analyze-result", 10),
     ("/api/vectors/", 120),
     ("/api/chat/", 300),
     ("/api/tier-map/upload", 300),
-    ("/api/tier-map/uploads", 30),
+    ("/api/tier-map/uploads", 120),
     ("/api/projects/", 30),
     ("/api/compare/", 60),
 ]
@@ -301,6 +301,7 @@ _TIMEOUT_EXEMPT = frozenset({
     "/api/vectors/analyze-background",
     "/api/vectors/analyze-selective",
     "/api/vectors/analyze-incremental",
+    "/api/vectors/results",
     "/api/admin/migrate-sqlite",
 })
 

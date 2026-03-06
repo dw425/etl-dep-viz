@@ -780,9 +780,14 @@ export function DependencyApp() {
     analyzeVectorsStream(tierData, uploadId ?? undefined, (ev) => {
       if (ev.phase === 'complete' && ev.result) {
         setVectorResults(prev => ({ ...prev, ...ev.result! }));
-        addToast('Vector analysis complete', 'success');
+        const totalTime = ev.phase_timings?.total;
+        addToast(`Vector analysis complete${totalTime ? ` in ${totalTime}s` : ''}`, 'success');
       } else if (ev.phase === 'error') {
-        addToast(ev.message || 'Vector analysis error', 'error');
+        const detail = ev.error_detail;
+        const msg = detail
+          ? `Vector failed in ${detail.failed_phase}: ${detail.message}`
+          : (ev.message || 'Vector analysis error');
+        addToast(msg, 'error');
       }
     });
   }, [tierData, uploadId, addToast]);
