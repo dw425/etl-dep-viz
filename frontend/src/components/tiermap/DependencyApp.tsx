@@ -607,10 +607,6 @@ export function DependencyApp() {
       setConstellation(data.constellation ?? null);
       setUploadId(data.upload_id);
       setAlgorithm((data.algorithm as AlgorithmKey) || 'louvain');
-      // Restore vector results if returned from backend
-      if (data.vector_results) {
-        setVectorResults(data.vector_results);
-      }
       // Persist to localStorage for cross-refresh recovery
       localStorage.setItem('edv-last-upload', String(data.upload_id));
       // Navigate to requested view, or last saved view, or default to 'tier'
@@ -619,6 +615,12 @@ export function DependencyApp() {
       setView(validViews.includes(targetView as ViewId) ? (targetView as ViewId) : 'tier');
       setError(null);
       logActivity('load', data.filename, { upload_id: id, session_count: data.session_count });
+      // Load vector results separately via streaming endpoint (avoids 50MB+ inline blob)
+      if ((data as any).has_vector_results) {
+        getCachedVectors(data.upload_id).then(vr => {
+          if (vr) setVectorResults(vr);
+        }).catch(() => { /* vectors will load on demand */ });
+      }
     } catch (e: any) {
       setError({ message: e.message, phase: 'load', timestamp: new Date().toISOString() });
     }

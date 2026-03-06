@@ -453,8 +453,8 @@ class TestViewEndpoints:
         res = client.get("/api/views/explorer?upload_id=99999")
         assert res.status_code == 404
 
-    def test_get_upload_includes_vector_results(self, client, small_infa_xml):
-        """Verify getUpload returns vector_results when available."""
+    def test_get_upload_signals_vector_results(self, client, small_infa_xml):
+        """Verify getUpload returns has_vector_results flag (vectors loaded separately)."""
         # Upload
         res = client.post(
             "/api/tier-map/analyze",
@@ -465,12 +465,15 @@ class TestViewEndpoints:
         tier_data = res.json()
         vres = client.post(f"/api/vectors/analyze?phase=1&upload_id={uid}", json=tier_data)
         assert vres.status_code == 200
-        # Get upload
+        # Get upload — should signal vectors exist but not inline them
         gres = client.get(f"/api/tier-map/uploads/{uid}")
         assert gres.status_code == 200
         data = gres.json()
-        assert "vector_results" in data
-        assert data["vector_results"] is not None
+        assert data["has_vector_results"] is True
+        assert "vector_results" not in data
+        # Full vectors available via streaming endpoint
+        vr = client.get(f"/api/vectors/results/{uid}")
+        assert vr.status_code == 200
 
 
 # ── V7 Deep Parse Table Population Tests ──────────────────────────────────

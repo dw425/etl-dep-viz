@@ -364,7 +364,7 @@ export async function getUpload(uploadId: number): Promise<{
   upload_id: number;
   tier_data: TierMapResult;
   constellation?: ConstellationResult;
-  vector_results?: VectorResults;
+  has_vector_results?: boolean;
   filename: string;
   platform: string;
   session_count: number;

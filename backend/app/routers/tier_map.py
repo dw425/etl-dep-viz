@@ -1210,12 +1210,9 @@ def get_upload(upload_id: int, db: Session = Depends(get_db)):
     if constellation:
         result['constellation'] = constellation
 
-    vector_results = row.get_vector_results()
-    if not vector_results or len(vector_results) == 0:
-        from app.engines.data_populator import reconstruct_vector_results
-        vector_results = reconstruct_vector_results(db, upload_id) or vector_results
-    if vector_results:
-        result['vector_results'] = vector_results
+    # Signal whether vector results exist — but don't inline the full blob
+    # (can be 50-70MB for large datasets). Frontend loads via GET /vectors/results/{id}.
+    result['has_vector_results'] = bool(row.vector_results_json)
     return result
 
 
