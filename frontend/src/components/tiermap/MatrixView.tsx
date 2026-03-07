@@ -8,7 +8,8 @@
  * - Search filter for sessions and tables
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { useCommitSearch } from '../../hooks/useCommitSearch';
 import type { TierMapResult } from '../../types/tiermap';
 import { connTypes, connShortLabel, getTierCfg } from './constants';
 import TierFilterSidebar, { type TierFilters, getDefaultTierFilters, applyTierFilters } from '../shared/TierFilterSidebar';
@@ -34,8 +35,11 @@ const MatrixView: React.FC<Props> = ({ data }) => {
   const [sparseMode, setSparseMode] = useState(true);
   const [rowPage, setRowPage] = useState(0);
   const [colPage, setColPage] = useState(0);
-  const [search, setSearch] = useState('');
+  const { committedValue: search, inputProps: searchInputProps, clear: clearSearch } = useCommitSearch();
   const [tierFilters, setTierFilters] = useState<TierFilters>(getDefaultTierFilters);
+
+  // Reset pagination when search filter changes
+  useEffect(() => { setRowPage(0); setColPage(0); }, [search]);
 
   const filteredData = useMemo(() => applyTierFilters(data, tierFilters), [data, tierFilters]);
 
@@ -181,8 +185,7 @@ const MatrixView: React.FC<Props> = ({ data }) => {
         {/* Search */}
         <input
           type="text"
-          value={search}
-          onChange={e => { setSearch(e.target.value); setRowPage(0); setColPage(0); }}
+          {...searchInputProps}
           placeholder="Filter sessions/tables..."
           style={{
             padding: '4px 10px', borderRadius: 4, border: '1px solid #4a5a6e',

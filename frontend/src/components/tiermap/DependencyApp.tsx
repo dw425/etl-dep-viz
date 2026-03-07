@@ -81,6 +81,7 @@ const ConcentrationView = lazy(() => import('./ConcentrationView'));
 const TableExplorer = lazy(() => import('./TableExplorer'));
 const DuplicatePipelines = lazy(() => import('./DuplicatePipelines'));
 const ChunkingStrategy = lazy(() => import('./ChunkingStrategy'));
+const FolderMetricView = lazy(() => import('./FolderMetricView'));
 const UserProfileView = lazy(() => import('./UserProfileView'));
 const FlowWalkerView = lazy(() => import('./FlowWalker'));
 const HelpOverlay = lazy(() => import('../shared/HelpOverlay'));
@@ -95,7 +96,7 @@ const ExportHTMLModal = lazy(() => import('./ExportHTMLModal'));
 // ViewId is the union of all valid tab identifiers. Adding a new tab requires:
 //   1. Adding its id to ViewId  2. Adding it to VIEWS  3. Rendering it below.
 type ViewId = 'tier' | 'constellation' | 'explorer' | 'conflicts' | 'order' | 'matrix'
-  | 'tables' | 'duplicates' | 'chunking'
+  | 'tables' | 'duplicates' | 'chunking' | 'folders'
   | 'complexity' | 'heatmap' | 'concentration'
   | 'profile' | 'flowwalker' | 'chat' | 'admin'
   | 'decisiontree' | 'algorithmlab' | 'compare';
@@ -111,6 +112,7 @@ const VIEWS: { id: ViewId; label: string; icon: string; group?: 'core' | 'vector
   { id: 'tables', label: 'Tables', icon: '\u2637', group: 'harmonize' },
   { id: 'duplicates', label: 'Duplicates', icon: '\u2261', group: 'harmonize' },
   { id: 'chunking', label: 'Chunking', icon: '\u2699', group: 'harmonize' },
+  { id: 'folders', label: 'Folders', icon: '\uD83D\uDCC1', group: 'harmonize' },
   { id: 'complexity', label: 'Complexity', icon: '\u25A3', group: 'vector' },
   { id: 'heatmap', label: 'Heat Map', icon: '\u2593', group: 'vector' },
   { id: 'concentration', label: 'Gravity', icon: '\u2295', group: 'vector' },
@@ -1386,7 +1388,7 @@ export function DependencyApp() {
                   wrapped in Suspense. Edge-to-edge views use padding=0. ── */}
         <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, color: '#8899aa' }}>Loading view...</div>}>
-            <div style={{ flex: 1, overflow: 'hidden', padding: (['tier', 'matrix', 'constellation', 'tables', 'duplicates', 'heatmap', 'umap', 'decisiontree', 'flowwalker', 'algorithmlab', 'compare'].includes(view)) ? 0 : 20 }}>
+            <div style={{ flex: 1, overflow: 'hidden', padding: (['tier', 'matrix', 'constellation', 'tables', 'duplicates', 'heatmap', 'umap', 'decisiontree', 'flowwalker', 'algorithmlab', 'compare', 'folders'].includes(view)) ? 0 : 20 }}>
               {/* ── Core views ── */}
               {view === 'tier' && scopedTierData && (
                 <ErrorBoundary><TierDiagram data={scopedTierData} chunks={constellation?.chunks} /></ErrorBoundary>
@@ -1436,6 +1438,13 @@ export function DependencyApp() {
                 <ErrorBoundary>
                   <div style={{ overflow: 'hidden', height: '100%' }}>
                     <DuplicatePipelines data={scopedTierData} onSessionSelect={() => navigateView('flowwalker')} />
+                  </div>
+                </ErrorBoundary>
+              )}
+              {view === 'folders' && scopedTierData && (
+                <ErrorBoundary>
+                  <div style={{ overflow: 'hidden', height: '100%' }}>
+                    <FolderMetricView data={scopedTierData} />
                   </div>
                 </ErrorBoundary>
               )}

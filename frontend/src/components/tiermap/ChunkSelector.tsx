@@ -5,6 +5,7 @@
 
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import type { ConstellationChunk, ConstellationPoint, TableReferenceEntry } from '../../types/tiermap';
+import { useCommitSearch } from '../../hooks/useCommitSearch';
 
 const C = {
   bg: '#1a2332', surface: '#243044', border: '#3a4a5e',
@@ -60,14 +61,14 @@ export default function ChunkSelector({
   points, highlightedSessionIds, onHighlightSession, onFindLinked, onClearHighlight,
   pinnedSessions, onPinSession, onUnpinSession, onFlyToSession,
 }: ChunkSelectorProps) {
-  const [search, setSearch] = useState('');
+  const { committedValue: search, inputProps: searchInputProps, clear: clearSearch } = useCommitSearch();
   const [sortBy, setSortBy] = useState<SortKey>('default');
   const scrollRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [containerHeight, setContainerHeight] = useState(600);
 
   // Session search state
-  const [sessionSearch, setSessionSearch] = useState('');
+  const { committedValue: sessionSearch, inputProps: sessionSearchInputProps, clear: clearSessionSearch } = useCommitSearch();
   const [showSessionSearch, setShowSessionSearch] = useState(false);
   const [focusedSessionId, setFocusedSessionId] = useState<string | null>(null);
 
@@ -144,8 +145,7 @@ export default function ChunkSelector({
         <input
           type="text"
           placeholder="Filter clusters\u2026"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          {...searchInputProps}
           style={{
             width: '100%', padding: '5px 10px', borderRadius: 5,
             border: `1px solid ${C.border}`, background: 'rgba(0,0,0,0.3)',
@@ -187,8 +187,7 @@ export default function ChunkSelector({
               <input
                 type="text"
                 placeholder="Find session by name\u2026"
-                value={sessionSearch}
-                onChange={(e) => setSessionSearch(e.target.value)}
+                {...sessionSearchInputProps}
                 style={{
                   width: '100%', padding: '5px 10px', borderRadius: 5,
                   border: `1px solid ${C.border}`, background: 'rgba(0,0,0,0.3)',

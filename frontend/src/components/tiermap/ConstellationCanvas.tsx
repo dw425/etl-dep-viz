@@ -42,6 +42,7 @@ import type {
   TierMapResult,
 } from '../../types/tiermap';
 import type { VectorResults } from '../../types/vectors';
+import { useCommitSearch } from '../../hooks/useCommitSearch';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -135,7 +136,7 @@ export default function ConstellationCanvas({
   const [showHeatOverlay, setShowHeatOverlay] = useState(false);
 
   // Search state
-  const [searchTerm, setSearchTerm] = useState('');
+  const { committedValue: searchTerm, inputProps: searchInputProps, clear: clearSearch } = useCommitSearch();
   const [searchFocusedId, setSearchFocusedId] = useState<string | null>(null);
 
   // Path tracing
@@ -1171,9 +1172,9 @@ export default function ConstellationCanvas({
         }}>
           <input
             type="text"
-            placeholder="Search sessions or tables..."
-            value={searchTerm}
-            onChange={e => { setSearchTerm(e.target.value); setSearchFocusedId(null); }}
+            placeholder="Search sessions... (Enter to search)"
+            {...searchInputProps}
+            onChange={e => { searchInputProps.onChange(e); setSearchFocusedId(null); }}
             style={{
               width: 280, padding: '6px 12px', borderRadius: 6,
               border: '1px solid rgba(100,116,139,0.3)', background: 'rgba(26,35,50,0.9)',
@@ -1190,7 +1191,7 @@ export default function ConstellationCanvas({
               {searchResults.map(p => (
                 <div
                   key={p.session_id}
-                  onClick={() => { flyTo(p.session_id); setSearchTerm(''); }}
+                  onClick={() => { flyTo(p.session_id); clearSearch(); }}
                   style={{
                     padding: '4px 10px', cursor: 'pointer', fontSize: 10,
                     color: searchFocusedId === p.session_id ? '#F59E0B' : '#e2e8f0',

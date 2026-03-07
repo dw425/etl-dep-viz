@@ -8,6 +8,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import type { VectorResults } from '../../types/vectors';
+import { useCommitSearch } from '../../hooks/useCommitSearch';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -89,7 +90,7 @@ export default function UMAPView({ vectorResults, onSessionSelect }: Props) {
   const [colorMode, setColorMode] = useState<ColorMode>('cluster');
   const [scale, setScale] = useState<'local' | 'balanced' | 'global'>('balanced');
   const [filterDimension, setFilterDimension] = useState<FilterDimension>('none');
-  const [searchQuery, setSearchQuery] = useState('');
+  const { committedValue: searchQuery, inputProps: searchInputProps, clear: clearSearch } = useCommitSearch();
   const [searchOpen, setSearchOpen] = useState(false);
   const [focusedSessionId, setFocusedSessionId] = useState<string | null>(null);
   const focusTimeRef = useRef(0); // timestamp when focus was set, for pulsing
@@ -601,8 +602,8 @@ export default function UMAPView({ vectorResults, onSessionSelect }: Props) {
     focusTimeRef.current = performance.now();
     setDetailSession(sessionId);
     setSearchOpen(false);
-    setSearchQuery('');
-  }, [coords]);
+    clearSearch();
+  }, [coords, clearSearch]);
 
   // ── Dismiss onboarding ──────────────────────────────────────────────────
 
@@ -663,9 +664,9 @@ export default function UMAPView({ vectorResults, onSessionSelect }: Props) {
         <div style={{ position: 'relative', marginLeft: 8 }}>
           <input
             type="text"
-            placeholder="Search sessions..."
-            value={searchQuery}
-            onChange={e => { setSearchQuery(e.target.value); setSearchOpen(true); }}
+            placeholder="Search sessions... (Enter to search)"
+            {...searchInputProps}
+            onChange={e => { searchInputProps.onChange(e); setSearchOpen(true); }}
             onFocus={() => setSearchOpen(true)}
             style={{
               width: 180, padding: '4px 8px', fontSize: 11, borderRadius: 4,

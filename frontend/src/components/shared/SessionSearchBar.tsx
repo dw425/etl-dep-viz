@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 
 interface Props {
   placeholder?: string;
@@ -9,23 +9,28 @@ interface Props {
 }
 
 export default function SessionSearchBar({
-  placeholder = 'Search sessions...',
+  placeholder = 'Search sessions... (Enter to search)',
   onSearch,
   matchCount,
   totalCount,
-  debounceMs = 150,
 }: Props) {
   const [value, setValue] = useState('');
-  const timerRef = useRef<ReturnType<typeof setTimeout>>();
 
   const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const v = e.target.value;
     setValue(v);
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => onSearch(v.trim().toLowerCase()), debounceMs);
-  }, [onSearch, debounceMs]);
+    if (v === '') onSearch('');
+  }, [onSearch]);
 
-  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      onSearch(value.trim().toLowerCase());
+    } else if (e.key === 'Escape') {
+      setValue('');
+      onSearch('');
+      (e.target as HTMLInputElement).blur();
+    }
+  }, [onSearch, value]);
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0' }}>
@@ -38,6 +43,7 @@ export default function SessionSearchBar({
           type="text"
           value={value}
           onChange={handleChange}
+          onKeyDown={handleKeyDown}
           placeholder={placeholder}
           style={{
             width: '100%',

@@ -17,6 +17,7 @@ import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react
 import type { TierMapResult } from '../../types/tiermap';
 import type { VectorResults } from '../../types/vectors';
 import { getFlowData } from '../../api/client';
+import { useCommitSearch } from '../../hooks/useCommitSearch';
 
 const SqlViewer = lazy(() => import('../shared/SqlViewer'));
 const ExpressionViewer = lazy(() => import('../shared/ExpressionViewer'));
@@ -73,7 +74,7 @@ export default function FlowWalkerView({ tierData, vectorResults, uploadId }: Pr
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [expandedTransform, setExpandedTransform] = useState<string | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
+  const { committedValue: searchTerm, inputProps: searchInputProps, clear: clearSearch } = useCommitSearch();
   const [selectedField, setSelectedField] = useState<string | null>(null);
   const [tierFilter, setTierFilter] = useState<string>('all');
   const [criticalOnly, setCriticalOnly] = useState(false);
@@ -198,9 +199,8 @@ export default function FlowWalkerView({ tierData, vectorResults, uploadId }: Pr
       <div style={{ width: 260, borderRight: '1px solid #4a5a6e', overflow: 'auto', flexShrink: 0 }}>
         <div style={{ padding: '12px', borderBottom: '1px solid #4a5a6e' }}>
           <input
-            value={searchTerm}
-            onChange={e => setSearchTerm(e.target.value)}
-            placeholder="Search sessions..."
+            {...searchInputProps}
+            placeholder="Search sessions... (Enter to search)"
             style={{
               width: '100%', padding: '6px 10px', borderRadius: 6,
               border: '1px solid #4a5a6e', background: '#1a2332', color: '#e2e8f0',

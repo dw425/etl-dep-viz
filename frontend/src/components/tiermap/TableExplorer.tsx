@@ -6,6 +6,7 @@
  */
 
 import React, { useState, useMemo, useCallback } from 'react';
+import { useCommitSearch } from '../../hooks/useCommitSearch';
 import type { TierMapResult } from '../../types/tiermap';
 import TierFilterSidebar, { type TierFilters, getDefaultTierFilters, applyTierFilters } from '../shared/TierFilterSidebar';
 
@@ -48,7 +49,7 @@ const PAGE_SIZE = 50;
 
 export default function TableExplorer({ data, onSessionSelect }: Props) {
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
+  const { committedValue: searchTerm, inputProps: searchInputProps, clear: clearSearch } = useCommitSearch();
   const [page, setPage] = useState(1);
   const [tierFilters, setTierFilters] = useState<TierFilters>(getDefaultTierFilters);
   const filteredData = useMemo(() => applyTierFilters(data, tierFilters), [data, tierFilters]);
@@ -126,9 +127,8 @@ export default function TableExplorer({ data, onSessionSelect }: Props) {
           </div>
           <input
             type="text"
-            placeholder="Search tables..."
-            value={searchTerm}
-            onChange={e => setSearchTerm(e.target.value)}
+            placeholder="Search tables... (Enter to search)"
+            {...searchInputProps}
             style={{
               width: '100%', padding: '6px 10px', borderRadius: 6, border: '1px solid #3a4a5e',
               background: '#243044', color: '#e2e8f0', fontSize: 11, outline: 'none',

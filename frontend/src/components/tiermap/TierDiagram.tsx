@@ -30,6 +30,7 @@
 
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import type { TierMapResult, TierConn, ConstellationChunk } from '../../types/tiermap';
+import { useCommitSearch } from '../../hooks/useCommitSearch';
 import {
   connTypes,
   getTierCfg,
@@ -71,7 +72,7 @@ const TierDiagram: React.FC<Props> = ({ data, chunks }) => {
   const [tierTableLimits, setTierTableLimits] = useState<Record<number, number>>({});
 
   // ── Filter state ──
-  const [searchQuery, setSearchQuery] = useState('');
+  const { inputValue: searchInput, committedValue: searchQuery, inputProps: searchInputProps, clear: clearSearch } = useCommitSearch();
   const [showCriticalOnly, setShowCriticalOnly] = useState(false);
   const [selectedClusterId, setSelectedClusterId] = useState<string | null>(null);
   const [isolateSelected, setIsolateSelected] = useState(true);
@@ -435,7 +436,7 @@ const TierDiagram: React.FC<Props> = ({ data, chunks }) => {
           {filteredGroups.length === 0 && (
             <div style={{ textAlign: 'center', padding: 48, color: '#5a6a7a', fontSize: 13 }}>
               No sessions match the current filters.
-              <button onClick={() => { setSearchQuery(''); setShowCriticalOnly(false); setSelectedClusterId(null); setSel(null); }}
+              <button onClick={() => { clearSearch(); setShowCriticalOnly(false); setSelectedClusterId(null); setSel(null); }}
                 style={{ marginLeft: 8, color: '#60A5FA', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
                 Clear filters
               </button>
@@ -567,9 +568,8 @@ const TierDiagram: React.FC<Props> = ({ data, chunks }) => {
           </div>
           <input
             type="text"
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            placeholder="Filter by name..."
+            {...searchInputProps}
+            placeholder="Filter by name... (Enter to search)"
             style={{
               width: '100%', padding: '6px 10px', borderRadius: 6, fontSize: 11,
               background: '#1a2332', border: '1px solid #3a4a5e', color: '#E2E8F0',
@@ -609,7 +609,7 @@ const TierDiagram: React.FC<Props> = ({ data, chunks }) => {
 
           {activeFilterCount > 0 && (
             <button
-              onClick={() => { setSearchQuery(''); setShowCriticalOnly(false); setSelectedClusterId(null); setSel(null); }}
+              onClick={() => { clearSearch(); setShowCriticalOnly(false); setSelectedClusterId(null); setSel(null); }}
               style={{
                 width: '100%', padding: '4px 0', borderRadius: 4, fontSize: 10,
                 background: 'rgba(239,68,68,0.1)', color: '#EF4444',

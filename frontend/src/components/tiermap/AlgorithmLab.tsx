@@ -17,6 +17,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import * as d3 from 'd3';
 import type { TierMapResult, ConstellationResult, ConstellationPoint, ConstellationChunk } from '../../types/tiermap';
 import { getLabAlgorithms, runLabAlgorithm, type LabAlgorithmInfo, type LabRunResult } from '../../api/client';
+import { useCommitSearch } from '../../hooks/useCommitSearch';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -58,7 +59,7 @@ export default function AlgorithmLab({ tierData }: Props) {
   // Filters
   const [filterTiers, setFilterTiers] = useState<Set<number>>(new Set());
   const [filterClusters, setFilterClusters] = useState<Set<string>>(new Set());
-  const [searchText, setSearchText] = useState('');
+  const { committedValue: searchText, inputProps: searchInputProps, clear: clearSearchText } = useCommitSearch();
   const [criticalOnly, setCriticalOnly] = useState(false);
 
   // Canvas
@@ -440,7 +441,7 @@ export default function AlgorithmLab({ tierData }: Props) {
     setActiveHistoryId(null);
     setFilterTiers(new Set());
     setFilterClusters(new Set());
-    setSearchText('');
+    clearSearchText();
     setCriticalOnly(false);
     // Reset zoom
     const canvas = canvasRef.current;
@@ -650,9 +651,8 @@ export default function AlgorithmLab({ tierData }: Props) {
           <div style={{ marginBottom: 8 }}>
             <input
               type="text"
-              placeholder="Search sessions..."
-              value={searchText}
-              onChange={e => setSearchText(e.target.value)}
+              placeholder="Search sessions... (Enter to search)"
+              {...searchInputProps}
               style={{ width: '100%', background: '#3a4a5e', border: '1px solid #4a5a6e', borderRadius: 3, color: '#E2E8F0', padding: '4px 6px', fontSize: 11, boxSizing: 'border-box' }}
             />
           </div>

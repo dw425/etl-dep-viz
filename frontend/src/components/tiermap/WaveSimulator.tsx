@@ -7,6 +7,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCommitSearch } from '../../hooks/useCommitSearch';
 import { whatIfSimulation } from '../../api/client';
 import type { TierMapResult } from '../../types/tiermap';
 import type { WhatIfResult, WaveFunctionResult, SessionCriticality } from '../../types/vectors';
@@ -452,7 +453,7 @@ export default function WaveSimulator({ tierData, waveFunction, onSessionSelect 
   const [compareLoading, setCompareLoading] = useState(false);
 
   // Search + sort
-  const [search, setSearch] = useState('');
+  const { committedValue: search, inputProps: searchInputProps, clear: clearSearch } = useCommitSearch();
   const [sortMode, setSortMode] = useState<SortMode>('criticality');
 
   // Onboarding banner
@@ -597,9 +598,8 @@ export default function WaveSimulator({ tierData, waveFunction, onSessionSelect 
           <div className="px-3 py-2 border-b border-gray-700">
             <input
               type="text"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search sessions..."
+              {...searchInputProps}
+              placeholder="Search sessions... (Enter to search)"
               className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs text-gray-300 placeholder-gray-600 focus:outline-none focus:border-blue-500 transition-colors"
             />
           </div>

@@ -7,6 +7,7 @@
 
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import type { TierMapResult } from '../../types/tiermap';
+import { useCommitSearch } from '../../hooks/useCommitSearch';
 import {
   C,
   buildSessionData,
@@ -94,7 +95,7 @@ const ExplorerView: React.FC<Props> = ({ data }) => {
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<SortKey>('step');
   const [sortDesc, setSortDesc] = useState(false);
-  const [filterText, setFilterText] = useState('');
+  const { committedValue: filterText, inputProps: filterInputProps, clear: clearFilter } = useCommitSearch();
   const [tierFilters, setTierFilters] = useState<TierFilters>(getDefaultTierFilters);
 
   const filteredData = useMemo(() => applyTierFilters(data, tierFilters), [data, tierFilters]);
@@ -240,9 +241,8 @@ const ExplorerView: React.FC<Props> = ({ data }) => {
             Sessions ({sortedSessions.length}{filterText ? ` / ${executionOrder.length}` : ''})
           </div>
           <input
-            value={filterText}
-            onChange={e => setFilterText(e.target.value)}
-            placeholder="Filter sessions..."
+            {...filterInputProps}
+            placeholder="Filter sessions... (Enter to search)"
             style={{
               width: '100%', padding: '5px 8px', borderRadius: 5,
               border: `1px solid ${C.border}`, background: 'rgba(0,0,0,0.2)',

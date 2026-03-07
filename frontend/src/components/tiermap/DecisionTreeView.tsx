@@ -33,6 +33,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useCommitSearch } from '../../hooks/useCommitSearch';
 import * as d3 from 'd3';
 import type { TierMapResult } from '../../types/tiermap';
 import type { VectorResults } from '../../types/vectors';
@@ -531,7 +532,7 @@ export default function DecisionTreeView({ tierData, vectorResults, uploadId }: 
   const [flowData, setFlowData] = useState<FlowData | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
+  const { committedValue: searchTerm, inputProps: searchInputProps, clear: clearSearch } = useCommitSearch();
   const [tierFilter, setTierFilter] = useState<string>('all');
   const [criticalOnly, setCriticalOnly] = useState(false);
   const [selectedNode, setSelectedNode] = useState<TreeNode | null>(null);
@@ -970,9 +971,8 @@ export default function DecisionTreeView({ tierData, vectorResults, uploadId }: 
       <div style={{ width: 240, borderRight: `1px solid ${THEME.border}`, overflow: 'auto', flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
         <div style={{ padding: '12px', borderBottom: `1px solid ${THEME.border}` }}>
           <input
-            value={searchTerm}
-            onChange={e => setSearchTerm(e.target.value)}
-            placeholder="Search sessions..."
+            {...searchInputProps}
+            placeholder="Search sessions... (Enter to search)"
             style={{
               width: '100%', padding: '6px 10px', borderRadius: 6,
               border: `1px solid ${THEME.border}`, background: THEME.bg, color: THEME.text,

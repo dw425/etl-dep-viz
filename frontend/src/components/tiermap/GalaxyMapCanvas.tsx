@@ -37,6 +37,7 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import * as d3 from 'd3';
 import type { TierMapResult, TierSession, TierTable } from '../../types/tiermap';
+import { useCommitSearch } from '../../hooks/useCommitSearch';
 import GalaxyFilterSidebar, { type GalaxyFilters, getDefaultFilters, applyGalaxyFilters } from './GalaxyFilterSidebar';
 
 // ── Colors ────────────────────────────────────────────────────────────────────
@@ -90,7 +91,7 @@ export default function GalaxyMapCanvas({
   const [expTbls, setExpTbls] = useState<Set<string>>(new Set());
   const [mouseXY, setMouseXY] = useState({ x: 0, y: 0 });
   const [tip,     setTip]     = useState<{ name: string; sub: string } | null>(null);
-  const [search,  setSearch]  = useState('');
+  const { committedValue: search, inputProps: searchInputProps, clear: clearSearch } = useCommitSearch();
   const [showSearch, setShowSearch] = useState(false);
   const [detailNode, setDetailNode] = useState<TierSession | null>(null);
   const [galaxyFilters, setGalaxyFilters] = useState<GalaxyFilters>(() => getDefaultFilters(data));
@@ -116,7 +117,7 @@ export default function GalaxyMapCanvas({
   useEffect(() => {
     const fn = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (showSearch) { setShowSearch(false); setSearch(''); }
+        if (showSearch) { setShowSearch(false); clearSearch(); }
         else if (detailNode) setDetailNode(null);
         else if (focusId) { setFocusId(null); setExpTbls(new Set()); }
         else onClose();
@@ -414,8 +415,8 @@ export default function GalaxyMapCanvas({
       goFocus(id);
     }
     setShowSearch(false);
-    setSearch('');
-  }, [goFocus]);
+    clearSearch();
+  }, [goFocus, clearSearch]);
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -490,9 +491,8 @@ export default function GalaxyMapCanvas({
         }}>
           <input
             ref={searchRef}
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Search sessions & tables..."
+            {...searchInputProps}
+            placeholder="Search sessions & tables... (Enter to search)"
             style={{
               width: '100%', padding: '12px 16px', background: 'transparent',
               border: 'none', borderBottom: '1px solid rgba(255,255,255,0.06)',

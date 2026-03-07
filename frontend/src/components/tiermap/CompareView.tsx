@@ -8,6 +8,7 @@
  */
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { useCommitSearch } from '../../hooks/useCommitSearch';
 import {
   listUploads,
   compareUploads,
@@ -166,7 +167,7 @@ export default function CompareView({ currentUploadId, onToast }: CompareViewPro
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState<FilterMode>('all');
   const [selectedSession, setSelectedSession] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
+  const { committedValue: searchQuery, inputProps: searchInputProps, clear: clearSearch } = useCommitSearch();
 
   // Load upload list
   useEffect(() => {
@@ -311,9 +312,8 @@ export default function CompareView({ currentUploadId, onToast }: CompareViewPro
               </button>
             ))}
             <input
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              placeholder="Search sessions..."
+              {...searchInputProps}
+              placeholder="Search sessions... (Enter to search)"
               style={{
                 marginLeft: 'auto', padding: '4px 8px', borderRadius: 4,
                 border: `1px solid ${T.border}`, background: T.bg, color: T.text, fontSize: 11, width: 200,
